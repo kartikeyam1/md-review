@@ -8,6 +8,7 @@ defineProps<{
   theme: ThemeMode
   wordCount: number
   charCount: number
+  canRefresh: boolean
 }>()
 
 const emit = defineEmits<{
@@ -15,6 +16,7 @@ const emit = defineEmits<{
   'update:theme': [mode: ThemeMode]
   'open-file': []
   'new-doc': []
+  'refresh': []
   'generate-prompt': []
 }>()
 </script>
@@ -49,6 +51,7 @@ const emit = defineEmits<{
             Preview
           </button>
         </div>
+        <button v-if="canRefresh" class="btn btn-ghost" title="Reload file from disk and reset comments" @click="emit('refresh')">Refresh</button>
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
       </template>
       <button class="btn btn-ghost" @click="emit('open-file')">Open .md</button>

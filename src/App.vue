@@ -30,9 +30,10 @@ const { clearPersisted } = usePersistence(
 )
 
 // Load file from ?filePath= URL param (dev server only)
-onMounted(async () => {
-  const params = new URLSearchParams(window.location.search)
-  const filePath = params.get('filePath')
+const filePathParam = ref<string | null>(null)
+
+async function loadFromFilePath() {
+  const filePath = filePathParam.value
   if (!filePath) return
 
   try {
@@ -43,6 +44,11 @@ onMounted(async () => {
   } catch {
     // API not available (production build) — ignore
   }
+}
+
+onMounted(() => {
+  filePathParam.value = new URLSearchParams(window.location.search).get('filePath')
+  loadFromFilePath()
 })
 
 const selection = ref<{
@@ -204,11 +210,13 @@ function handleImportComments() {
       :theme="theme"
       :word-count="wordCount"
       :char-count="charCount"
+      :can-refresh="!!filePathParam"
       @update:pane-mode="paneMode = $event"
       @update:theme="setTheme"
       @open-file="handleOpenFile"
       @new-doc="handleNewDoc"
       @generate-prompt="showPromptModal = true"
+      @refresh="loadFromFilePath"
     />
 
     <FileUpload v-if="appMode === 'upload'" @file-loaded="handleFileLoaded" />
