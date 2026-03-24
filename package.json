@@ -25,7 +25,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "node --test tests/e2e/app.test.mjs"
+    "test:e2e": "node --test tests/e2e/app.test.mjs",
+    "start": "npx serve dist -s"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.0.0",

@@ -35,8 +35,7 @@ function localFileApi(): Plugin {
 export default defineConfig({
   plugins: [vue(), localFileApi()],
   server: {
-    port: 58747,
-    strictPort: true,
+    port: parseInt(process.env.PORT || '58747'),
   },
   resolve: {
     alias: {
