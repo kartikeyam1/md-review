@@ -138,17 +138,18 @@ const selectionListener = ViewPlugin.fromClass(
       const startLineObj = state.doc.lineAt(sel.from)
       const endLineObj = state.doc.lineAt(sel.to)
 
-      // Convert to 0-indexed start; endLine is the CM 1-indexed line number
-      // which is already "exclusive" in 0-indexed terms
       const startLine = startLineObj.number - 1
       const endLine = endLineObj.number
+      const selTo = sel.to
+      const editorView = update.view
 
-      // Compute coords from the end of selection for popover positioning
-      const coords = update.view.coordsAtPos(sel.to)
-      const x = coords ? coords.left : 0
-      const y = coords ? coords.bottom : 0
-
-      emit('selection', { startLine, endLine, selectedText, coords: { x, y } })
+      // coordsAtPos cannot be called during an update — defer to next frame
+      requestAnimationFrame(() => {
+        const coords = editorView.coordsAtPos(selTo)
+        const x = coords ? coords.left : 0
+        const y = coords ? coords.bottom : 0
+        emit('selection', { startLine, endLine, selectedText, coords: { x, y } })
+      })
     }
   },
 )
