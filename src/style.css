@@ -1,0 +1,57 @@
+:root {
+  --bg-page: #f7f3eb;
+  --bg-surface: #fdfbf7;
+  --text-primary: #1a1612;
+  --text-secondary: #4a4540;
+  --text-muted: #8a8480;
+  --accent: #c23b22;
+  --border: #ddd6cb;
+  --font-heading: 'Crimson Pro', Georgia, serif;
+  --font-body: 'DM Sans', 'Helvetica Neue', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --comment-bg: rgba(194, 59, 34, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+.btn {
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+
+.btn:hover {
+  opacity: 0.85;
+}
+
+.btn-primary {
+  background: var(--text-primary);
+  color: var(--bg-surface);
+  border: none;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
