@@ -12,12 +12,15 @@ Some paragraph text here.
 `
 
 describe('useMarkdown', () => {
-  it('renders markdown to HTML', () => {
+  it('renders markdown to HTML with line data attributes', () => {
     const { renderHtml } = useMarkdown()
     const html = renderHtml(sampleMd)
-    expect(html).toContain('<h1>Title</h1>')
-    expect(html).toContain('<h2>Section</h2>')
-    expect(html).toContain('<li>Item one</li>')
+    expect(html).toContain('>Title</h1>')
+    expect(html).toContain('>Section</h2>')
+    expect(html).toContain('>Item one</li>')
+    // Line data injected by plugin
+    expect(html).toContain('data-line-start="0"')
+    expect(html).toContain('data-line-end="1"')
   })
 
   it('builds a line map from tokens', () => {

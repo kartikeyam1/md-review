@@ -38,7 +38,7 @@ const emit = defineEmits<{
         </button>
       </div>
       <button class="btn btn-ghost" @click="emit('open-file')">Open .md</button>
-      <button class="btn btn-primary" @click="emit('generate-prompt')">Generate Prompt</button>
+      <button class="btn btn-primary" :disabled="commentCount === 0" @click="emit('generate-prompt')">Generate Prompt</button>
     </div>
     <div v-else class="header-right">
       <button class="btn btn-ghost" @click="emit('open-file')">Open .md</button>

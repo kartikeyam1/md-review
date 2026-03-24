@@ -12,10 +12,17 @@ const emit = defineEmits<{
 
 const copied = ref(false)
 
+const copyFailed = ref(false)
+
 async function copyToClipboard(text: string) {
-  await navigator.clipboard.writeText(text)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
+  try {
+    await navigator.clipboard.writeText(text)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch {
+    copyFailed.value = true
+    setTimeout(() => { copyFailed.value = false }, 3000)
+  }
 }
 </script>
 
@@ -32,7 +39,7 @@ async function copyToClipboard(text: string) {
       <div class="modal-footer">
         <button class="btn btn-ghost" @click="emit('close')">Back to Review</button>
         <button class="btn btn-primary" @click="copyToClipboard(prompt)">
-          {{ copied ? 'Copied!' : 'Copy to Clipboard' }}
+          {{ copyFailed ? 'Copy failed' : copied ? 'Copied!' : 'Copy to Clipboard' }}
         </button>
       </div>
     </div>

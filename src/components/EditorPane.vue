@@ -136,7 +136,13 @@ const selectionListener = ViewPlugin.fromClass(
       }
 
       const startLineObj = state.doc.lineAt(sel.from)
-      const endLineObj = state.doc.lineAt(sel.to)
+      let endLineObj = state.doc.lineAt(sel.to)
+
+      // Triple-click includes trailing newline, placing sel.to at the start
+      // of the next line. Adjust back if no content is selected on that line.
+      if (sel.to === endLineObj.from && endLineObj.number > startLineObj.number) {
+        endLineObj = state.doc.lineAt(sel.to - 1)
+      }
 
       const startLine = startLineObj.number - 1
       const endLine = endLineObj.number

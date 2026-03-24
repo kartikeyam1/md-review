@@ -17,7 +17,7 @@ const markdown = ref('')
 const filename = ref('')
 const showPromptModal = ref(false)
 
-const { comments, addComment, deleteComment } = useComments()
+const { comments, addComment, deleteComment, clearComments } = useComments()
 
 // Selection state for CommentPopover
 const selection = ref<{
@@ -33,6 +33,9 @@ const editorRef = ref<InstanceType<typeof EditorPane>>()
 const previewRef = ref<InstanceType<typeof PreviewPane>>()
 
 function handleFileLoaded(content: string, name: string) {
+  clearComments()
+  showPopover.value = false
+  selection.value = null
   markdown.value = content
   filename.value = name
   appMode.value = 'review'
@@ -98,7 +101,9 @@ function handleOpenFile() {
 }
 
 const prompt = computed(() =>
-  generatePrompt(filename.value, comments.value, markdown.value)
+  showPromptModal.value
+    ? generatePrompt(filename.value, comments.value, markdown.value)
+    : ''
 )
 </script>
 

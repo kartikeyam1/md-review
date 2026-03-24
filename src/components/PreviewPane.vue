@@ -18,58 +18,11 @@ const emit = defineEmits<{
   'selection-clear': []
 }>()
 
-const { renderHtml, getLineMap } = useMarkdown()
+const { renderHtml } = useMarkdown()
 const containerRef = ref<HTMLElement | null>(null)
 
+// renderHtml now injects data-line-start/data-line-end via the markdown-it plugin
 const renderedHtml = computed(() => renderHtml(props.content))
-
-const BLOCK_TAGS = new Set([
-  'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-  'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE',
-  'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD',
-  'HR', 'DIV', 'SECTION', 'DL', 'DT', 'DD',
-])
-
-function collectBlockElements(root: HTMLElement): HTMLElement[] {
-  const result: HTMLElement[] = []
-  function walk(node: HTMLElement) {
-    for (const child of Array.from(node.children)) {
-      const el = child as HTMLElement
-      if (BLOCK_TAGS.has(el.tagName)) {
-        result.push(el)
-        // Continue walking into nested block elements
-        walk(el)
-      }
-    }
-  }
-  walk(root)
-  return result
-}
-
-function annotateDOM() {
-  const container = containerRef.value
-  if (!container) return
-
-  const lineMap = getLineMap(props.content)
-  const blockEls = collectBlockElements(container)
-
-  // Clear previous annotations
-  for (const el of blockEls) {
-    el.removeAttribute('data-line-start')
-    el.removeAttribute('data-line-end')
-    el.classList.remove('comment-highlight')
-  }
-
-  // Assign line map data to block elements by sequential index
-  for (let i = 0; i < lineMap.length && i < blockEls.length; i++) {
-    const entry = lineMap[i]
-    blockEls[i].setAttribute('data-line-start', String(entry.startLine))
-    blockEls[i].setAttribute('data-line-end', String(entry.endLine))
-  }
-
-  // Apply comment highlights
-  applyCommentHighlights()
-}
 
 function applyCommentHighlights() {
   const container = containerRef.value
@@ -83,7 +36,6 @@ function applyCommentHighlights() {
     const elEnd = parseInt(el.getAttribute('data-line-end')!, 10)
 
     for (const comment of props.comments) {
-      // Check if the element's line range overlaps the comment's line range
       if (elStart < comment.endLine && elEnd > comment.startLine) {
         el.classList.add('comment-highlight')
         break
@@ -96,7 +48,7 @@ watch(
   () => renderedHtml.value,
   async () => {
     await nextTick()
-    annotateDOM()
+    applyCommentHighlights()
   }
 )
 
@@ -110,7 +62,7 @@ watch(
 )
 
 onMounted(() => {
-  nextTick(() => annotateDOM())
+  nextTick(() => applyCommentHighlights())
 })
 
 function findBlockAncestor(node: Node): HTMLElement | null {
@@ -128,7 +80,7 @@ function findBlockAncestor(node: Node): HTMLElement | null {
   return null
 }
 
-function onMouseUp(_event: MouseEvent) {
+function onMouseUp() {
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || !selection.rangeCount) {
     emit('selection-clear')
@@ -215,7 +167,6 @@ defineExpose({ scrollToLine })
   height: 100%;
 }
 
-/* Typography for rendered markdown content */
 .preview-pane :deep(h1) {
   font-family: var(--font-heading);
   font-size: 24px;
@@ -323,7 +274,6 @@ defineExpose({ scrollToLine })
   font-weight: 600;
 }
 
-/* Comment highlights */
 .preview-pane :deep(.comment-highlight) {
   background: var(--comment-bg);
   border-left: 2px solid var(--accent);

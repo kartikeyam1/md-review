@@ -12,8 +12,9 @@ export function generatePrompt(
   const commentLines = sorted
     .map((c, i) => {
       const start = c.startLine + 1 // 1-indexed
-      const end = c.endLine + 1
-      const lineRef = start === end ? `Line ${start}` : `Lines ${start}-${end}`
+      // endLine is end-exclusive, so the last included line (1-indexed) is c.endLine
+      const isSingleLine = c.endLine <= c.startLine + 1
+      const lineRef = isSingleLine ? `Line ${start}` : `Lines ${start}-${c.endLine}`
       return `${i + 1}. On: "${c.selectedText}" (${lineRef})\n   Comment: ${c.body}`
     })
     .join('\n\n')
