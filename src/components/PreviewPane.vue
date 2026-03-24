@@ -351,4 +351,69 @@ defineExpose({ scrollToLine })
 .preview-pane :deep(.hljs-operator) {
   color: var(--text-muted);
 }
+
+/* h4 / h5 / h6 */
+.preview-pane :deep(h4) {
+  font-family: var(--font-heading);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 14px 0 6px;
+}
+
+.preview-pane :deep(h5) {
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 12px 0 6px;
+}
+
+.preview-pane :deep(h6) {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 10px 0 6px;
+}
+
+/* Images */
+.preview-pane :deep(img) {
+  max-width: 100%;
+  border-radius: 6px;
+  display: block;
+  margin: 12px auto;
+}
+
+/* Task list checkboxes */
+.preview-pane :deep(.contains-task-list) {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.preview-pane :deep(.task-list-item) {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.preview-pane :deep(.task-list-item input[type='checkbox']) {
+  appearance: auto;
+  margin: 0;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: default;
+}
+
+.preview-pane :deep(.task-list-item input[type='checkbox']:checked + span),
+.preview-pane :deep(.task-list-item input[type='checkbox']:checked ~ *) {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+}
 </style>

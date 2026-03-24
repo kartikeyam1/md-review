@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
+import taskLists from 'markdown-it-task-lists'
 
 export interface LineMapEntry {
   startLine: number
@@ -61,6 +62,7 @@ export function useMarkdown() {
     },
   })
   md.use(lineDataPlugin)
+  md.use(taskLists, { enabled: true })
 
   function renderHtml(source: string): string {
     return md.render(source)
