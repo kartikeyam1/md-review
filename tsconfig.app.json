@@ -12,6 +12,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
+    "noEmit": true,
+    "composite": true,
     "paths": {
       "@/*": ["./src/*"]
     }
