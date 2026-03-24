@@ -41,7 +41,7 @@ async function copyToClipboard(text: string) {
   <div v-if="visible" class="modal-overlay" @click.self="emit('close')">
     <div class="modal">
       <div class="modal-header">
-        <h2 class="modal-title">Generated Prompt</h2>
+        <h2 class="modal-title">Generated Prompt <span class="modal-title-count" v-if="comments.length">({{ comments.length }} {{ comments.length === 1 ? 'comment' : 'comments' }})</span></h2>
         <button class="modal-close" @click="emit('close')">&times;</button>
       </div>
       <div class="modal-body">
@@ -97,6 +97,12 @@ async function copyToClipboard(text: string) {
   font-family: var(--font-heading);
   font-size: 18px;
   font-weight: 600;
+}
+
+.modal-title-count {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-muted);
 }
 
 .modal-close {

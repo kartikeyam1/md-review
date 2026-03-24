@@ -247,7 +247,9 @@ function handleImportComments() {
         :title="sidebarHidden ? 'Show comments panel' : 'Hide comments panel'"
         @click="sidebarHidden = !sidebarHidden"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="sidebar-toggle-grip"></span>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="sidebar-toggle-grip"></span>
       </button>
       <CommentsSidebar
         v-show="!sidebarHidden"
@@ -298,12 +300,15 @@ function handleImportComments() {
 
 .sidebar-toggle {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 20px;
+  gap: 3px;
+  width: 16px;
   flex-shrink: 0;
   border: none;
   border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   background: var(--bg-page);
   color: var(--text-muted);
   cursor: pointer;
@@ -314,6 +319,18 @@ function handleImportComments() {
 .sidebar-toggle:hover {
   color: var(--text-primary);
   background: var(--bg-surface);
+}
+
+.sidebar-toggle-grip {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+}
+
+.sidebar-toggle:hover .sidebar-toggle-grip {
+  opacity: 0.7;
 }
 
 .sidebar-toggle svg {

@@ -1,6 +1,7 @@
 :root {
   --bg-page: #f7f3eb;
   --bg-surface: #fdfbf7;
+  --bg-code: #f0ebe2;
   --text-primary: #1a1612;
   --text-secondary: #4a4540;
   --text-muted: #8a8480;
@@ -18,6 +19,7 @@
 html.dark {
   --bg-page: #1a1a1e;
   --bg-surface: #242428;
+  --bg-code: #1e1e22;
   --text-primary: #e8e4df;
   --text-secondary: #b0aba5;
   --text-muted: #6e6a65;

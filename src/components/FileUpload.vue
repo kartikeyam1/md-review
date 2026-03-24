@@ -107,9 +107,9 @@ function submitPaste() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   min-height: calc(100vh - 52px);
   padding: 40px;
+  padding-top: calc(12vh);
 }
 
 .upload-area {

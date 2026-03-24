@@ -25,6 +25,10 @@ const filteredComments = computed(() => {
   return props.comments.filter((c) => c.category === filterCategory.value)
 })
 
+function categoryCount(cat: CommentCategory): number {
+  return props.comments.filter((c) => c.category === cat).length
+}
+
 function startEdit(comment: Comment) {
   editingId.value = comment.id
   editBody.value = comment.body
@@ -52,11 +56,11 @@ function toggleFilter(cat: CommentCategory) {
       <div class="sidebar-header-left">
         <button
           class="collapse-toggle"
-          :class="{ collapsed }"
-          title="Toggle comments"
+          :title="collapsed ? 'Expand comments' : 'Collapse comments'"
           @click="collapsed = !collapsed"
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          <svg v-if="collapsed" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
         <span class="sidebar-title">Comments</span>
         <span v-if="comments.length" class="badge">{{ comments.length }}</span>
@@ -90,7 +94,7 @@ function toggleFilter(cat: CommentCategory) {
         :style="filterCategory === cat.value ? { background: cat.color, color: '#fff', borderColor: cat.color } : {}"
         @click="toggleFilter(cat.value)"
       >
-        {{ cat.label }}
+        {{ cat.label }}<template v-if="categoryCount(cat.value)"> ({{ categoryCount(cat.value) }})</template>
       </button>
     </div>
 
@@ -218,7 +222,7 @@ function toggleFilter(cat: CommentCategory) {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: transform 0.15s, color 0.15s;
+  transition: color 0.15s;
   padding: 0;
   flex-shrink: 0;
 }
@@ -226,10 +230,6 @@ function toggleFilter(cat: CommentCategory) {
 .collapse-toggle:hover {
   color: var(--text-primary);
   background: var(--bg-surface);
-}
-
-.collapse-toggle.collapsed {
-  transform: rotate(-90deg);
 }
 
 .sidebar-title {

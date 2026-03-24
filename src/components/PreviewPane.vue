@@ -212,14 +212,15 @@ defineExpose({ scrollToLine })
 
 .preview-pane :deep(code) {
   font-family: var(--font-mono);
-  background: var(--bg-page);
+  background: var(--bg-code, var(--bg-page));
   padding: 2px 5px;
   border-radius: 3px;
   font-size: 13px;
 }
 
 .preview-pane :deep(pre) {
-  background: var(--bg-page);
+  background: var(--bg-code, var(--bg-page));
+  border: 1px solid var(--border);
   padding: 12px;
   border-radius: 6px;
   margin: 0 0 12px;
