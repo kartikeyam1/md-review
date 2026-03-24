@@ -66,7 +66,9 @@ watch(
       adjustedPos.y = props.coords.y + MARGIN
       requestAnimationFrame(() => {
         clampToViewport()
-        popoverRef.value?.querySelector('textarea')?.focus()
+        // Don't auto-focus the textarea — it clears the native browser
+        // selection highlight in preview mode, making the user think their
+        // selected text was lost.
         document.addEventListener('mousedown', onDocumentMouseDown)
       })
     } else {

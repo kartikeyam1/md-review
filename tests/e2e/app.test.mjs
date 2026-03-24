@@ -890,3 +890,161 @@ describe('word count', () => {
     assert.ok(afterCount > beforeCount, `Word count should increase: ${beforeCount} → ${afterCount}`)
   })
 })
+
+// ── Selection preserved when popover opens ───────────────────
+
+describe('selection preserved when popover opens', () => {
+  it('popover shows selected text in editor mode', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // Triple-click to select a line in the editor
+    await page.locator('.cm-line').first().click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    // Popover should be visible
+    const popover = page.locator('.popover')
+    assert.ok(await popover.isVisible(), 'Popover should appear after selection')
+
+    // The popover quote should contain the selected text (not be empty)
+    const quote = await page.locator('.popover-quote').textContent()
+    assert.ok(quote && quote.trim().length > 0, `Popover quote should not be empty, got: "${quote}"`)
+  })
+
+  it('popover shows selected text in preview mode', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    await page.click('button:has-text("Preview")')
+    await page.waitForTimeout(500)
+
+    // Triple-click on the first paragraph to select it
+    const paragraph = page.locator('.preview-pane p').first()
+    await paragraph.click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    const popover = page.locator('.popover')
+    assert.ok(await popover.isVisible(), 'Popover should appear in preview mode')
+
+    const quote = await page.locator('.popover-quote').textContent()
+    assert.ok(quote && quote.trim().length > 0, `Popover quote should not be empty, got: "${quote}"`)
+  })
+
+  it('can submit comment after selection (selection data not lost)', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // Select text in editor
+    await page.locator('.cm-line').first().click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    // Type a comment and submit
+    await page.locator('.popover textarea').fill('Test comment')
+    await page.click('.popover .btn-primary')
+    await page.waitForTimeout(500)
+
+    // Verify comment was added to the sidebar
+    const commentBody = await page.locator('.comment-body').first().textContent()
+    assert.ok(commentBody.includes('Test comment'), `Comment should be added, got: "${commentBody}"`)
+
+    // Verify the comment has a non-empty selected text quote
+    const quote = await page.locator('.comment-quote').first().textContent()
+    assert.ok(quote && quote.trim().length > 2, `Comment quote should have selected text, got: "${quote}"`)
+  })
+
+  it('selected text survives popover textarea focus', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // Select text
+    await page.locator('.cm-line').first().click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    // Click inside the popover textarea (triggers focus)
+    await page.locator('.popover textarea').click()
+    await page.waitForTimeout(300)
+
+    // The popover quote should still show the selected text
+    const quote = await page.locator('.popover-quote').textContent()
+    assert.ok(quote && quote.trim().length > 0, `Selected text should survive textarea focus, got: "${quote}"`)
+
+    // Should still be able to submit a comment
+    await page.locator('.popover textarea').fill('After focus test')
+    await page.click('.popover .btn-primary')
+    await page.waitForTimeout(500)
+
+    const commentCount = await page.locator('.comment-card').count()
+    assert.ok(commentCount >= 1, 'Comment should be added even after textarea focus')
+  })
+
+  it('editor keeps CM selection highlight visible after popover textarea focus', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // Select a line in the editor
+    await page.locator('.cm-line').first().click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    // Popover should be visible (its textarea has auto-focus)
+    assert.ok(await page.locator('.popover').isVisible(), 'Popover should be open')
+
+    // Check that .cm-selectionBackground elements still exist (visual highlight)
+    const selBgCount = await page.locator('.cm-selectionBackground').count()
+    assert.ok(selBgCount > 0, 'cm-selectionBackground should still be rendered when popover is open')
+  })
+
+  it('preview mode: native browser selection persists when popover opens', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    await page.click('button:has-text("Preview")')
+    await page.waitForTimeout(500)
+
+    const paragraph = page.locator('.preview-pane p').first()
+    await paragraph.click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    // The native selection must still be active (not collapsed by textarea focus)
+    const sel = await page.evaluate(() => {
+      const s = window.getSelection()
+      return { text: (s?.toString() || '').trim(), collapsed: s?.isCollapsed }
+    })
+    assert.ok(!sel.collapsed, 'Native selection should NOT be collapsed after popover opens')
+    assert.ok(sel.text.length > 0, `Native selection text should be non-empty, got: "${sel.text}"`)
+
+    // Popover quote must match
+    const quote = await page.locator('.popover-quote').textContent()
+    assert.ok(quote && quote.trim().length > 0, `Popover must retain selected text, got: "${quote}"`)
+
+    // Clicking the textarea to type will clear native selection — that's fine
+    // because the user explicitly decided to start typing
+    await page.locator('.popover textarea').click()
+    await page.waitForTimeout(300)
+    const quoteAfter = await page.locator('.popover-quote').textContent()
+    assert.equal(quoteAfter, quote, 'Popover quote must not change after textarea click')
+  })
+
+  it('second selection replaces first and popover updates', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // First selection
+    const lines = page.locator('.cm-line')
+    await lines.nth(0).click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    const firstQuote = await page.locator('.popover-quote').textContent()
+    assert.ok(firstQuote && firstQuote.trim().length > 0, 'First selection should show in popover')
+
+    // Click away to dismiss the empty popover
+    await page.locator('.sidebar').click({ position: { x: 50, y: 200 } })
+    await page.waitForTimeout(500)
+
+    // Second selection on a different line
+    await lines.nth(4).click({ clickCount: 3 })
+    await page.waitForTimeout(800)
+
+    const secondQuote = await page.locator('.popover-quote').textContent()
+    assert.ok(secondQuote && secondQuote.trim().length > 0, 'Second selection should show in popover')
+  })
+})
