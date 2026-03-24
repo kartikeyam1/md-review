@@ -16,6 +16,7 @@ const paneMode = ref<PaneMode>('edit')
 const markdown = ref('')
 const filename = ref('')
 const showPromptModal = ref(false)
+const sidebarHidden = ref(false)
 
 const { comments, addComment, editComment, deleteComment, clearComments, loadComments } = useComments()
 
@@ -240,7 +241,16 @@ function handleImportComments() {
           @selection-clear="handleSelectionClear"
         />
       </div>
+      <button
+        class="sidebar-toggle"
+        :class="{ collapsed: sidebarHidden }"
+        :title="sidebarHidden ? 'Show comments panel' : 'Hide comments panel'"
+        @click="sidebarHidden = !sidebarHidden"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
       <CommentsSidebar
+        v-show="!sidebarHidden"
         :comments="comments"
         @delete="deleteComment"
         @edit="editComment"
@@ -284,6 +294,34 @@ function handleImportComments() {
 .main-pane {
   flex: 7;
   overflow: hidden;
+}
+
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex-shrink: 0;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-page);
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.sidebar-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+.sidebar-toggle svg {
+  transition: transform 0.15s;
+}
+
+.sidebar-toggle.collapsed svg {
+  transform: rotate(180deg);
 }
 
 .review-layout > :deep(.sidebar) {
