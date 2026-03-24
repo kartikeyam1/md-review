@@ -1,0 +1,256 @@
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount, watch, shallowRef } from 'vue'
+import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, type ViewUpdate } from '@codemirror/view'
+import { EditorState, StateField, StateEffect, RangeSetBuilder } from '@codemirror/state'
+import { markdown } from '@codemirror/lang-markdown'
+import { languages } from '@codemirror/language-data'
+import { defaultKeymap } from '@codemirror/commands'
+import type { Comment } from '@/types'
+
+// ── Props & Emits ──────────────────────────────────────────────
+
+const props = defineProps<{
+  modelValue: string
+  comments: Comment[]
+}>()
+
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+  selection: [payload: { startLine: number; endLine: number; selectedText: string; coords: { x: number; y: number } }]
+  'selection-clear': []
+}>()
+
+// ── Refs ───────────────────────────────────────────────────────
+
+const container = ref<HTMLDivElement | null>(null)
+const view = shallowRef<EditorView | null>(null)
+
+// Guard: prevent echoing external updates back to the parent
+let ignoreNextUpdate = false
+
+// ── Comment decoration machinery ───────────────────────────────
+
+const setCommentsEffect = StateEffect.define<Comment[]>()
+
+const commentLineDecoration = Decoration.line({
+  attributes: {
+    style: 'background: rgba(194, 59, 34, 0.08); border-left: 2px solid #c23b22;',
+  },
+})
+
+const commentField = StateField.define({
+  create() {
+    return Decoration.none
+  },
+  update(decorations, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setCommentsEffect)) {
+        return buildDecorations(tr.state, effect.value)
+      }
+    }
+    // remap on doc changes so positions stay correct
+    if (tr.docChanged) {
+      return decorations.map(tr.changes)
+    }
+    return decorations
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
+
+function buildDecorations(state: EditorState, comments: Comment[]) {
+  const builder = new RangeSetBuilder<Decoration>()
+  const totalLines = state.doc.lines
+
+  // Collect all lines that should be decorated (sorted, unique)
+  const lineSet = new Set<number>()
+  for (const c of comments) {
+    // startLine is 0-indexed, endLine is exclusive
+    for (let l = c.startLine; l < c.endLine; l++) {
+      const cmLine = l + 1 // CodeMirror lines are 1-indexed
+      if (cmLine >= 1 && cmLine <= totalLines) {
+        lineSet.add(cmLine)
+      }
+    }
+  }
+
+  const sortedLines = Array.from(lineSet).sort((a, b) => a - b)
+  for (const lineNum of sortedLines) {
+    const lineObj = state.doc.line(lineNum)
+    builder.add(lineObj.from, lineObj.from, commentLineDecoration)
+  }
+
+  return builder.finish()
+}
+
+// ── Theme ──────────────────────────────────────────────────────
+
+const baseTheme = EditorView.baseTheme({
+  '&': {
+    height: '100%',
+    fontSize: '14px',
+    fontFamily: 'var(--font-mono)',
+    backgroundColor: 'var(--bg-surface)',
+  },
+  '.cm-scroller': {
+    fontFamily: 'var(--font-mono)',
+    overflow: 'auto',
+  },
+  '.cm-gutters': {
+    backgroundColor: 'transparent',
+    color: '#8a8480',
+    border: 'none',
+  },
+  '.cm-content': {
+    caretColor: 'var(--text-primary)',
+  },
+  '&.cm-focused .cm-selectionBackground, ::selection': {
+    backgroundColor: 'rgba(194, 59, 34, 0.15)',
+  },
+  '.cm-activeLine': {
+    backgroundColor: 'transparent',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'transparent',
+  },
+})
+
+// ── Selection listener ─────────────────────────────────────────
+
+const selectionListener = ViewPlugin.fromClass(
+  class {
+    update(update: ViewUpdate) {
+      if (!update.selectionSet && !update.docChanged) return
+
+      const state = update.state
+      const sel = state.selection.main
+
+      if (sel.empty) {
+        emit('selection-clear')
+        return
+      }
+
+      const selectedText = state.sliceDoc(sel.from, sel.to)
+      if (!selectedText.trim()) {
+        emit('selection-clear')
+        return
+      }
+
+      const startLineObj = state.doc.lineAt(sel.from)
+      const endLineObj = state.doc.lineAt(sel.to)
+
+      // Convert to 0-indexed start; endLine is the CM 1-indexed line number
+      // which is already "exclusive" in 0-indexed terms
+      const startLine = startLineObj.number - 1
+      const endLine = endLineObj.number
+
+      // Compute coords from the end of selection for popover positioning
+      const coords = update.view.coordsAtPos(sel.to)
+      const x = coords ? coords.left : 0
+      const y = coords ? coords.bottom : 0
+
+      emit('selection', { startLine, endLine, selectedText, coords: { x, y } })
+    }
+  },
+)
+
+// ── Lifecycle ──────────────────────────────────────────────────
+
+onMounted(() => {
+  if (!container.value) return
+
+  const state = EditorState.create({
+    doc: props.modelValue,
+    extensions: [
+      lineNumbers(),
+      drawSelection(),
+      keymap.of(defaultKeymap),
+      markdown({ codeLanguages: languages }),
+      commentField,
+      baseTheme,
+      selectionListener,
+      EditorView.updateListener.of((update: ViewUpdate) => {
+        if (update.docChanged && !ignoreNextUpdate) {
+          emit('update:modelValue', update.state.doc.toString())
+        }
+        ignoreNextUpdate = false
+      }),
+    ],
+  })
+
+  view.value = new EditorView({
+    state,
+    parent: container.value,
+  })
+
+  // Apply initial comments
+  if (props.comments.length > 0) {
+    view.value.dispatch({
+      effects: setCommentsEffect.of(props.comments),
+    })
+  }
+})
+
+onBeforeUnmount(() => {
+  view.value?.destroy()
+})
+
+// ── Watchers ───────────────────────────────────────────────────
+
+watch(
+  () => props.comments,
+  (newComments) => {
+    if (!view.value) return
+    view.value.dispatch({
+      effects: setCommentsEffect.of(newComments),
+    })
+  },
+  { deep: true },
+)
+
+watch(
+  () => props.modelValue,
+  (newValue) => {
+    if (!view.value) return
+    const current = view.value.state.doc.toString()
+    if (newValue === current) return
+
+    ignoreNextUpdate = true
+    view.value.dispatch({
+      changes: {
+        from: 0,
+        to: view.value.state.doc.length,
+        insert: newValue,
+      },
+    })
+  },
+)
+
+// ── Exposed methods ────────────────────────────────────────────
+
+function scrollToLine(line: number) {
+  if (!view.value) return
+  // line is 0-indexed from external callers; CM uses 1-indexed
+  const cmLine = Math.max(1, Math.min(line + 1, view.value.state.doc.lines))
+  const lineObj = view.value.state.doc.line(cmLine)
+  view.value.dispatch({
+    effects: EditorView.scrollIntoView(lineObj.from, { y: 'center' }),
+  })
+}
+
+defineExpose({ scrollToLine })
+</script>
+
+<template>
+  <div ref="container" class="editor-pane" />
+</template>
+
+<style scoped>
+.editor-pane {
+  height: 100%;
+  overflow: hidden;
+}
+
+.editor-pane :deep(.cm-editor) {
+  height: 100%;
+}
+</style>
