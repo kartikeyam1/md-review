@@ -15,6 +15,7 @@ const emit = defineEmits<{
   'import-comments': []
 }>()
 
+const collapsed = ref(false)
 const filterCategory = ref<CommentCategory | null>(null)
 const editingId = ref<string | null>(null)
 const editBody = ref('')
@@ -49,10 +50,18 @@ function toggleFilter(cat: CommentCategory) {
   <aside class="sidebar">
     <div class="sidebar-header">
       <div class="sidebar-header-left">
+        <button
+          class="collapse-toggle"
+          :class="{ collapsed }"
+          title="Toggle comments"
+          @click="collapsed = !collapsed"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
         <span class="sidebar-title">Comments</span>
         <span v-if="comments.length" class="badge">{{ comments.length }}</span>
       </div>
-      <div class="sidebar-header-actions">
+      <div v-if="!collapsed" class="sidebar-header-actions">
         <button
           class="sidebar-action-btn"
           title="Import comments (.json)"
@@ -71,6 +80,7 @@ function toggleFilter(cat: CommentCategory) {
       </div>
     </div>
 
+    <template v-if="!collapsed">
     <div v-if="comments.length > 0" class="filter-row">
       <button
         v-for="cat in COMMENT_CATEGORIES"
@@ -147,6 +157,7 @@ function toggleFilter(cat: CommentCategory) {
         </div>
       </div>
     </div>
+    </template>
   </aside>
 </template>
 
@@ -194,6 +205,31 @@ function toggleFilter(cat: CommentCategory) {
 .sidebar-action-btn:hover {
   color: var(--text-primary);
   background: var(--bg-surface);
+}
+
+.collapse-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: transform 0.15s, color 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.collapse-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+.collapse-toggle.collapsed {
+  transform: rotate(-90deg);
 }
 
 .sidebar-title {

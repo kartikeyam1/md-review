@@ -2,7 +2,6 @@
 import { ref, computed, onMounted } from 'vue'
 import type { AppMode, PaneMode, CommentCategory } from '@/types'
 import { useComments } from '@/composables/useComments'
-import { generatePrompt } from '@/composables/usePromptGenerator'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
 import HeaderBar from '@/components/HeaderBar.vue'
 import FileUpload from '@/components/FileUpload.vue'
@@ -147,12 +146,6 @@ const wordCount = computed(() => {
 
 const charCount = computed(() => markdown.value.length)
 
-const prompt = computed(() =>
-  showPromptModal.value
-    ? generatePrompt(filename.value, comments.value, markdown.value)
-    : ''
-)
-
 // ── Export / Import comments ──────────────────────────────────
 
 function handleExportComments() {
@@ -259,7 +252,9 @@ function handleImportComments() {
 
     <PromptModal
       :visible="showPromptModal"
-      :prompt="prompt"
+      :filename="filename"
+      :comments="comments"
+      :content="markdown"
       @close="showPromptModal = false"
     />
   </div>

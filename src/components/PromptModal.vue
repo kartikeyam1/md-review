@@ -1,18 +1,29 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import type { Comment } from '@/types'
+import { generatePrompt } from '@/composables/usePromptGenerator'
 
-defineProps<{
+const props = defineProps<{
   visible: boolean
-  prompt: string
+  filename: string
+  comments: Comment[]
+  content: string
 }>()
 
 const emit = defineEmits<{
   close: []
 }>()
 
+const includeFullDocument = ref(true)
 const copied = ref(false)
-
 const copyFailed = ref(false)
+
+const prompt = computed(() => {
+  if (!props.visible) return ''
+  return generatePrompt(props.filename, props.comments, props.content, {
+    includeFullDocument: includeFullDocument.value,
+  })
+})
 
 async function copyToClipboard(text: string) {
   try {
@@ -37,10 +48,16 @@ async function copyToClipboard(text: string) {
         <pre class="prompt-text">{{ prompt }}</pre>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-ghost" @click="emit('close')">Back to Review</button>
-        <button class="btn btn-primary" @click="copyToClipboard(prompt)">
-          {{ copyFailed ? 'Copy failed' : copied ? 'Copied!' : 'Copy to Clipboard' }}
-        </button>
+        <label class="include-doc-toggle">
+          <input type="checkbox" v-model="includeFullDocument" />
+          <span>Include full document</span>
+        </label>
+        <div class="modal-footer-actions">
+          <button class="btn btn-ghost" @click="emit('close')">Back to Review</button>
+          <button class="btn btn-primary" @click="copyToClipboard(prompt)">
+            {{ copyFailed ? 'Copy failed' : copied ? 'Copied!' : 'Copy to Clipboard' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -115,9 +132,29 @@ async function copyToClipboard(text: string) {
 
 .modal-footer {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
   padding: 12px 20px;
   border-top: 1px solid var(--border);
+}
+
+.modal-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.include-doc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.include-doc-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 </style>
