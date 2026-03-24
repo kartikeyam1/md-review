@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import type { PaneMode } from '@/types'
+import type { PaneMode, ThemeMode } from '@/types'
 
 defineProps<{
   filename: string
   paneMode: PaneMode
   commentCount: number
+  theme: ThemeMode
+  wordCount: number
+  charCount: number
 }>()
 
 const emit = defineEmits<{
   'update:paneMode': [mode: PaneMode]
+  'update:theme': [mode: ThemeMode]
   'open-file': []
+  'new-doc': []
   'generate-prompt': []
 }>()
 </script>
@@ -19,30 +24,43 @@ const emit = defineEmits<{
     <div class="header-left">
       <h1 class="logo">mdreview<span class="logo-accent">.oss</span></h1>
       <span v-if="filename" class="filename">{{ filename }}</span>
+      <span v-if="filename" class="doc-stats">
+        <span class="doc-stats-sep">·</span>
+        <span class="doc-stats-num">{{ wordCount.toLocaleString() }}</span> words
+        <span class="doc-stats-sep">·</span>
+        <span class="doc-stats-num">{{ charCount.toLocaleString() }}</span> chars
+      </span>
     </div>
-    <div v-if="filename" class="header-right">
-      <div class="toggle">
-        <button
-          class="toggle-btn"
-          :class="{ active: paneMode === 'edit' }"
-          @click="emit('update:paneMode', 'edit')"
-        >
-          Edit
-        </button>
-        <button
-          class="toggle-btn"
-          :class="{ active: paneMode === 'preview' }"
-          @click="emit('update:paneMode', 'preview')"
-        >
-          Preview
-        </button>
-      </div>
+    <div class="header-right">
+      <template v-if="filename">
+        <div class="toggle">
+          <button
+            class="toggle-btn"
+            :class="{ active: paneMode === 'edit' }"
+            @click="emit('update:paneMode', 'edit')"
+          >
+            Edit
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: paneMode === 'preview' }"
+            @click="emit('update:paneMode', 'preview')"
+          >
+            Preview
+          </button>
+        </div>
+        <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
+      </template>
       <button class="btn btn-ghost" @click="emit('open-file')">Open .md</button>
-      <button class="btn btn-primary" :disabled="commentCount === 0" @click="emit('generate-prompt')">Generate Prompt</button>
-    </div>
-    <div v-else class="header-right">
-      <button class="btn btn-ghost" @click="emit('open-file')">Open .md</button>
-      <button class="btn btn-primary" disabled>Generate Prompt</button>
+      <button class="btn btn-primary" :disabled="commentCount === 0 || !filename" @click="emit('generate-prompt')">Generate Prompt</button>
+      <button
+        class="btn-icon"
+        :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+        @click="emit('update:theme', theme === 'dark' ? 'light' : 'dark')"
+      >
+        <svg v-if="theme === 'light'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
     </div>
   </header>
 </template>
@@ -80,6 +98,23 @@ const emit = defineEmits<{
   font-size: 13px;
 }
 
+.doc-stats {
+  color: var(--text-muted);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.doc-stats-sep {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.doc-stats-num {
+  font-family: var(--font-mono);
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -114,5 +149,22 @@ const emit = defineEmits<{
 .btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  transition: opacity 0.15s;
+}
+
+.btn-icon:hover {
+  opacity: 0.7;
 }
 </style>

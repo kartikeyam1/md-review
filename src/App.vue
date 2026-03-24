@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import type { AppMode, PaneMode } from '@/types'
+import { ref, computed, onMounted } from 'vue'
+import type { AppMode, PaneMode, CommentCategory } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { generatePrompt } from '@/composables/usePromptGenerator'
+import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
 import HeaderBar from '@/components/HeaderBar.vue'
 import FileUpload from '@/components/FileUpload.vue'
 import EditorPane from '@/components/EditorPane.vue'
@@ -17,9 +18,34 @@ const markdown = ref('')
 const filename = ref('')
 const showPromptModal = ref(false)
 
-const { comments, addComment, deleteComment, clearComments } = useComments()
+const { comments, addComment, editComment, deleteComment, clearComments, loadComments } = useComments()
 
-// Selection state for CommentPopover
+const { theme, setTheme } = useThemePersistence()
+
+const { clearPersisted } = usePersistence(
+  markdown,
+  filename,
+  comments,
+  loadComments,
+  (mode) => { appMode.value = mode },
+)
+
+// Load file from ?filePath= URL param (dev server only)
+onMounted(async () => {
+  const params = new URLSearchParams(window.location.search)
+  const filePath = params.get('filePath')
+  if (!filePath) return
+
+  try {
+    const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`)
+    if (!res.ok) return
+    const { content, filename: name } = await res.json()
+    handleFileLoaded(content, name)
+  } catch {
+    // API not available (production build) — ignore
+  }
+})
+
 const selection = ref<{
   startLine: number
   endLine: number
@@ -41,6 +67,19 @@ function handleFileLoaded(content: string, name: string) {
   appMode.value = 'review'
 }
 
+function handleNewDoc() {
+  clearComments()
+  clearPersisted()
+  showPopover.value = false
+  selection.value = null
+  markdown.value = ''
+  filename.value = ''
+  appMode.value = 'upload'
+  if (window.location.search) {
+    window.history.replaceState({}, '', window.location.pathname)
+  }
+}
+
 function handleSelection(info: {
   startLine: number
   endLine: number
@@ -59,13 +98,14 @@ function handleSelectionClear() {
   }, 200)
 }
 
-function handleAddComment(body: string) {
+function handleAddComment(body: string, category: CommentCategory) {
   if (!selection.value) return
   addComment({
     startLine: selection.value.startLine,
     endLine: selection.value.endLine,
     selectedText: selection.value.selectedText,
     body,
+    category,
   })
   showPopover.value = false
   selection.value = null
@@ -100,11 +140,66 @@ function handleOpenFile() {
   input.click()
 }
 
+const wordCount = computed(() => {
+  if (!markdown.value) return 0
+  return markdown.value.split(/\s+/).filter(w => w.length > 0).length
+})
+
+const charCount = computed(() => markdown.value.length)
+
 const prompt = computed(() =>
   showPromptModal.value
     ? generatePrompt(filename.value, comments.value, markdown.value)
     : ''
 )
+
+// ── Export / Import comments ──────────────────────────────────
+
+function handleExportComments() {
+  if (comments.value.length === 0) return
+
+  const data = {
+    version: 1,
+    filename: filename.value,
+    exportedAt: new Date().toISOString(),
+    comments: comments.value,
+  }
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const baseName = filename.value.replace(/\.[^.]+$/, '')
+  a.download = `${baseName}.comments.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function handleImportComments() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json'
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result as string)
+        const imported = Array.isArray(data.comments) ? data.comments : Array.isArray(data) ? data : null
+        if (!imported || !imported.every((c: any) => typeof c.startLine === 'number' && typeof c.body === 'string')) {
+          alert('Invalid comment file format.')
+          return
+        }
+        loadComments(imported)
+      } catch {
+        alert('Could not parse comment file.')
+      }
+    }
+    reader.readAsText(file)
+  }
+  input.click()
+}
 </script>
 
 <template>
@@ -113,8 +208,13 @@ const prompt = computed(() =>
       :filename="filename"
       :pane-mode="paneMode"
       :comment-count="comments.length"
+      :theme="theme"
+      :word-count="wordCount"
+      :char-count="charCount"
       @update:pane-mode="paneMode = $event"
+      @update:theme="setTheme"
       @open-file="handleOpenFile"
+      @new-doc="handleNewDoc"
       @generate-prompt="showPromptModal = true"
     />
 
@@ -142,7 +242,10 @@ const prompt = computed(() =>
       <CommentsSidebar
         :comments="comments"
         @delete="deleteComment"
+        @edit="editComment"
         @scroll-to="handleScrollTo"
+        @export-comments="handleExportComments"
+        @import-comments="handleImportComments"
       />
     </div>
 
