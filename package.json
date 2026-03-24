@@ -1,10 +1,26 @@
 {
   "name": "md-review",
   "version": "0.1.0",
-  "private": true,
+  "description": "Review markdown files with inline comments and generate AI prompts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kartikeyam1/md-review.git"
+  },
+  "homepage": "https://github.com/kartikeyam1/md-review",
+  "keywords": [
+    "markdown",
+    "review",
+    "comments",
+    "ai",
+    "prompt",
+    "editor",
+    "vue",
+    "codemirror"
+  ],
   "type": "module",
   "scripts": {
-    "dev": "lsof -ti:58747 | xargs kill -9 2>/dev/null; vite",
+    "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",

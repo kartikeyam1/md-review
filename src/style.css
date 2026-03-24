@@ -10,6 +10,23 @@
   --font-body: 'DM Sans', 'Helvetica Neue', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --comment-bg: rgba(194, 59, 34, 0.08);
+  --selection-bg: rgba(194, 59, 34, 0.18);
+  --shadow-color: rgba(26, 22, 18, 0.08);
+  --overlay-bg: rgba(26, 22, 18, 0.5);
+}
+
+html.dark {
+  --bg-page: #1a1a1e;
+  --bg-surface: #242428;
+  --text-primary: #e8e4df;
+  --text-secondary: #b0aba5;
+  --text-muted: #6e6a65;
+  --accent: #e05a42;
+  --border: #3a3a3e;
+  --comment-bg: rgba(224, 90, 66, 0.1);
+  --selection-bg: rgba(224, 90, 66, 0.25);
+  --shadow-color: rgba(0, 0, 0, 0.25);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
 }
 
 *,

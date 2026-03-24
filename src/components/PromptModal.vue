@@ -50,7 +50,7 @@ async function copyToClipboard(text: string) {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(26, 22, 18, 0.5);
+  background: var(--overlay-bg, rgba(26, 22, 18, 0.5));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -65,7 +65,7 @@ async function copyToClipboard(text: string) {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(26, 22, 18, 0.15);
+  box-shadow: 0 8px 32px var(--shadow-color, rgba(26, 22, 18, 0.15));
 }
 
 .modal-header {

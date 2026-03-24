@@ -5,22 +5,24 @@ import type { Comment } from '@/types'
 describe('generatePrompt', () => {
   const sampleContent = '# Title\n\nSome text\n\n## Section\n\n- Item'
 
-  it('generates prompt with single-line comment', () => {
+  it('generates prompt with single-line comment and category tag', () => {
     const comments: Comment[] = [
       {
         id: '1',
         startLine: 4,
-        endLine: 5, // end-exclusive: line 4 only
+        endLine: 5,
         selectedText: 'Section',
         body: 'Rename this section',
+        category: 'suggestion',
         createdAt: 1,
       },
     ]
     const result = generatePrompt('readme.md', comments, sampleContent)
     expect(result).toContain('readme.md')
     expect(result).toContain('"Section"')
-    expect(result).toContain('Line 5') // 1-indexed
+    expect(result).toContain('Line 5')
     expect(result).not.toContain('Lines 5-')
+    expect(result).toContain('[suggestion]')
     expect(result).toContain('Rename this section')
     expect(result).toContain(sampleContent)
   })
@@ -30,14 +32,16 @@ describe('generatePrompt', () => {
       {
         id: '1',
         startLine: 2,
-        endLine: 5, // end-exclusive: lines 2,3,4
+        endLine: 5,
         selectedText: 'Some text',
         body: 'Expand this',
+        category: 'must-fix',
         createdAt: 1,
       },
     ]
     const result = generatePrompt('doc.md', comments, sampleContent)
-    expect(result).toContain('Lines 3-5') // 1-indexed start to 1-indexed last line
+    expect(result).toContain('Lines 3-5')
+    expect(result).toContain('[must-fix]')
   })
 
   it('returns empty string for no comments', () => {
@@ -47,8 +51,8 @@ describe('generatePrompt', () => {
 
   it('sorts comments by line number in output', () => {
     const comments: Comment[] = [
-      { id: '2', startLine: 4, endLine: 5, selectedText: 'b', body: 'second', createdAt: 2 },
-      { id: '1', startLine: 0, endLine: 1, selectedText: 'a', body: 'first', createdAt: 1 },
+      { id: '2', startLine: 4, endLine: 5, selectedText: 'b', body: 'second', category: 'nit', createdAt: 2 },
+      { id: '1', startLine: 0, endLine: 1, selectedText: 'a', body: 'first', category: 'question', createdAt: 1 },
     ]
     const result = generatePrompt('doc.md', comments, sampleContent)
     const firstIdx = result.indexOf('first')

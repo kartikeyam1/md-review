@@ -9,6 +9,12 @@ describe('FileUpload', () => {
     expect(wrapper.text()).toContain('.md')
   })
 
+  it('shows paste and blank options', () => {
+    const wrapper = mount(FileUpload)
+    expect(wrapper.text()).toContain('Paste markdown')
+    expect(wrapper.text()).toContain('Start blank')
+  })
+
   it('emits file-loaded on valid file', async () => {
     const wrapper = mount(FileUpload)
     const file = new File(['# Hello'], 'test.md', { type: 'text/markdown' })
@@ -22,5 +28,14 @@ describe('FileUpload', () => {
 
     expect(wrapper.emitted('file-loaded')).toBeTruthy()
     expect(wrapper.emitted('file-loaded')![0]).toEqual(['# Hello', 'test.md'])
+  })
+
+  it('emits file-loaded with blank content when Start blank clicked', async () => {
+    const wrapper = mount(FileUpload)
+    const blankBtn = wrapper.findAll('button').find((b) => b.text() === 'Start blank')
+    expect(blankBtn).toBeTruthy()
+    await blankBtn!.trigger('click')
+    expect(wrapper.emitted('file-loaded')).toBeTruthy()
+    expect(wrapper.emitted('file-loaded')![0]).toEqual(['', 'untitled.md'])
   })
 })

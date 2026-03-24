@@ -84,7 +84,7 @@ function buildDecorations(state: EditorState, comments: Comment[]) {
 
 // ── Theme ──────────────────────────────────────────────────────
 
-const baseTheme = EditorView.baseTheme({
+const editorTheme = EditorView.theme({
   '&': {
     height: '100%',
     fontSize: '14px',
@@ -97,14 +97,17 @@ const baseTheme = EditorView.baseTheme({
   },
   '.cm-gutters': {
     backgroundColor: 'transparent',
-    color: '#8a8480',
+    color: 'var(--text-muted)',
     border: 'none',
   },
   '.cm-content': {
     caretColor: 'var(--text-primary)',
   },
-  '&.cm-focused .cm-selectionBackground, ::selection': {
-    backgroundColor: 'rgba(194, 59, 34, 0.15)',
+  '&.cm-focused .cm-selectionBackground': {
+    backgroundColor: 'var(--selection-bg) !important',
+  },
+  '.cm-selectionBackground': {
+    backgroundColor: 'var(--selection-bg) !important',
   },
   '.cm-activeLine': {
     backgroundColor: 'transparent',
@@ -173,7 +176,7 @@ onMounted(() => {
       keymap.of(defaultKeymap),
       markdown({ codeLanguages: languages }),
       commentField,
-      baseTheme,
+      editorTheme,
       selectionListener,
       EditorView.updateListener.of((update: ViewUpdate) => {
         if (update.docChanged && !ignoreNextUpdate) {
@@ -203,10 +206,20 @@ onBeforeUnmount(() => {
 
 // ── Watchers ───────────────────────────────────────────────────
 
+// Only rebuild decorations when comment line ranges change (not body/category edits)
+function commentLineKey(comments: Comment[]): string {
+  return comments.map((c) => `${c.id}:${c.startLine}:${c.endLine}`).join(',')
+}
+
+let lastLineKey = ''
+
 watch(
   () => props.comments,
   (newComments) => {
     if (!view.value) return
+    const key = commentLineKey(newComments)
+    if (key === lastLineKey) return
+    lastLineKey = key
     view.value.dispatch({
       effects: setCommentsEffect.of(newComments),
     })

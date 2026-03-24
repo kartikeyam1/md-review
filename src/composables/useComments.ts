@@ -18,6 +18,13 @@ export function useComments() {
     })
   }
 
+  function editComment(id: string, updates: Partial<Pick<Comment, 'body' | 'category'>>) {
+    const idx = _comments.value.findIndex((c) => c.id === id)
+    if (idx !== -1) {
+      _comments.value[idx] = { ..._comments.value[idx], ...updates }
+    }
+  }
+
   function deleteComment(id: string) {
     _comments.value = _comments.value.filter((c) => c.id !== id)
   }
@@ -26,5 +33,9 @@ export function useComments() {
     _comments.value = []
   }
 
-  return { comments, addComment, deleteComment, clearComments }
+  function loadComments(loaded: Comment[]) {
+    _comments.value = loaded
+  }
+
+  return { comments, addComment, editComment, deleteComment, clearComments, loadComments }
 }
