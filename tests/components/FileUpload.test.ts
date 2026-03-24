@@ -1,0 +1,26 @@
+import { describe, it, expect } from 'vitest'
+import { mount } from '@vue/test-utils'
+import FileUpload from '@/components/FileUpload.vue'
+
+describe('FileUpload', () => {
+  it('renders upload area with instructions', () => {
+    const wrapper = mount(FileUpload)
+    expect(wrapper.text()).toContain('Drop your file here')
+    expect(wrapper.text()).toContain('.md')
+  })
+
+  it('emits file-loaded on valid file', async () => {
+    const wrapper = mount(FileUpload)
+    const file = new File(['# Hello'], 'test.md', { type: 'text/markdown' })
+
+    const input = wrapper.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [file] })
+    await input.trigger('change')
+
+    // Wait for FileReader
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(wrapper.emitted('file-loaded')).toBeTruthy()
+    expect(wrapper.emitted('file-loaded')![0]).toEqual(['# Hello', 'test.md'])
+  })
+})
