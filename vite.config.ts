@@ -33,6 +33,7 @@ function localFileApi(): Plugin {
 }
 
 export default defineConfig({
+  base: process.env.GITHUB_PAGES === 'true' ? '/md-review/' : '/',
   plugins: [vue(), localFileApi()],
   server: {
     port: parseInt(process.env.PORT || '58747'),
