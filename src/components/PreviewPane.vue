@@ -163,6 +163,7 @@ defineExpose({ scrollToLine })
   font-size: 15px;
   line-height: 1.7;
   color: var(--text-primary);
+  background: var(--bg-surface);
   overflow-y: auto;
   height: 100%;
 }
@@ -260,6 +261,7 @@ defineExpose({ scrollToLine })
   border-collapse: collapse;
   width: 100%;
   margin: 0 0 12px;
+  font-size: 14px;
 }
 
 .preview-pane :deep(th),
@@ -272,6 +274,15 @@ defineExpose({ scrollToLine })
 .preview-pane :deep(th) {
   background: var(--bg-page);
   font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-pane :deep(tbody tr:nth-child(even)) {
+  background: var(--bg-page);
+}
+
+.preview-pane :deep(tbody tr:hover) {
+  background: var(--comment-bg);
 }
 
 .preview-pane :deep(.comment-highlight) {
@@ -279,5 +290,65 @@ defineExpose({ scrollToLine })
   border-left: 2px solid var(--accent);
   padding-left: 8px;
   margin-left: -10px;
+}
+
+/* highlight.js token colours — mapped to theme CSS custom properties */
+.preview-pane :deep(.hljs-keyword),
+.preview-pane :deep(.hljs-selector-tag),
+.preview-pane :deep(.hljs-tag) {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.preview-pane :deep(.hljs-string),
+.preview-pane :deep(.hljs-attr),
+.preview-pane :deep(.hljs-selector-attr) {
+  color: var(--text-secondary);
+}
+
+.preview-pane :deep(.hljs-comment),
+.preview-pane :deep(.hljs-quote) {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.preview-pane :deep(.hljs-number),
+.preview-pane :deep(.hljs-literal) {
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.preview-pane :deep(.hljs-function),
+.preview-pane :deep(.hljs-title),
+.preview-pane :deep(.hljs-title\.function_) {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.preview-pane :deep(.hljs-built_in),
+.preview-pane :deep(.hljs-class) {
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+.preview-pane :deep(.hljs-type),
+.preview-pane :deep(.hljs-selector-class) {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.preview-pane :deep(.hljs-variable),
+.preview-pane :deep(.hljs-template-variable) {
+  color: var(--text-secondary);
+}
+
+.preview-pane :deep(.hljs-meta),
+.preview-pane :deep(.hljs-meta-keyword) {
+  color: var(--text-muted);
+}
+
+.preview-pane :deep(.hljs-punctuation),
+.preview-pane :deep(.hljs-operator) {
+  color: var(--text-muted);
 }
 </style>
