@@ -9,6 +9,7 @@ defineProps<{
   wordCount: number
   charCount: number
   canRefresh: boolean
+  sharing: boolean
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +19,7 @@ const emit = defineEmits<{
   'new-doc': []
   'refresh': []
   'generate-prompt': []
+  'share': []
 }>()
 </script>
 
@@ -55,6 +57,7 @@ const emit = defineEmits<{
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
       </template>
       <button class="btn btn-ghost" @click="emit('open-file')">Open .md</button>
+      <button class="btn btn-ghost" :disabled="!filename || sharing" @click="emit('share')">{{ sharing ? 'Sharing…' : 'Share' }}</button>
       <button class="btn btn-primary" :disabled="commentCount === 0 || !filename" @click="emit('generate-prompt')">Generate Prompt</button>
       <button
         class="btn-icon"

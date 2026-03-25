@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import type { AppMode, PaneMode, CommentCategory } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
+import { useShare } from '@/composables/useShare'
 import HeaderBar from '@/components/HeaderBar.vue'
 import FileUpload from '@/components/FileUpload.vue'
 import EditorPane from '@/components/EditorPane.vue'
@@ -10,6 +11,7 @@ import PreviewPane from '@/components/PreviewPane.vue'
 import CommentsSidebar from '@/components/CommentsSidebar.vue'
 import CommentPopover from '@/components/CommentPopover.vue'
 import PromptModal from '@/components/PromptModal.vue'
+import ShareModal from '@/components/ShareModal.vue'
 
 const appMode = ref<AppMode>('upload')
 const paneMode = ref<PaneMode>('edit')
@@ -30,6 +32,11 @@ const { clearPersisted } = usePersistence(
   (mode) => { appMode.value = mode },
 )
 
+const { sharing, shareError, createShare, loadShare, getShareIdFromHash, setShareHash, getShareUrls } = useShare()
+
+const showShareModal = ref(false)
+const shareResult = ref<{ ui: string; api: string; comments: string; markdown: string } | null>(null)
+
 // Load file from ?filePath= URL param (dev server only)
 const filePathParam = ref<string | null>(null)
 
@@ -47,9 +54,34 @@ async function loadFromFilePath() {
   }
 }
 
+async function handleShare() {
+  const id = await createShare(markdown.value, filename.value, comments.value)
+  if (id) {
+    setShareHash(id)
+    shareResult.value = getShareUrls(id)
+    showShareModal.value = true
+  } else {
+    alert(shareError.value || 'Failed to create share link.')
+  }
+}
+
+async function loadSharedDoc() {
+  const shareId = getShareIdFromHash()
+  if (!shareId) return
+
+  const data = await loadShare(shareId)
+  if (data) {
+    handleFileLoaded(data.markdown, data.filename)
+    if (data.comments?.length) {
+      loadComments(data.comments)
+    }
+  }
+}
+
 onMounted(() => {
   filePathParam.value = new URLSearchParams(window.location.search).get('filePath')
   loadFromFilePath()
+  loadSharedDoc()
 })
 
 const selection = ref<{
@@ -212,12 +244,14 @@ function handleImportComments() {
       :word-count="wordCount"
       :char-count="charCount"
       :can-refresh="!!filePathParam"
+      :sharing="sharing"
       @update:pane-mode="paneMode = $event"
       @update:theme="setTheme"
       @open-file="handleOpenFile"
       @new-doc="handleNewDoc"
       @generate-prompt="showPromptModal = true"
       @refresh="loadFromFilePath"
+      @share="handleShare"
     />
 
     <FileUpload v-if="appMode === 'upload'" @file-loaded="handleFileLoaded" />
@@ -276,6 +310,14 @@ function handleImportComments() {
       :comments="comments"
       :content="markdown"
       @close="showPromptModal = false"
+    />
+
+    <ShareModal
+      :visible="showShareModal"
+      :filename="filename"
+      :urls="shareResult"
+      :comment-count="comments.length"
+      @close="showShareModal = false"
     />
   </div>
 </template>
