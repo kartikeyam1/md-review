@@ -20,6 +20,7 @@ const paneMode = ref<PaneMode>('edit')
 const markdown = ref('')
 const filename = ref('')
 const pasteId = ref<string | null>(null)
+const serverMarkdown = ref('')
 const showPromptModal = ref(false)
 const sidebarHidden = ref(false)
 
@@ -73,6 +74,11 @@ async function handleShare() {
   }
 }
 
+async function handleSaveMarkdown() {
+  const ok = await sync.saveMarkdown()
+  if (ok) serverMarkdown.value = markdown.value
+}
+
 async function loadSharedDoc() {
   const shareId = getShareIdFromHash()
   if (!shareId) return
@@ -80,6 +86,7 @@ async function loadSharedDoc() {
   const data = await loadShare(shareId)
   if (data) {
     handleFileLoaded(data.markdown, data.filename)
+    serverMarkdown.value = data.markdown
     if (data.comments?.length) {
       loadComments(data.comments)
     }
@@ -230,6 +237,10 @@ const wordCount = computed(() => {
 
 const charCount = computed(() => markdown.value.length)
 
+const hasUnsavedMarkdown = computed(() =>
+  !!pasteId.value && markdown.value !== serverMarkdown.value
+)
+
 // ── Export / Import comments ──────────────────────────────────
 
 function handleExportComments() {
@@ -290,6 +301,8 @@ function handleImportComments() {
       :char-count="charCount"
       :can-refresh="!!filePathParam"
       :sharing="sharing"
+      :sync-status="sync.syncStatus.value"
+      :has-unsaved-markdown="hasUnsavedMarkdown"
       @update:pane-mode="paneMode = $event"
       @update:theme="setTheme"
       @open-file="handleOpenFile"
@@ -297,6 +310,7 @@ function handleImportComments() {
       @generate-prompt="showPromptModal = true"
       @refresh="loadFromFilePath"
       @share="handleShare"
+      @save-markdown="handleSaveMarkdown"
     />
 
     <FileUpload v-if="appMode === 'upload'" @file-loaded="handleFileLoaded" />

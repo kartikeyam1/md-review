@@ -10,6 +10,8 @@ defineProps<{
   charCount: number
   canRefresh: boolean
   sharing: boolean
+  syncStatus: 'local' | 'synced' | 'error'
+  hasUnsavedMarkdown: boolean
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +22,7 @@ const emit = defineEmits<{
   'refresh': []
   'generate-prompt': []
   'share': []
+  'save-markdown': []
 }>()
 </script>
 
@@ -53,6 +56,17 @@ const emit = defineEmits<{
             Preview
           </button>
         </div>
+        <span v-if="syncStatus !== 'local'" class="sync-indicator" :class="syncStatus" :title="syncStatus === 'synced' ? 'Synced with server' : 'Sync error'">
+          <span class="sync-dot"></span>
+          <span class="sync-label">{{ syncStatus === 'synced' ? 'Live' : 'Offline' }}</span>
+        </span>
+        <button
+          v-if="syncStatus !== 'local' && hasUnsavedMarkdown && paneMode === 'edit'"
+          class="btn btn-primary btn-save"
+          @click="emit('save-markdown')"
+        >
+          Save
+        </button>
         <button v-if="canRefresh" class="btn btn-ghost" title="Reload file from disk and reset comments" @click="emit('refresh')">Refresh</button>
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
       </template>
@@ -172,5 +186,34 @@ const emit = defineEmits<{
 
 .btn-icon:hover {
   opacity: 0.7;
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+.sync-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.sync-indicator.error .sync-dot {
+  background: #ef4444;
+}
+
+.sync-label {
+  font-weight: 500;
+}
+
+.btn-save {
+  padding: 4px 14px;
+  font-size: 13px;
 }
 </style>
