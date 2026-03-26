@@ -70,7 +70,7 @@ describe('useComments', () => {
   it('loads comments from external source', () => {
     const { comments, loadComments } = useComments()
     loadComments([
-      { id: 'x', startLine: 0, endLine: 1, selectedText: 'hi', body: 'test', category: 'question', createdAt: 1 },
+      { id: 'x', startLine: 0, endLine: 1, selectedText: 'hi', body: 'test', category: 'question', createdAt: 1, replies: [] },
     ])
     expect(comments.value).toHaveLength(1)
     expect(comments.value[0].id).toBe('x')

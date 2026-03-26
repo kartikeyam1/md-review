@@ -2,7 +2,7 @@ import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
 import type { Comment, CommentCategory, Reply } from '@/types'
 import { useShare } from '@/composables/useShare'
 
-type NewComment = Omit<Comment, 'id' | 'createdAt'>
+type NewComment = Omit<Comment, 'id' | 'createdAt' | 'replies'>
 
 export function useSync(
   pasteId: Ref<string | null>,
