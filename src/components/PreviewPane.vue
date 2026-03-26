@@ -32,6 +32,11 @@ function applyCommentHighlights() {
 
   for (const el of annotated) {
     el.classList.remove('comment-highlight')
+
+    // Only highlight leaf annotated elements — skip parents (e.g. <table>, <ul>)
+    // whose children carry their own line ranges for more precise highlighting
+    if (el.querySelector('[data-line-start]')) continue
+
     const elStart = parseInt(el.getAttribute('data-line-start')!, 10)
     const elEnd = parseInt(el.getAttribute('data-line-end')!, 10)
 
@@ -80,6 +85,19 @@ function findBlockAncestor(node: Node): HTMLElement | null {
   return null
 }
 
+function applySelectionHighlight(range: Range) {
+  clearSelectionHighlight()
+  if (typeof Highlight !== 'undefined' && CSS.highlights) {
+    CSS.highlights.set('preview-selection', new Highlight(range))
+  }
+}
+
+function clearSelectionHighlight() {
+  if (typeof Highlight !== 'undefined' && CSS.highlights) {
+    CSS.highlights.delete('preview-selection')
+  }
+}
+
 function onMouseUp() {
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || !selection.rangeCount) {
@@ -110,6 +128,9 @@ function onMouseUp() {
 
   const rect = range.getBoundingClientRect()
 
+  // Persist the visual highlight so it survives focus moving to the popover textarea
+  applySelectionHighlight(range.cloneRange())
+
   emit('selection', {
     startLine,
     endLine,
@@ -122,6 +143,7 @@ function onMouseUp() {
 }
 
 function onMouseDown() {
+  clearSelectionHighlight()
   const selection = window.getSelection()
   if (selection && !selection.isCollapsed) {
     emit('selection-clear')
@@ -143,7 +165,7 @@ function scrollToLine(line: number) {
   }
 }
 
-defineExpose({ scrollToLine })
+defineExpose({ scrollToLine, clearSelectionHighlight })
 </script>
 
 <template>
@@ -416,5 +438,11 @@ defineExpose({ scrollToLine })
   color: var(--text-muted);
   text-decoration: line-through;
   text-decoration-color: var(--text-muted);
+}
+</style>
+
+<style>
+::highlight(preview-selection) {
+  background-color: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 </style>

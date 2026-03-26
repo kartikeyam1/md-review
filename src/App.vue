@@ -160,11 +160,13 @@ function handleAddComment(body: string, category: CommentCategory) {
   })
   showPopover.value = false
   selection.value = null
+  previewRef.value?.clearSelectionHighlight()
 }
 
 function handleCancelPopover() {
   showPopover.value = false
   selection.value = null
+  previewRef.value?.clearSelectionHighlight()
 }
 
 function handleScrollTo(line: number) {
