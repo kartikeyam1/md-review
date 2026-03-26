@@ -19,6 +19,12 @@ async function clickCommentAction(p = page) {
   await p.waitForTimeout(300)
 }
 
+/** Switch from default preview mode to edit mode */
+async function switchToEdit(p = page) {
+  await p.click('button:has-text("Edit")')
+  await p.waitForTimeout(500)
+}
+
 before(async () => {
   browser = await chromium.launch({ headless: true })
 })
@@ -35,11 +41,11 @@ beforeEach(async () => {
 // ── File loading via URL param ────────────────────────────────
 
 describe('file loading via ?filePath=', () => {
-  it('auto-loads file into edit mode', async () => {
+  it('auto-loads file into preview mode', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
-    const hasEditor = await page.locator('.cm-editor').count()
-    assert.ok(hasEditor > 0, 'Editor should be visible')
+    const hasPreview = await page.locator('.preview-pane').count()
+    assert.ok(hasPreview > 0, 'Preview pane should be visible')
     const filename = await page.locator('.filename').textContent()
     assert.ok(filename.includes('fixture.md'))
   })
@@ -72,6 +78,7 @@ describe('dark mode', () => {
   it('editor selection uses themed color in dark mode', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
     // Switch to dark
     await page.click('.btn-icon')
     await page.waitForTimeout(300)
@@ -92,6 +99,7 @@ describe('dark mode', () => {
   it('editor gutter uses CSS variable, not hardcoded color', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
     // Light mode gutter
     const lightGutter = await page.evaluate(() => {
       const g = document.querySelector('.cm-gutters')
@@ -165,6 +173,7 @@ describe('popover dismissal', () => {
   it('dismisses empty popover when clicking outside', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Select text to trigger popover
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -185,6 +194,7 @@ describe('popover dismissal', () => {
   it('keeps popover open when clicking outside if body has text', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Select text to trigger popover
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -210,6 +220,7 @@ describe('comment categories', () => {
   it('shows category buttons in popover and includes tag in sidebar', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Select text
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -237,6 +248,7 @@ describe('comment categories', () => {
   it('includes category in generated prompt', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Add a comment with category
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -264,6 +276,7 @@ describe('comment editing', () => {
   it('can edit a comment body via Edit button', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Add a comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -300,6 +313,7 @@ describe('category filter', () => {
   it('filters comments by category', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Add two comments with different categories
     const lines = page.locator('.cm-line')
@@ -379,8 +393,8 @@ describe('paste and blank document', () => {
     await page.click('button:has-text("Start blank")')
     await page.waitForTimeout(1000)
 
-    const hasEditor = await page.locator('.cm-editor').count()
-    assert.ok(hasEditor > 0, 'Editor should appear after starting blank')
+    const hasPreview = await page.locator('.preview-pane').count()
+    assert.ok(hasPreview > 0, 'Preview pane should appear after starting blank')
     const filename = await page.locator('.filename').textContent()
     assert.ok(filename.includes('untitled.md'))
   })
@@ -399,8 +413,8 @@ describe('paste and blank document', () => {
     await page.click('button:has-text("Start Review")')
     await page.waitForTimeout(1000)
 
-    const hasEditor = await page.locator('.cm-editor').count()
-    assert.ok(hasEditor > 0, 'Editor should appear after pasting')
+    const hasPreview = await page.locator('.preview-pane').count()
+    assert.ok(hasPreview > 0, 'Preview pane should appear after pasting')
     const filename = await page.locator('.filename').textContent()
     assert.ok(filename.includes('pasted.md'))
   })
@@ -480,7 +494,8 @@ describe('popover viewport clamping', () => {
     await narrowPage.goto(FILE_URL)
     await narrowPage.waitForTimeout(2000)
 
-    // Select text in the editor
+    // Switch to edit mode, then select text
+    await switchToEdit(narrowPage)
     await narrowPage.locator('.cm-line').first().click({ clickCount: 3 })
     await narrowPage.waitForTimeout(500)
     await clickCommentAction(narrowPage)
@@ -508,7 +523,8 @@ describe('popover viewport clamping', () => {
     await shortPage.goto(FILE_URL)
     await shortPage.waitForTimeout(2000)
 
-    // Select a line further down to push coords near the bottom
+    // Switch to edit mode, select a line further down
+    await switchToEdit(shortPage)
     const lines = shortPage.locator('.cm-line')
     const lineCount = await lines.count()
     // Pick one of the later lines
@@ -570,6 +586,7 @@ describe('export/import comments', () => {
   it('shows import button in sidebar and export button when comments exist', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Import button should always be visible
     const importBtn = page.locator('.sidebar-action-btn[title*="Import"]')
@@ -596,6 +613,7 @@ describe('export/import comments', () => {
   it('exports comments as JSON and re-imports them', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Add two comments
     const lines = page.locator('.cm-line')
@@ -681,6 +699,7 @@ describe('export/import comments', () => {
   it('import replaces existing comments', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Add one comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -895,6 +914,7 @@ describe('word count', () => {
   it('updates count when document is edited', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     const before = await page.locator('.doc-stats').textContent()
     const beforeMatch = before.match(/(\d[\d,]*)\s*words/)
@@ -920,6 +940,7 @@ describe('selection preserved when popover opens', () => {
   it('popover shows selected text in editor mode', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Triple-click to select a line in the editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -958,6 +979,7 @@ describe('selection preserved when popover opens', () => {
   it('can submit comment after selection (selection data not lost)', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Select text in editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -981,6 +1003,7 @@ describe('selection preserved when popover opens', () => {
   it('selected text survives popover textarea focus', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Select text
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -1007,6 +1030,7 @@ describe('selection preserved when popover opens', () => {
   it('editor keeps CM selection highlight visible after popover textarea focus', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // Select a line in the editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
@@ -1058,6 +1082,7 @@ describe('selection preserved when popover opens', () => {
   it('second selection replaces first and popover updates', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     // First selection
     const lines = page.locator('.cm-line')

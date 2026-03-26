@@ -36,6 +36,10 @@ describe('selection preservation when clicking comment textarea', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
+    // Switch to edit mode (app defaults to preview)
+    await page.click('button:has-text("Edit")')
+    await page.waitForTimeout(500)
+
     const editor = page.locator('.cm-editor')
     assert.ok(await editor.count() > 0, 'Editor should be visible')
 
