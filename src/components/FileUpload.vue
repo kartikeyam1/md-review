@@ -278,7 +278,7 @@ function submitPaste() {
 }
 
 .github-error {
-  color: #dc2626;
+  color: var(--accent);
   font-size: 13px;
   margin-top: 8px;
 }

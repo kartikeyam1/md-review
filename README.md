@@ -24,8 +24,8 @@ A static SPA that runs entirely in the browser. No backend, no accounts, no trac
 ## Quick Start
 
 ```bash
-git clone https://github.com/kartikeyam1/md-review.git
-cd md-review
+git clone https://github.com/locus-taxy/share-mds.git
+cd share-mds
 npm install
 npm run dev
 ```

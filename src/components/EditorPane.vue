@@ -35,7 +35,7 @@ const setCommentsEffect = StateEffect.define<Comment[]>()
 
 const commentLineDecoration = Decoration.line({
   attributes: {
-    style: 'background: rgba(194, 59, 34, 0.08); border-left: 2px solid #c23b22;',
+    style: 'background: var(--comment-bg); border-left: 2px solid var(--accent);',
   },
 })
 
@@ -340,12 +340,13 @@ defineExpose({ scrollToLine })
 }
 
 .editor-pane :deep(.cm-searchMatch) {
-  background: rgba(194, 59, 34, 0.2);
-  outline: 1px solid rgba(194, 59, 34, 0.4);
+  background: var(--selection-bg);
+  outline: 1px solid var(--accent);
   border-radius: 1px;
 }
 
 .editor-pane :deep(.cm-searchMatch-selected) {
-  background: rgba(194, 59, 34, 0.35);
+  background: var(--comment-bg);
+  outline: 2px solid var(--accent);
 }
 </style>

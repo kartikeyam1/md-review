@@ -15,17 +15,21 @@ function lineAttrs(map: [number, number]): string {
 // Plugin that adds id attributes to headings so TOC anchor links work
 function headingAnchorPlugin(md: MarkdownIt) {
   md.core.ruler.push('heading_anchors', (state) => {
+    const usedSlugs = new Map<string, number>()
     for (const token of state.tokens) {
       if (token.type === 'heading_open') {
         const inline = state.tokens[state.tokens.indexOf(token) + 1]
         if (inline?.type === 'inline' && inline.content) {
-          const slug = inline.content
+          let slug = inline.content
             .toLowerCase()
             .replace(/<[^>]*>/g, '')
             .replace(/[^\w\s-]/g, '')
             .replace(/\s+/g, '-')
             .replace(/-+/g, '-')
             .replace(/^-|-$/g, '')
+          const count = usedSlugs.get(slug) || 0
+          usedSlugs.set(slug, count + 1)
+          if (count > 0) slug = `${slug}-${count}`
           token.attrSet('id', slug)
         }
       }

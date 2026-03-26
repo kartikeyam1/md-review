@@ -126,7 +126,7 @@ function handleNewDoc() {
   markdown.value = ''
   filename.value = ''
   appMode.value = 'upload'
-  if (window.location.search) {
+  if (window.location.search || window.location.hash) {
     window.history.replaceState({}, '', window.location.pathname)
   }
 }
