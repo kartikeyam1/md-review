@@ -19,6 +19,13 @@ export function getCategoryMeta(cat: CommentCategory): CategoryMeta {
   return CATEGORY_MAP.get(cat)!
 }
 
+export interface Reply {
+  id: string
+  body: string
+  author?: string
+  createdAt: number
+}
+
 export interface Comment {
   id: string
   startLine: number
@@ -28,6 +35,7 @@ export interface Comment {
   category: CommentCategory
   createdAt: number
   author?: string
+  replies: Reply[]
 }
 
 export type AppMode = 'upload' | 'review'
