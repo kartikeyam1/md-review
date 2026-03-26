@@ -4,6 +4,7 @@ import type { AppMode, PaneMode, CommentCategory } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
 import { useShare } from '@/composables/useShare'
+import { useSync } from '@/composables/useSync'
 import HeaderBar from '@/components/HeaderBar.vue'
 import FileUpload from '@/components/FileUpload.vue'
 import EditorPane from '@/components/EditorPane.vue'
@@ -18,10 +19,15 @@ const appMode = ref<AppMode>('upload')
 const paneMode = ref<PaneMode>('edit')
 const markdown = ref('')
 const filename = ref('')
+const pasteId = ref<string | null>(null)
 const showPromptModal = ref(false)
 const sidebarHidden = ref(false)
 
 const { comments, addComment, editComment, deleteComment, clearComments, loadComments } = useComments()
+
+const sync = useSync(pasteId, comments, markdown, {
+  addComment, editComment, deleteComment, loadComments,
+})
 
 const { theme, setTheme } = useThemePersistence()
 
@@ -59,6 +65,7 @@ async function handleShare() {
   const id = await createShare(markdown.value, filename.value, comments.value)
   if (id) {
     setShareHash(id)
+    pasteId.value = id
     shareResult.value = getShareUrls(id)
     showShareModal.value = true
   } else {
@@ -76,6 +83,8 @@ async function loadSharedDoc() {
     if (data.comments?.length) {
       loadComments(data.comments)
     }
+    pasteId.value = shareId
+    paneMode.value = 'preview'
   }
 }
 
@@ -132,6 +141,7 @@ function handleNewDoc() {
   dismissAll()
   markdown.value = ''
   filename.value = ''
+  pasteId.value = null
   appMode.value = 'upload'
   if (window.location.search || window.location.hash) {
     window.history.replaceState({}, '', window.location.pathname)
@@ -175,7 +185,7 @@ function handleSelectionClear() {
 
 function handleAddComment(body: string, category: CommentCategory) {
   if (!selection.value) return
-  addComment({
+  sync.addComment({
     startLine: selection.value.startLine,
     endLine: selection.value.endLine,
     selectedText: selection.value.selectedText,
@@ -323,8 +333,8 @@ function handleImportComments() {
       <CommentsSidebar
         v-show="!sidebarHidden"
         :comments="comments"
-        @delete="deleteComment"
-        @edit="editComment"
+        @delete="sync.deleteComment"
+        @edit="sync.editComment"
         @scroll-to="handleScrollTo"
         @export-comments="handleExportComments"
         @import-comments="handleImportComments"
