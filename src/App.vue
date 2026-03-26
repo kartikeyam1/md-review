@@ -176,7 +176,7 @@ function handleDismissActionBar() {
   showActionBar.value = false
   // Keep selection alive briefly in case popover is opening
   setTimeout(() => {
-    if (!showPopover.value) {
+    if (!showPopover.value && !showActionBar.value) {
       selection.value = null
       previewRef.value?.clearSelectionHighlight()
     }
