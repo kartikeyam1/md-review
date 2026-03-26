@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { Comment } from '@/types'
+import type { Comment, Reply } from '@/types'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 
@@ -126,6 +126,43 @@ export function useShare() {
     } catch { return false }
   }
 
+  async function postReply(pasteId: string, commentId: string, reply: {
+    body: string; author?: string
+  }): Promise<Reply | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${pasteId}/comments/${commentId}/replies`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reply),
+      })
+      if (!res.ok) return null
+      return await res.json() as Reply
+    } catch { return null }
+  }
+
+  async function putReply(pasteId: string, commentId: string, replyId: string, updates: {
+    body: string
+  }): Promise<Reply | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${pasteId}/comments/${commentId}/replies/${replyId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      })
+      if (!res.ok) return null
+      return await res.json() as Reply
+    } catch { return null }
+  }
+
+  async function deleteReplyApi(pasteId: string, commentId: string, replyId: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${pasteId}/comments/${commentId}/replies/${replyId}`, {
+        method: 'DELETE',
+      })
+      return res.status === 204
+    } catch { return false }
+  }
+
   async function putMarkdown(pasteId: string, markdown: string, filename?: string): Promise<boolean> {
     try {
       const body: Record<string, string> = { markdown }
@@ -157,6 +194,8 @@ export function useShare() {
   return {
     sharing, shareError, createShare, loadShare, fetchGithub,
     getShareIdFromHash, setShareHash, getShareUrls,
-    postComment, putComment, deleteCommentApi, putMarkdown, pollPaste,
+    postComment, putComment, deleteCommentApi,
+    postReply, putReply, deleteReplyApi,
+    putMarkdown, pollPaste,
   }
 }
