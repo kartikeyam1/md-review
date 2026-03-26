@@ -32,7 +32,7 @@ const { clearPersisted } = usePersistence(
   (mode) => { appMode.value = mode },
 )
 
-const { sharing, shareError, createShare, loadShare, getShareIdFromHash, setShareHash, getShareUrls } = useShare()
+const { sharing, shareError, createShare, loadShare, fetchGithub, getShareIdFromHash, setShareHash, getShareUrls } = useShare()
 
 const showShareModal = ref(false)
 const shareResult = ref<{ ui: string; api: string; comments: string; markdown: string } | null>(null)
@@ -78,10 +78,23 @@ async function loadSharedDoc() {
   }
 }
 
+async function loadFromGithubHash() {
+  const hash = window.location.hash
+  const match = hash.match(/^#github=(.+)$/)
+  if (!match) return
+
+  const githubUrl = decodeURIComponent(match[1])
+  const data = await fetchGithub(githubUrl)
+  if (data) {
+    handleFileLoaded(data.content, data.filename)
+  }
+}
+
 onMounted(() => {
   filePathParam.value = new URLSearchParams(window.location.search).get('filePath')
   loadFromFilePath()
   loadSharedDoc()
+  loadFromGithubHash()
 })
 
 const selection = ref<{
