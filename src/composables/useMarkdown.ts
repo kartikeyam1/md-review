@@ -47,7 +47,7 @@ function lineDataPlugin(md: MarkdownIt) {
 
 export function useMarkdown() {
   const md = new MarkdownIt({
-    html: false,
+    html: true,
     linkify: true,
     typographer: true,
     highlight(str, lang) {
