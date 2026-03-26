@@ -5,6 +5,7 @@ import { EditorState, StateField, StateEffect, RangeSetBuilder } from '@codemirr
 import { markdown } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { defaultKeymap } from '@codemirror/commands'
+import { search, searchKeymap } from '@codemirror/search'
 import type { Comment } from '@/types'
 
 // ── Props & Emits ──────────────────────────────────────────────
@@ -173,7 +174,8 @@ onMounted(() => {
     extensions: [
       lineNumbers(),
       drawSelection(),
-      keymap.of(defaultKeymap),
+      search(),
+      keymap.of([...defaultKeymap, ...searchKeymap]),
       markdown({ codeLanguages: languages }),
       commentField,
       editorTheme,
@@ -286,5 +288,64 @@ defineExpose({ scrollToLine })
 
 .editor-pane :deep(.cm-editor) {
   height: 100%;
+}
+
+/* CodeMirror search panel */
+.editor-pane :deep(.cm-panels) {
+  background: var(--bg-page);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.editor-pane :deep(.cm-search) {
+  padding: 6px 10px;
+}
+
+.editor-pane :deep(.cm-search input),
+.editor-pane :deep(.cm-search [type="text"]) {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+}
+
+.editor-pane :deep(.cm-search input:focus) {
+  border-color: var(--accent);
+}
+
+.editor-pane :deep(.cm-search button) {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.editor-pane :deep(.cm-search button:hover) {
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+
+.editor-pane :deep(.cm-search label) {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.editor-pane :deep(.cm-searchMatch) {
+  background: rgba(194, 59, 34, 0.2);
+  outline: 1px solid rgba(194, 59, 34, 0.4);
+  border-radius: 1px;
+}
+
+.editor-pane :deep(.cm-searchMatch-selected) {
+  background: rgba(194, 59, 34, 0.35);
 }
 </style>

@@ -12,6 +12,27 @@ function lineAttrs(map: [number, number]): string {
   return ` data-line-start="${map[0]}" data-line-end="${map[1]}"`
 }
 
+// Plugin that adds id attributes to headings so TOC anchor links work
+function headingAnchorPlugin(md: MarkdownIt) {
+  md.core.ruler.push('heading_anchors', (state) => {
+    for (const token of state.tokens) {
+      if (token.type === 'heading_open') {
+        const inline = state.tokens[state.tokens.indexOf(token) + 1]
+        if (inline?.type === 'inline' && inline.content) {
+          const slug = inline.content
+            .toLowerCase()
+            .replace(/<[^>]*>/g, '')
+            .replace(/[^\w\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+          token.attrSet('id', slug)
+        }
+      }
+    }
+  })
+}
+
 // Plugin that injects data-line-start/data-line-end into block-level elements
 function lineDataPlugin(md: MarkdownIt) {
   // Handle normal block tokens (headings, paragraphs, lists, tables, etc.)
@@ -61,6 +82,7 @@ export function useMarkdown() {
       return '' // use default escaping
     },
   })
+  md.use(headingAnchorPlugin)
   md.use(lineDataPlugin)
   md.use(taskLists, { enabled: true })
 
