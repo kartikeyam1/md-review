@@ -2,6 +2,9 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import type { Comment } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
+import mermaid from 'mermaid'
+
+mermaid.initialize({ startOnLoad: false, theme: 'neutral' })
 
 const props = defineProps<{
   content: string
@@ -49,11 +52,24 @@ function applyCommentHighlights() {
   }
 }
 
+async function renderMermaid() {
+  const container = containerRef.value
+  if (!container) return
+  const nodes = container.querySelectorAll<HTMLElement>('.mermaid')
+  if (!nodes.length) return
+  // Reset mermaid's internal ID counter to avoid collisions on re-render
+  for (const node of nodes) {
+    node.removeAttribute('data-processed')
+  }
+  await mermaid.run({ nodes: Array.from(nodes) })
+}
+
 watch(
   () => renderedHtml.value,
   async () => {
     await nextTick()
     applyCommentHighlights()
+    renderMermaid()
   }
 )
 
@@ -67,7 +83,10 @@ watch(
 )
 
 onMounted(() => {
-  nextTick(() => applyCommentHighlights())
+  nextTick(() => {
+    applyCommentHighlights()
+    renderMermaid()
+  })
 })
 
 function findBlockAncestor(node: Node): HTMLElement | null {
@@ -313,6 +332,16 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   border-left: 2px solid var(--accent);
   padding-left: 8px;
   margin-left: -10px;
+}
+
+/* Mermaid diagrams */
+.preview-pane :deep(.mermaid) {
+  text-align: center;
+  margin: 12px 0;
+}
+
+.preview-pane :deep(.mermaid svg) {
+  max-width: 100%;
 }
 
 /* highlight.js token colours — mapped to theme CSS custom properties */

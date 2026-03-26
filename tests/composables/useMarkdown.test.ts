@@ -38,4 +38,22 @@ describe('useMarkdown', () => {
     const headingEntry = lineMap.find((e) => e.startLine === 0)
     expect(headingEntry).toBeTruthy()
   })
+
+  it('renders mermaid blocks with class "mermaid" and raw content, not hljs', () => {
+    const { renderHtml } = useMarkdown()
+    const md = '```mermaid\ngraph LR\n    A --> B\n```\n'
+    const html = renderHtml(md)
+    // Should have a container with class mermaid
+    expect(html).toContain('class="mermaid"')
+    // Should contain the raw diagram text, not hljs-highlighted spans
+    expect(html).toContain('graph LR')
+    expect(html).not.toContain('hljs-')
+  })
+
+  it('still syntax-highlights non-mermaid code blocks', () => {
+    const { renderHtml } = useMarkdown()
+    const md = '```python\nprint("hello")\n```\n'
+    const html = renderHtml(md)
+    expect(html).toContain('hljs-')
+  })
 })

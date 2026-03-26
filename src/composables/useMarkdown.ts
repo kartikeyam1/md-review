@@ -55,6 +55,13 @@ function lineDataPlugin(md: MarkdownIt) {
   md.renderer.rules.fence = function (tokens, idx, options, env, slf) {
     const token = tokens[idx]
     const attrs = token.map ? lineAttrs(token.map) : ''
+
+    // Mermaid blocks: render as <div class="mermaid"> with raw content
+    if (token.info.trim().toLowerCase() === 'mermaid') {
+      const escaped = md.utils.escapeHtml(token.content)
+      return `<div${attrs} class="mermaid">${escaped}</div>\n`
+    }
+
     const result = originalFence(tokens, idx, options, env, slf)
     // Inject attrs into the opening <pre> tag
     return result.replace(/^<pre/, `<pre${attrs}`)

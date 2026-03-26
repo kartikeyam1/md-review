@@ -46,3 +46,10 @@ Content under h6.
 - [ ] Another pending task
 
 More text at the end of the document.
+
+## Diagrams
+
+```mermaid
+graph LR
+    A[Start] --> B[End]
+```
