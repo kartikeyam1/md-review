@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import type { Comment, CommentCategory } from '@/types'
+import type { Comment, CommentCategory, Reply } from '@/types'
 import { COMMENT_CATEGORIES, getCategoryMeta } from '@/types'
 
 const props = defineProps<{
@@ -13,12 +13,20 @@ const emit = defineEmits<{
   'scroll-to': [line: number]
   'export-comments': []
   'import-comments': []
+  'add-reply': [commentId: string, input: { body: string }]
+  'edit-reply': [commentId: string, replyId: string, body: string]
+  'delete-reply': [commentId: string, replyId: string]
 }>()
 
 const collapsed = ref(false)
 const filterCategory = ref<CommentCategory | null>(null)
 const editingId = ref<string | null>(null)
 const editBody = ref('')
+
+const expandedThreads = ref<Set<string>>(new Set())
+const replyInputs = ref<Record<string, string>>({})
+const editingReplyId = ref<string | null>(null)
+const editReplyBody = ref('')
 
 const filteredComments = computed(() => {
   if (!filterCategory.value) return props.comments
@@ -47,6 +55,54 @@ function cancelEdit() {
 
 function toggleFilter(cat: CommentCategory) {
   filterCategory.value = filterCategory.value === cat ? null : cat
+}
+
+function toggleThread(commentId: string) {
+  const s = new Set(expandedThreads.value)
+  if (s.has(commentId)) s.delete(commentId)
+  else s.add(commentId)
+  expandedThreads.value = s
+}
+
+function openReplyInput(commentId: string) {
+  const s = new Set(expandedThreads.value)
+  s.add(commentId)
+  expandedThreads.value = s
+  if (!replyInputs.value[commentId]) replyInputs.value[commentId] = ''
+}
+
+function submitReply(commentId: string) {
+  const body = (replyInputs.value[commentId] || '').trim()
+  if (!body) return
+  emit('add-reply', commentId, { body })
+  replyInputs.value[commentId] = ''
+}
+
+function startEditReply(reply: Reply) {
+  editingReplyId.value = reply.id
+  editReplyBody.value = reply.body
+}
+
+function saveEditReply(commentId: string, replyId: string) {
+  const trimmed = editReplyBody.value.trim()
+  if (!trimmed) return
+  emit('edit-reply', commentId, replyId, trimmed)
+  editingReplyId.value = null
+}
+
+function cancelEditReply() {
+  editingReplyId.value = null
+}
+
+function formatTimeAgo(ts: number): string {
+  const seconds = Math.floor((Date.now() - ts) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
 }
 </script>
 
@@ -161,6 +217,68 @@ function toggleFilter(cat: CommentCategory) {
           >
             Delete
           </button>
+        </div>
+
+        <!-- Reply thread -->
+        <div class="reply-section" @click.stop>
+          <button
+            v-if="comment.replies.length === 0"
+            class="reply-link"
+            @click="openReplyInput(comment.id)"
+          >
+            Reply
+          </button>
+          <button
+            v-else
+            class="reply-link"
+            @click="toggleThread(comment.id)"
+          >
+            {{ expandedThreads.has(comment.id) ? '▾' : '▸' }}
+            {{ comment.replies.length }} {{ comment.replies.length === 1 ? 'reply' : 'replies' }}
+          </button>
+
+          <div v-if="expandedThreads.has(comment.id)" class="reply-thread">
+            <div
+              v-for="reply in comment.replies"
+              :key="reply.id"
+              class="reply-item"
+            >
+              <div class="reply-meta">
+                <span v-if="reply.author" class="comment-author">{{ reply.author }}</span>
+                <span class="reply-time">{{ formatTimeAgo(reply.createdAt) }}</span>
+              </div>
+              <div v-if="editingReplyId === reply.id" class="edit-area">
+                <textarea
+                  v-model="editReplyBody"
+                  class="edit-input"
+                  rows="2"
+                  @keydown.enter.meta="saveEditReply(comment.id, reply.id)"
+                  @keydown.enter.ctrl="saveEditReply(comment.id, reply.id)"
+                  @keydown.escape="cancelEditReply"
+                />
+                <div class="edit-actions">
+                  <button class="btn btn-ghost btn-xs" @click="cancelEditReply">Cancel</button>
+                  <button class="btn btn-primary btn-xs" @click="saveEditReply(comment.id, reply.id)">Save</button>
+                </div>
+              </div>
+              <div v-else class="reply-body" @dblclick.stop="startEditReply(reply)">{{ reply.body }}</div>
+              <div class="reply-actions">
+                <button class="comment-action-btn" @click.stop="startEditReply(reply)">Edit</button>
+                <button class="comment-action-btn" @click.stop="emit('delete-reply', comment.id, reply.id)">Delete</button>
+              </div>
+            </div>
+
+            <div class="reply-input-row">
+              <input
+                v-model="replyInputs[comment.id]"
+                class="reply-input"
+                placeholder="Write a reply..."
+                @keydown.enter.exact="submitReply(comment.id)"
+                @keydown.escape="toggleThread(comment.id)"
+              />
+              <button class="reply-send-btn" @click="submitReply(comment.id)">Send</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -420,5 +538,108 @@ function toggleFilter(cat: CommentCategory) {
 .btn-xs {
   padding: 2px 8px;
   font-size: 11px;
+}
+
+.reply-section {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.reply-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.reply-link:hover {
+  color: var(--accent);
+}
+
+.reply-thread {
+  margin-top: 6px;
+}
+
+.reply-item {
+  margin-left: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.reply-item:last-of-type {
+  border-bottom: none;
+}
+
+.reply-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.reply-time {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.reply-body {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.reply-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.reply-item:hover .reply-actions {
+  opacity: 1;
+}
+
+.reply-input-row {
+  display: flex;
+  gap: 6px;
+  margin-left: 12px;
+  margin-top: 6px;
+}
+
+.reply-input {
+  flex: 1;
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--font-body);
+  color: var(--text-primary);
+}
+
+.reply-input:focus {
+  outline: none;
+  border-color: var(--text-muted);
+}
+
+.reply-send-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.reply-send-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 </style>

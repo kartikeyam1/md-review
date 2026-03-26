@@ -280,7 +280,11 @@ function handleImportComments() {
           alert('Invalid comment file format.')
           return
         }
-        loadComments(imported)
+        const normalized = imported.map((c: any) => ({
+          ...c,
+          replies: Array.isArray(c.replies) ? c.replies : [],
+        }))
+        loadComments(normalized)
       } catch {
         alert('Could not parse comment file.')
       }
@@ -353,6 +357,9 @@ function handleImportComments() {
         @scroll-to="handleScrollTo"
         @export-comments="handleExportComments"
         @import-comments="handleImportComments"
+        @add-reply="sync.addReply"
+        @edit-reply="sync.editReply"
+        @delete-reply="sync.deleteReply"
       />
     </div>
 
