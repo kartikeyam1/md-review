@@ -16,7 +16,7 @@ import PromptModal from '@/components/PromptModal.vue'
 import ShareModal from '@/components/ShareModal.vue'
 
 const appMode = ref<AppMode>('upload')
-const paneMode = ref<PaneMode>('edit')
+const paneMode = ref<PaneMode>('preview')
 const markdown = ref('')
 const filename = ref('')
 const pasteId = ref<string | null>(null)
