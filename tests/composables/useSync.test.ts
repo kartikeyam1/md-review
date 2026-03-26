@@ -8,6 +8,9 @@ const mockPutComment = vi.fn()
 const mockDeleteCommentApi = vi.fn()
 const mockPutMarkdown = vi.fn()
 const mockPollPaste = vi.fn()
+const mockPostReply = vi.fn()
+const mockPutReply = vi.fn()
+const mockDeleteReplyApi = vi.fn()
 
 vi.mock('@/composables/useShare', () => ({
   useShare: () => ({
@@ -16,6 +19,9 @@ vi.mock('@/composables/useShare', () => ({
     deleteCommentApi: mockDeleteCommentApi,
     putMarkdown: mockPutMarkdown,
     pollPaste: mockPollPaste,
+    postReply: mockPostReply,
+    putReply: mockPutReply,
+    deleteReplyApi: mockDeleteReplyApi,
     loadShare: vi.fn(),
     sharing: ref(false),
     shareError: ref(null),
@@ -31,6 +37,7 @@ function makeComment(overrides: Partial<Comment> = {}): Comment {
   return {
     id: 'c1', startLine: 0, endLine: 1, selectedText: 'text',
     body: 'test', category: 'suggestion', createdAt: Date.now(),
+    replies: [],
     ...overrides,
   }
 }
@@ -38,7 +45,7 @@ function makeComment(overrides: Partial<Comment> = {}): Comment {
 function makeLocalOps(comments: { value: Comment[] }) {
   return {
     addComment: vi.fn((input: any) => {
-      comments.value = [...comments.value, { ...input, id: crypto.randomUUID(), createdAt: Date.now() }]
+      comments.value = [...comments.value, { ...input, id: crypto.randomUUID(), createdAt: Date.now(), replies: [] }]
     }),
     editComment: vi.fn((id: string, updates: any) => {
       comments.value = comments.value.map(c => c.id === id ? { ...c, ...updates } : c)
@@ -47,6 +54,27 @@ function makeLocalOps(comments: { value: Comment[] }) {
       comments.value = comments.value.filter(c => c.id !== id)
     }),
     loadComments: vi.fn((c: Comment[]) => { comments.value = c }),
+    addReply: vi.fn((commentId: string, input: any) => {
+      const reply = { id: crypto.randomUUID(), createdAt: Date.now(), ...input }
+      comments.value = comments.value.map(c =>
+        c.id === commentId ? { ...c, replies: [...c.replies, reply] } : c
+      )
+      return reply
+    }),
+    editReply: vi.fn((commentId: string, replyId: string, body: string) => {
+      comments.value = comments.value.map(c =>
+        c.id === commentId
+          ? { ...c, replies: c.replies.map(r => r.id === replyId ? { ...r, body } : r) }
+          : c
+      )
+    }),
+    deleteReply: vi.fn((commentId: string, replyId: string) => {
+      comments.value = comments.value.map(c =>
+        c.id === commentId
+          ? { ...c, replies: c.replies.filter(r => r.id !== replyId) }
+          : c
+      )
+    }),
   }
 }
 
@@ -239,5 +267,75 @@ describe('useSync', () => {
     pasteId.value = null
     await vi.advanceTimersByTimeAsync(5000)
     expect(mockPollPaste).not.toHaveBeenCalled()
+  })
+
+  it('in local mode, addReply delegates to localOps', () => {
+    const pasteId = ref<string | null>(null)
+    const existing = makeComment({ id: 'c1' })
+    const comments = ref<Comment[]>([existing])
+    const ops = makeLocalOps(comments)
+    const sync = useSync(pasteId, comments, ref(''), ops)
+
+    sync.addReply('c1', { body: 'reply text' })
+
+    expect(ops.addReply).toHaveBeenCalledWith('c1', { body: 'reply text' })
+    expect(mockPostReply).not.toHaveBeenCalled()
+  })
+
+  it('in shared mode, addReply calls API and updates via loadComments', async () => {
+    const pasteId = ref<string | null>('abc123')
+    const existing = makeComment({ id: 'c1' })
+    const comments = ref<Comment[]>([existing])
+    const ops = makeLocalOps(comments)
+    const serverReply = { id: 'r1', body: 'reply text', createdAt: Date.now() }
+    mockPostReply.mockResolvedValue(serverReply)
+
+    const sync = useSync(pasteId, comments, ref(''), ops)
+    await sync.addReply('c1', { body: 'reply text' })
+
+    expect(mockPostReply).toHaveBeenCalledWith('abc123', 'c1', { body: 'reply text' })
+    expect(ops.loadComments).toHaveBeenCalled()
+  })
+
+  it('in shared mode, editReply calls PUT API', async () => {
+    const pasteId = ref<string | null>('abc123')
+    const reply = { id: 'r1', body: 'original', createdAt: Date.now() }
+    const existing = makeComment({ id: 'c1', replies: [reply] })
+    const comments = ref<Comment[]>([existing])
+    const ops = makeLocalOps(comments)
+    mockPutReply.mockResolvedValue({ ...reply, body: 'updated' })
+
+    const sync = useSync(pasteId, comments, ref(''), ops)
+    await sync.editReply('c1', 'r1', 'updated')
+
+    expect(mockPutReply).toHaveBeenCalledWith('abc123', 'c1', 'r1', { body: 'updated' })
+  })
+
+  it('in shared mode, deleteReply calls DELETE API', async () => {
+    const pasteId = ref<string | null>('abc123')
+    const reply = { id: 'r1', body: 'text', createdAt: Date.now() }
+    const existing = makeComment({ id: 'c1', replies: [reply] })
+    const comments = ref<Comment[]>([existing])
+    const ops = makeLocalOps(comments)
+    mockDeleteReplyApi.mockResolvedValue(true)
+
+    const sync = useSync(pasteId, comments, ref(''), ops)
+    await sync.deleteReply('c1', 'r1')
+
+    expect(mockDeleteReplyApi).toHaveBeenCalledWith('abc123', 'c1', 'r1')
+  })
+
+  it('falls back to local on addReply API failure', async () => {
+    const pasteId = ref<string | null>('abc123')
+    const existing = makeComment({ id: 'c1' })
+    const comments = ref<Comment[]>([existing])
+    const ops = makeLocalOps(comments)
+    mockPostReply.mockResolvedValue(null)
+
+    const sync = useSync(pasteId, comments, ref(''), ops)
+    await sync.addReply('c1', { body: 'reply' })
+
+    expect(ops.addReply).toHaveBeenCalledWith('c1', { body: 'reply' })
+    expect(sync.syncStatus.value).toBe('error')
   })
 })

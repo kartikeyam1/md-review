@@ -1,5 +1,5 @@
 import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
-import type { Comment, CommentCategory } from '@/types'
+import type { Comment, CommentCategory, Reply } from '@/types'
 import { useShare } from '@/composables/useShare'
 
 type NewComment = Omit<Comment, 'id' | 'createdAt'>
@@ -13,9 +13,12 @@ export function useSync(
     editComment: (id: string, updates: Partial<Pick<Comment, 'body' | 'category'>>) => void
     deleteComment: (id: string) => void
     loadComments: (comments: Comment[]) => void
+    addReply: (commentId: string, input: { body: string; author?: string }) => Reply
+    editReply: (commentId: string, replyId: string, body: string) => void
+    deleteReply: (commentId: string, replyId: string) => void
   },
 ) {
-  const { postComment, putComment, deleteCommentApi, putMarkdown, pollPaste } = useShare()
+  const { postComment, putComment, deleteCommentApi, postReply, putReply, deleteReplyApi, putMarkdown, pollPaste } = useShare()
 
   const syncError = ref(false)
   const syncStatus = computed<'local' | 'synced' | 'error'>(() => {
@@ -73,6 +76,61 @@ export function useSync(
     }
   }
 
+  async function addReply(commentId: string, input: { body: string; author?: string }) {
+    if (!pasteId.value) {
+      localOps.addReply(commentId, input)
+      return
+    }
+    const result = await postReply(pasteId.value, commentId, input)
+    if (result) {
+      localOps.loadComments(comments.value.map(c =>
+        c.id === commentId ? { ...c, replies: [...c.replies, result] } : c
+      ))
+      syncError.value = false
+    } else {
+      localOps.addReply(commentId, input)
+      syncError.value = true
+    }
+  }
+
+  async function editReply(commentId: string, replyId: string, body: string) {
+    if (!pasteId.value) {
+      localOps.editReply(commentId, replyId, body)
+      return
+    }
+    const result = await putReply(pasteId.value, commentId, replyId, { body })
+    if (result) {
+      localOps.loadComments(comments.value.map(c =>
+        c.id === commentId
+          ? { ...c, replies: c.replies.map(r => r.id === replyId ? result : r) }
+          : c
+      ))
+      syncError.value = false
+    } else {
+      localOps.editReply(commentId, replyId, body)
+      syncError.value = true
+    }
+  }
+
+  async function deleteReply(commentId: string, replyId: string) {
+    if (!pasteId.value) {
+      localOps.deleteReply(commentId, replyId)
+      return
+    }
+    const ok = await deleteReplyApi(pasteId.value, commentId, replyId)
+    if (ok) {
+      localOps.loadComments(comments.value.map(c =>
+        c.id === commentId
+          ? { ...c, replies: c.replies.filter(r => r.id !== replyId) }
+          : c
+      ))
+      syncError.value = false
+    } else {
+      localOps.deleteReply(commentId, replyId)
+      syncError.value = true
+    }
+  }
+
   async function saveMarkdown(filename?: string): Promise<boolean> {
     if (!pasteId.value) return false
     const ok = await putMarkdown(pasteId.value, markdown.value, filename)
@@ -112,5 +170,5 @@ export function useSync(
 
   onUnmounted(() => stopPolling())
 
-  return { addComment, editComment, deleteComment, saveMarkdown, syncStatus, isShared }
+  return { addComment, editComment, deleteComment, addReply, editReply, deleteReply, saveMarkdown, syncStatus, isShared }
 }

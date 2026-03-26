@@ -24,10 +24,11 @@ const serverMarkdown = ref('')
 const showPromptModal = ref(false)
 const sidebarHidden = ref(false)
 
-const { comments, addComment, editComment, deleteComment, clearComments, loadComments } = useComments()
+const { comments, addComment, editComment, deleteComment, clearComments, loadComments, addReply, editReply, deleteReply } = useComments()
 
 const sync = useSync(pasteId, comments, markdown, {
   addComment, editComment, deleteComment, loadComments,
+  addReply, editReply, deleteReply,
 })
 
 const { theme, setTheme } = useThemePersistence()
