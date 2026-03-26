@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
-import type { Comment } from '@/types'
+import type { Comment, Reply } from '@/types'
 
-type NewComment = Omit<Comment, 'id' | 'createdAt'>
+type NewComment = Omit<Comment, 'id' | 'createdAt' | 'replies'>
 
 export function useComments() {
   const _comments = ref<Comment[]>([])
@@ -15,6 +15,7 @@ export function useComments() {
       ...input,
       id: crypto.randomUUID(),
       createdAt: Date.now(),
+      replies: [],
     })
   }
 
@@ -34,8 +35,51 @@ export function useComments() {
   }
 
   function loadComments(loaded: Comment[]) {
-    _comments.value = loaded
+    _comments.value = loaded.map((c) => ({
+      ...c,
+      replies: c.replies ?? [],
+    }))
   }
 
-  return { comments, addComment, editComment, deleteComment, clearComments, loadComments }
+  function addReply(commentId: string, input: { body: string; author?: string }): Reply {
+    const idx = _comments.value.findIndex((c) => c.id === commentId)
+    if (idx === -1) throw new Error(`Comment ${commentId} not found`)
+    const reply: Reply = {
+      id: crypto.randomUUID(),
+      body: input.body,
+      createdAt: Date.now(),
+      ...(input.author !== undefined && { author: input.author }),
+    }
+    _comments.value[idx] = {
+      ..._comments.value[idx],
+      replies: [..._comments.value[idx].replies, reply],
+    }
+    return reply
+  }
+
+  function editReply(commentId: string, replyId: string, body: string) {
+    const idx = _comments.value.findIndex((c) => c.id === commentId)
+    if (idx === -1) return
+    _comments.value[idx] = {
+      ..._comments.value[idx],
+      replies: _comments.value[idx].replies.map((r) =>
+        r.id === replyId ? { ...r, body } : r
+      ),
+    }
+  }
+
+  function deleteReply(commentId: string, replyId: string) {
+    const idx = _comments.value.findIndex((c) => c.id === commentId)
+    if (idx === -1) return
+    _comments.value[idx] = {
+      ..._comments.value[idx],
+      replies: _comments.value[idx].replies.filter((r) => r.id !== replyId),
+    }
+  }
+
+  return {
+    comments, addComment, editComment, deleteComment,
+    clearComments, loadComments,
+    addReply, editReply, deleteReply,
+  }
 }
