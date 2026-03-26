@@ -73,5 +73,20 @@ export function useShare() {
     return { ui, api, comments: `${api}/comments`, markdown: `${api}/markdown` }
   }
 
-  return { sharing, shareError, createShare, loadShare, getShareIdFromHash, setShareHash, getShareUrls }
+  async function fetchGithub(githubUrl: string): Promise<{ content: string; filename: string } | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/github?url=${encodeURIComponent(githubUrl)}`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: `Server error (${res.status})` }))
+        shareError.value = data.error || `Server error (${res.status})`
+        return null
+      }
+      return await res.json() as { content: string; filename: string }
+    } catch {
+      shareError.value = 'Could not reach server. Are you on VPN?'
+      return null
+    }
+  }
+
+  return { sharing, shareError, createShare, loadShare, fetchGithub, getShareIdFromHash, setShareHash, getShareUrls }
 }
