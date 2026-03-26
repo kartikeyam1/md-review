@@ -1,5 +1,5 @@
 import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
-import type { Comment, CommentCategory, Reply } from '@/types'
+import type { Comment, Reply } from '@/types'
 import { useShare } from '@/composables/useShare'
 
 type NewComment = Omit<Comment, 'id' | 'createdAt' | 'replies'>
