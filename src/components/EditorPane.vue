@@ -178,6 +178,20 @@ onMounted(() => {
       commentField,
       editorTheme,
       selectionListener,
+      EditorView.domEventHandlers({
+        paste(event, editorView) {
+          const text = event.clipboardData?.getData('text/plain') ?? ''
+          if (text.trimStart().startsWith('<svg') && text.trimEnd().endsWith('</svg>')) {
+            event.preventDefault()
+            const cursor = editorView.state.selection.main.head
+            editorView.dispatch({
+              changes: { from: cursor, insert: `\n${text.trim()}\n` },
+            })
+            return true
+          }
+          return false
+        },
+      }),
       EditorView.updateListener.of((update: ViewUpdate) => {
         if (update.docChanged && !ignoreNextUpdate) {
           emit('update:modelValue', update.state.doc.toString())
