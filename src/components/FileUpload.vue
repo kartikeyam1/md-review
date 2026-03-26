@@ -10,6 +10,35 @@ const showPaste = ref(false)
 const pasteContent = ref('')
 const fileInput = ref<HTMLInputElement>()
 
+const showGithub = ref(false)
+const githubUrl = ref('')
+const githubLoading = ref(false)
+const githubError = ref('')
+
+async function submitGithub() {
+  const url = githubUrl.value.trim()
+  if (!url) return
+
+  githubLoading.value = true
+  githubError.value = ''
+
+  try {
+    const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
+    const res = await fetch(`${PASTE_API}/github?url=${encodeURIComponent(url)}`)
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ error: `Server error (${res.status})` }))
+      githubError.value = data.error || `Failed to fetch (${res.status})`
+      return
+    }
+    const { content, filename } = await res.json()
+    emit('file-loaded', content, filename)
+  } catch {
+    githubError.value = 'Could not reach server. Are you on VPN?'
+  } finally {
+    githubLoading.value = false
+  }
+}
+
 function handleFiles(files: FileList | null) {
   if (!files || files.length === 0) return
   const file = files[0]
@@ -48,7 +77,7 @@ function submitPaste() {
 
 <template>
   <div class="upload-screen">
-    <template v-if="!showPaste">
+    <template v-if="!showPaste && !showGithub">
       <div
         class="upload-area"
         :class="{ dragging: isDragging }"
@@ -79,13 +108,15 @@ function submitPaste() {
         />
       </div>
       <div class="alt-actions">
-        <button class="btn btn-ghost" @click.stop="showPaste = true">Paste markdown</button>
+        <button class="btn btn-ghost" @click.stop="showPaste = true; showGithub = false">Paste markdown</button>
+        <span class="alt-divider">or</span>
+        <button class="btn btn-ghost" @click.stop="showGithub = true; showPaste = false">From GitHub</button>
         <span class="alt-divider">or</span>
         <button class="btn btn-ghost" @click.stop="startBlank">Start blank</button>
       </div>
     </template>
 
-    <div v-else class="paste-area">
+    <div v-else-if="showPaste" class="paste-area">
       <h2 class="upload-title">Paste your markdown</h2>
       <textarea
         v-model="pasteContent"
@@ -97,6 +128,25 @@ function submitPaste() {
       <div class="paste-actions">
         <button class="btn btn-ghost" @click="showPaste = false">Back</button>
         <button class="btn btn-primary" @click="submitPaste">Start Review</button>
+      </div>
+    </div>
+
+    <div v-else-if="showGithub" class="paste-area">
+      <h2 class="upload-title">Load from GitHub</h2>
+      <input
+        v-model="githubUrl"
+        class="github-input"
+        type="url"
+        placeholder="https://github.com/owner/repo/blob/main/README.md"
+        autofocus
+        @keydown.enter="submitGithub"
+      />
+      <p v-if="githubError" class="github-error">{{ githubError }}</p>
+      <div class="paste-actions">
+        <button class="btn btn-ghost" @click="showGithub = false; githubError = ''">Back</button>
+        <button class="btn btn-primary" :disabled="githubLoading" @click="submitGithub">
+          {{ githubLoading ? 'Loading…' : 'Load File' }}
+        </button>
       </div>
     </div>
   </div>
@@ -208,5 +258,28 @@ function submitPaste() {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+.github-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  margin-top: 12px;
+}
+
+.github-input:focus {
+  outline: none;
+  border-color: var(--text-muted);
+}
+
+.github-error {
+  color: #dc2626;
+  font-size: 13px;
+  margin-top: 8px;
 }
 </style>
