@@ -11,6 +11,13 @@ const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
 
 let browser, context, page
 
+async function clickCommentAction(p = page) {
+  const bar = p.locator('.selection-action-bar .action-btn')
+  await bar.waitFor({ state: 'visible', timeout: 3000 })
+  await bar.click()
+  await p.waitForTimeout(300)
+}
+
 before(async () => {
   browser = await chromium.launch({ headless: true })
 })
@@ -29,7 +36,6 @@ describe('selection preservation when clicking comment textarea', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    // Should be in edit mode by default
     const editor = page.locator('.cm-editor')
     assert.ok(await editor.count() > 0, 'Editor should be visible')
 
@@ -37,6 +43,7 @@ describe('selection preservation when clicking comment textarea', () => {
     const line = page.locator('.cm-line').nth(2)
     await line.click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
 
     // Popover should appear
     const popover = page.locator('.popover')
@@ -59,7 +66,6 @@ describe('selection preservation when clicking comment textarea', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    // Switch to preview
     await page.click('button:has-text("Preview")')
     await page.waitForTimeout(500)
 
@@ -68,15 +74,16 @@ describe('selection preservation when clicking comment textarea', () => {
     await paragraph.click({ clickCount: 3 })
     await page.waitForTimeout(500)
 
-    // Popover should appear
-    const popover = page.locator('.popover')
-    await popover.waitFor({ state: 'visible', timeout: 3000 })
-
-    // Check that a CSS highlight was registered
+    // CSS highlight should be registered after selection (before opening popover)
     const hasHighlight = await page.evaluate(() => {
       return CSS.highlights?.has('preview-selection') ?? false
     })
     assert.ok(hasHighlight, 'CSS highlight should be registered after selection')
+
+    await clickCommentAction()
+
+    const popover = page.locator('.popover')
+    await popover.waitFor({ state: 'visible', timeout: 3000 })
 
     // Click the comment textarea
     await page.locator('.popover-input').click()
@@ -88,7 +95,6 @@ describe('selection preservation when clicking comment textarea', () => {
     })
     assert.ok(highlightAfter, 'CSS highlight should persist after clicking textarea')
 
-    // Popover should still be visible
     assert.ok(await popover.isVisible(), 'Popover should still be visible')
   })
 
@@ -96,16 +102,14 @@ describe('selection preservation when clicking comment textarea', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    // Switch to preview
     await page.click('button:has-text("Preview")')
     await page.waitForTimeout(500)
 
-    // Triple-click to select a paragraph
     const paragraph = page.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
 
-    // Popover should appear
     const popover = page.locator('.popover')
     await popover.waitFor({ state: 'visible', timeout: 3000 })
 
@@ -116,7 +120,6 @@ describe('selection preservation when clicking comment textarea', () => {
     await page.locator('.popover .btn-ghost').click()
     await page.waitForTimeout(300)
 
-    // Highlight should be cleared
     const highlightGone = await page.evaluate(() => !CSS.highlights?.has('preview-selection'))
     assert.ok(highlightGone, 'CSS highlight should be cleared after popover dismissal')
   })

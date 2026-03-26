@@ -9,6 +9,7 @@ import FileUpload from '@/components/FileUpload.vue'
 import EditorPane from '@/components/EditorPane.vue'
 import PreviewPane from '@/components/PreviewPane.vue'
 import CommentsSidebar from '@/components/CommentsSidebar.vue'
+import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import CommentPopover from '@/components/CommentPopover.vue'
 import PromptModal from '@/components/PromptModal.vue'
 import ShareModal from '@/components/ShareModal.vue'
@@ -104,15 +105,22 @@ const selection = ref<{
   coords: { x: number; y: number }
 } | null>(null)
 
+const showActionBar = ref(false)
 const showPopover = ref(false)
 
 const editorRef = ref<InstanceType<typeof EditorPane>>()
 const previewRef = ref<InstanceType<typeof PreviewPane>>()
 
-function handleFileLoaded(content: string, name: string) {
-  clearComments()
+function dismissAll() {
+  showActionBar.value = false
   showPopover.value = false
   selection.value = null
+  previewRef.value?.clearSelectionHighlight()
+}
+
+function handleFileLoaded(content: string, name: string) {
+  clearComments()
+  dismissAll()
   markdown.value = content
   filename.value = name
   appMode.value = 'review'
@@ -121,8 +129,7 @@ function handleFileLoaded(content: string, name: string) {
 function handleNewDoc() {
   clearComments()
   clearPersisted()
-  showPopover.value = false
-  selection.value = null
+  dismissAll()
   markdown.value = ''
   filename.value = ''
   appMode.value = 'upload'
@@ -138,12 +145,29 @@ function handleSelection(info: {
   coords: { x: number; y: number }
 }) {
   selection.value = info
+  showActionBar.value = true
+  showPopover.value = false
+}
+
+function handleOpenComment() {
+  showActionBar.value = false
   showPopover.value = true
+}
+
+function handleDismissActionBar() {
+  showActionBar.value = false
+  // Keep selection alive briefly in case popover is opening
+  setTimeout(() => {
+    if (!showPopover.value) {
+      selection.value = null
+      previewRef.value?.clearSelectionHighlight()
+    }
+  }, 100)
 }
 
 function handleSelectionClear() {
   setTimeout(() => {
-    if (!showPopover.value) {
+    if (!showPopover.value && !showActionBar.value) {
       selection.value = null
     }
   }, 200)
@@ -158,15 +182,11 @@ function handleAddComment(body: string, category: CommentCategory) {
     body,
     category,
   })
-  showPopover.value = false
-  selection.value = null
-  previewRef.value?.clearSelectionHighlight()
+  dismissAll()
 }
 
 function handleCancelPopover() {
-  showPopover.value = false
-  selection.value = null
-  previewRef.value?.clearSelectionHighlight()
+  dismissAll()
 }
 
 function handleScrollTo(line: number) {
@@ -310,6 +330,13 @@ function handleImportComments() {
         @import-comments="handleImportComments"
       />
     </div>
+
+    <SelectionActionBar
+      :visible="showActionBar"
+      :coords="selection?.coords ?? { x: 0, y: 0 }"
+      @comment="handleOpenComment"
+      @dismiss="handleDismissActionBar"
+    />
 
     <CommentPopover
       :visible="showPopover"

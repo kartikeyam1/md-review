@@ -11,6 +11,14 @@ const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
 
 let browser, context, page
 
+/** Click the action bar's Comment button to open the full popover */
+async function clickCommentAction(p = page) {
+  const bar = p.locator('.selection-action-bar .action-btn')
+  await bar.waitFor({ state: 'visible', timeout: 3000 })
+  await bar.click()
+  await p.waitForTimeout(300)
+}
+
 before(async () => {
   browser = await chromium.launch({ headless: true })
 })
@@ -143,6 +151,7 @@ describe('code block commenting in preview', () => {
     const codeEl = page.locator('.preview-pane pre code').first()
     await codeEl.click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     const popover = page.locator('.popover')
     const popoverVisible = await popover.isVisible().catch(() => false)
@@ -160,6 +169,7 @@ describe('popover dismissal', () => {
     // Select text to trigger popover
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
 
     const popoverBefore = await page.locator('.popover').isVisible().catch(() => false)
     assert.ok(popoverBefore, 'Popover should be visible after selection')
@@ -179,6 +189,7 @@ describe('popover dismissal', () => {
     // Select text to trigger popover
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
 
     // Type something in the popover textarea
     await page.locator('.popover textarea').fill('work in progress')
@@ -203,6 +214,7 @@ describe('comment categories', () => {
     // Select text
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
 
     // Verify category buttons exist
     const categoryBtns = await page.locator('.popover .category-btn').count()
@@ -229,6 +241,7 @@ describe('comment categories', () => {
     // Add a comment with category
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Nit")')
     await page.locator('.popover textarea').fill('Minor issue')
     await page.click('.popover .btn-primary')
@@ -255,6 +268,7 @@ describe('comment editing', () => {
     // Add a comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.locator('.popover textarea').fill('Original text')
     await page.click('.popover .btn-primary')
     await page.waitForTimeout(500)
@@ -292,6 +306,7 @@ describe('category filter', () => {
 
     await lines.nth(0).click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Nit")')
     await page.locator('.popover textarea').fill('A nit')
     await page.click('.popover .btn-primary')
@@ -299,6 +314,7 @@ describe('category filter', () => {
 
     await lines.nth(4).click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Must Fix")')
     await page.locator('.popover textarea').fill('A must fix')
     await page.click('.popover .btn-primary')
@@ -467,6 +483,7 @@ describe('popover viewport clamping', () => {
     // Select text in the editor
     await narrowPage.locator('.cm-line').first().click({ clickCount: 3 })
     await narrowPage.waitForTimeout(500)
+    await clickCommentAction(narrowPage)
 
     const popover = narrowPage.locator('.popover')
     const isVisible = await popover.isVisible().catch(() => false)
@@ -500,6 +517,7 @@ describe('popover viewport clamping', () => {
     await shortPage.waitForTimeout(200)
     await lines.nth(targetIdx).click({ clickCount: 3 })
     await shortPage.waitForTimeout(500)
+    await clickCommentAction(shortPage)
 
     const popover = shortPage.locator('.popover')
     const isVisible = await popover.isVisible().catch(() => false)
@@ -529,6 +547,7 @@ describe('popover viewport clamping', () => {
     const paragraph = narrowPage.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
     await narrowPage.waitForTimeout(500)
+    await clickCommentAction(narrowPage)
 
     const popover = narrowPage.locator('.popover')
     const isVisible = await popover.isVisible().catch(() => false)
@@ -564,6 +583,7 @@ describe('export/import comments', () => {
     // Add a comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.locator('.popover textarea').fill('Test comment for export')
     await page.click('.popover .btn-primary')
     await page.waitForTimeout(500)
@@ -581,6 +601,7 @@ describe('export/import comments', () => {
     const lines = page.locator('.cm-line')
     await lines.nth(0).click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Must Fix")')
     await page.locator('.popover textarea').fill('First comment')
     await page.click('.popover .btn-primary')
@@ -588,6 +609,7 @@ describe('export/import comments', () => {
 
     await lines.nth(4).click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.locator('.popover textarea').fill('Second comment')
     await page.click('.popover .btn-primary')
     await page.waitForTimeout(500)
@@ -663,6 +685,7 @@ describe('export/import comments', () => {
     // Add one comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
     await page.locator('.popover textarea').fill('Will be replaced')
     await page.click('.popover .btn-primary')
     await page.waitForTimeout(500)
@@ -901,6 +924,7 @@ describe('selection preserved when popover opens', () => {
     // Triple-click to select a line in the editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     // Popover should be visible
     const popover = page.locator('.popover')
@@ -922,6 +946,7 @@ describe('selection preserved when popover opens', () => {
     const paragraph = page.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     const popover = page.locator('.popover')
     assert.ok(await popover.isVisible(), 'Popover should appear in preview mode')
@@ -937,6 +962,7 @@ describe('selection preserved when popover opens', () => {
     // Select text in editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     // Type a comment and submit
     await page.locator('.popover textarea').fill('Test comment')
@@ -959,6 +985,7 @@ describe('selection preserved when popover opens', () => {
     // Select text
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     // Click inside the popover textarea (triggers focus)
     await page.locator('.popover textarea').click()
@@ -984,6 +1011,7 @@ describe('selection preserved when popover opens', () => {
     // Select a line in the editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     // Popover should be visible (its textarea has auto-focus)
     assert.ok(await page.locator('.popover').isVisible(), 'Popover should be open')
@@ -1004,13 +1032,16 @@ describe('selection preserved when popover opens', () => {
     await paragraph.click({ clickCount: 3 })
     await page.waitForTimeout(800)
 
-    // The native selection must still be active (not collapsed by textarea focus)
+    // The native selection must still be active (not collapsed by action bar appearing)
     const sel = await page.evaluate(() => {
       const s = window.getSelection()
       return { text: (s?.toString() || '').trim(), collapsed: s?.isCollapsed }
     })
-    assert.ok(!sel.collapsed, 'Native selection should NOT be collapsed after popover opens')
+    assert.ok(!sel.collapsed, 'Native selection should NOT be collapsed after action bar shows')
     assert.ok(sel.text.length > 0, `Native selection text should be non-empty, got: "${sel.text}"`)
+
+    // Now click Comment in the action bar to open the popover
+    await clickCommentAction()
 
     // Popover quote must match
     const quote = await page.locator('.popover-quote').textContent()
@@ -1032,6 +1063,7 @@ describe('selection preserved when popover opens', () => {
     const lines = page.locator('.cm-line')
     await lines.nth(0).click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     const firstQuote = await page.locator('.popover-quote').textContent()
     assert.ok(firstQuote && firstQuote.trim().length > 0, 'First selection should show in popover')
@@ -1043,6 +1075,7 @@ describe('selection preserved when popover opens', () => {
     // Second selection on a different line
     await lines.nth(4).click({ clickCount: 3 })
     await page.waitForTimeout(800)
+    await clickCommentAction()
 
     const secondQuote = await page.locator('.popover-quote').textContent()
     assert.ok(secondQuote && secondQuote.trim().length > 0, 'Second selection should show in popover')

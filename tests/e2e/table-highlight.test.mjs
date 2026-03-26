@@ -11,6 +11,13 @@ const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
 
 let browser, context, page
 
+async function clickCommentAction(p = page) {
+  const bar = p.locator('.selection-action-bar .action-btn')
+  await bar.waitFor({ state: 'visible', timeout: 3000 })
+  await bar.click()
+  await p.waitForTimeout(300)
+}
+
 before(async () => {
   browser = await chromium.launch({ headless: true })
 })
@@ -42,6 +49,7 @@ describe('table row comment highlight', () => {
     const firstDataRow = page.locator('.preview-pane tbody tr').first()
     await firstDataRow.click({ clickCount: 3 })
     await page.waitForTimeout(500)
+    await clickCommentAction()
 
     // Popover should appear
     const popover = page.locator('.popover')
