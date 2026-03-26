@@ -38,4 +38,33 @@ describe('FileUpload', () => {
     expect(wrapper.emitted('file-loaded')).toBeTruthy()
     expect(wrapper.emitted('file-loaded')![0]).toEqual(['', 'untitled.md'])
   })
+
+  it('shows From GitHub option', () => {
+    const wrapper = mount(FileUpload)
+    const ghBtn = wrapper.findAll('button').find((b) => b.text() === 'From GitHub')
+    expect(ghBtn).toBeTruthy()
+  })
+
+  it('shows GitHub URL input when From GitHub is clicked', async () => {
+    const wrapper = mount(FileUpload)
+    const ghBtn = wrapper.findAll('button').find((b) => b.text() === 'From GitHub')
+    await ghBtn!.trigger('click')
+
+    expect(wrapper.text()).toContain('Load from GitHub')
+    expect(wrapper.find('.github-input').exists()).toBe(true)
+    expect(wrapper.find('.upload-area').exists()).toBe(false)
+  })
+
+  it('shows Back button in GitHub panel that returns to upload screen', async () => {
+    const wrapper = mount(FileUpload)
+    const ghBtn = wrapper.findAll('button').find((b) => b.text() === 'From GitHub')
+    await ghBtn!.trigger('click')
+
+    const backBtn = wrapper.findAll('button').find((b) => b.text() === 'Back')
+    expect(backBtn).toBeTruthy()
+    await backBtn!.trigger('click')
+
+    expect(wrapper.find('.upload-area').exists()).toBe(true)
+    expect(wrapper.find('.github-input').exists()).toBe(false)
+  })
 })
