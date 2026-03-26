@@ -114,8 +114,11 @@ function toggleFilter(cat: CommentCategory) {
         @click="emit('scroll-to', comment.startLine)"
       >
         <div class="comment-top-row">
-          <div class="comment-line">
-            L{{ comment.startLine + 1 }}{{ comment.endLine > comment.startLine + 1 ? `-${comment.endLine}` : '' }}
+          <div class="comment-meta-left">
+            <div class="comment-line">
+              L{{ comment.startLine + 1 }}{{ comment.endLine > comment.startLine + 1 ? `-${comment.endLine}` : '' }}
+            </div>
+            <span v-if="comment.author" class="comment-author">{{ comment.author }}</span>
           </div>
           <span
             class="category-tag"
@@ -311,10 +314,27 @@ function toggleFilter(cat: CommentCategory) {
   margin-bottom: 4px;
 }
 
+.comment-meta-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .comment-line {
   color: var(--accent);
   font-size: 11px;
   font-weight: 500;
+}
+
+.comment-author {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+  line-height: 16px;
 }
 
 .category-tag {
