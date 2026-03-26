@@ -27,6 +27,7 @@ export interface Comment {
   body: string
   category: CommentCategory
   createdAt: number
+  author?: string
 }
 
 export type AppMode = 'upload' | 'review'
