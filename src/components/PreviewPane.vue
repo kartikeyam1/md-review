@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
-import type { Comment } from '@/types'
+import type { Comment, ThemeMode } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
 import mermaid from 'mermaid'
 
@@ -9,6 +9,7 @@ mermaid.initialize({ startOnLoad: false, theme: 'neutral' })
 const props = defineProps<{
   content: string
   comments: Comment[]
+  theme?: ThemeMode
 }>()
 
 const emit = defineEmits<{
@@ -57,12 +58,29 @@ async function renderMermaid() {
   if (!container) return
   const nodes = container.querySelectorAll<HTMLElement>('.mermaid')
   if (!nodes.length) return
-  // Reset mermaid's internal ID counter to avoid collisions on re-render
+  // Reset so mermaid re-processes them
   for (const node of nodes) {
     node.removeAttribute('data-processed')
+    // Restore raw source when re-rendering (mermaid replaces content with SVG)
+    if (node.dataset.source) node.innerHTML = node.dataset.source
+  }
+  // Store raw source for future re-renders (e.g. theme change)
+  for (const node of nodes) {
+    if (!node.dataset.source) node.dataset.source = node.innerHTML
   }
   await mermaid.run({ nodes: Array.from(nodes) })
 }
+
+watch(
+  () => props.theme,
+  (t) => {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: t === 'dark' ? 'dark' : 'neutral',
+    })
+    nextTick(() => renderMermaid())
+  }
+)
 
 watch(
   () => renderedHtml.value,

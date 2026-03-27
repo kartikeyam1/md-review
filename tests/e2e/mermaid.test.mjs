@@ -51,6 +51,34 @@ describe('mermaid diagram rendering', () => {
     assert.ok(hasLineStart, 'Mermaid container or parent should have data-line-start')
   })
 
+  it('re-renders mermaid with dark theme when toggling dark mode', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    const mermaidContainer = page.locator('.preview-pane .mermaid')
+    await mermaidContainer.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(1000)
+
+    // Capture SVG markup in light mode
+    const lightSvg = await mermaidContainer.locator('svg').first().evaluate(
+      (el) => el.innerHTML
+    )
+
+    // Toggle dark mode
+    await page.click('.btn-icon')
+    await page.waitForTimeout(1500)
+
+    // SVG should have been re-rendered (mermaid dark theme)
+    const svgAfter = mermaidContainer.locator('svg')
+    assert.ok(await svgAfter.count() > 0, 'SVG should still exist after theme toggle')
+
+    const darkSvg = await svgAfter.first().evaluate(
+      (el) => el.innerHTML
+    )
+    // Mermaid dark theme generates different fill colors / styles
+    assert.notEqual(lightSvg, darkSvg, 'Mermaid SVG content should change in dark mode')
+  })
+
   it('does not render non-mermaid code blocks as diagrams', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)

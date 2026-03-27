@@ -335,6 +335,7 @@ function handleImportComments() {
           ref="previewRef"
           :content="markdown"
           :comments="comments"
+          :theme="theme"
           @selection="handleSelection"
           @selection-clear="handleSelectionClear"
         />
