@@ -352,6 +352,19 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   margin-left: -10px;
 }
 
+/* YAML frontmatter table */
+.preview-pane :deep(.frontmatter) {
+  font-size: 13px;
+  margin-bottom: 20px;
+  opacity: 0.85;
+}
+
+.preview-pane :deep(.frontmatter td:first-child) {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
 /* Mermaid diagrams */
 .preview-pane :deep(.mermaid) {
   text-align: center;

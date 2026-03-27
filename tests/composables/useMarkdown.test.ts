@@ -50,6 +50,39 @@ describe('useMarkdown', () => {
     expect(html).not.toContain('hljs-')
   })
 
+  it('renders YAML frontmatter as a key-value table', () => {
+    const { renderHtml } = useMarkdown()
+    const md = `---
+document_id: TMS-REF-DISC-15
+version: 1.0.0
+status: Draft
+owner: Pradyumna
+---
+
+# Title
+`
+    const html = renderHtml(md)
+    // Should contain a frontmatter table
+    expect(html).toContain('frontmatter')
+    expect(html).toContain('document_id')
+    expect(html).toContain('TMS-REF-DISC-15')
+    expect(html).toContain('version')
+    expect(html).toContain('1.0.0')
+    // Should NOT produce an <hr> from the opening ---
+    expect(html).not.toMatch(/<hr/)
+    // The actual heading should still render
+    expect(html).toContain('<h1')
+    expect(html).toContain('Title')
+  })
+
+  it('renders markdown without frontmatter normally', () => {
+    const { renderHtml } = useMarkdown()
+    const md = '# Just a heading\n\nSome text.\n'
+    const html = renderHtml(md)
+    expect(html).not.toContain('frontmatter')
+    expect(html).toContain('<h1')
+  })
+
   it('still syntax-highlights non-mermaid code blocks', () => {
     const { renderHtml } = useMarkdown()
     const md = '```python\nprint("hello")\n```\n'
