@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { ref, nextTick } from 'vue'
 import type { PaneMode, ThemeMode } from '@/types'
 import { nextTheme, THEME_META } from '@/composables/useTheme'
 
-defineProps<{
+const props = defineProps<{
   filename: string
   paneMode: PaneMode
   commentCount: number
@@ -13,11 +14,13 @@ defineProps<{
   sharing: boolean
   syncStatus: 'local' | 'synced' | 'error'
   hasUnsavedMarkdown: boolean
+  pasteId: string | null
 }>()
 
 const emit = defineEmits<{
   'update:paneMode': [mode: PaneMode]
   'update:theme': [mode: ThemeMode]
+  'update:filename': [name: string]
   'open-file': []
   'new-doc': []
   'refresh': []
@@ -25,13 +28,44 @@ const emit = defineEmits<{
   'share': []
   'save-markdown': []
 }>()
+
+const editingFilename = ref(false)
+const filenameInput = ref<HTMLInputElement>()
+
+async function startEditFilename() {
+  editingFilename.value = true
+  await nextTick()
+  filenameInput.value?.select()
+}
+
+function commitFilename() {
+  const val = filenameInput.value?.value.trim()
+  if (val && val !== props.filename) {
+    emit('update:filename', val)
+  }
+  editingFilename.value = false
+}
+
+function onFilenameKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') commitFilename()
+  if (e.key === 'Escape') editingFilename.value = false
+}
 </script>
 
 <template>
   <header class="header">
     <div class="header-left">
       <h1 class="logo">mdreview<span class="logo-accent">.oss</span></h1>
-      <span v-if="filename" class="filename">{{ filename }}</span>
+      <input
+        v-if="editingFilename"
+        ref="filenameInput"
+        class="filename-edit"
+        :value="filename"
+        @blur="commitFilename"
+        @keydown="onFilenameKeydown"
+      />
+      <span v-else-if="filename" class="filename" title="Click to rename" @click="startEditFilename">{{ filename }}</span>
+      <span v-if="pasteId" class="paste-id" :title="pasteId">id: {{ pasteId }}</span>
       <span v-if="filename" class="doc-stats">
         <span class="doc-stats-sep">·</span>
         <span class="doc-stats-num">{{ wordCount.toLocaleString() }}</span> words
@@ -118,6 +152,34 @@ const emit = defineEmits<{
 .filename {
   color: var(--text-muted);
   font-size: 13px;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 2px 4px;
+}
+
+.filename:hover {
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+
+.filename-edit {
+  font-size: 13px;
+  font-family: var(--font-body);
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 2px 4px;
+  outline: none;
+  width: 180px;
+}
+
+.paste-id {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  opacity: 0.6;
+  user-select: all;
 }
 
 .doc-stats {
