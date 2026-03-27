@@ -8,13 +8,14 @@ export interface SharedPayload {
   filename: string
   comments: Comment[]
   sharedAt: string
+  sessionName?: string
 }
 
 export function useShare() {
   const sharing = ref(false)
   const shareError = ref<string | null>(null)
 
-  async function createShare(markdown: string, filename: string, comments: Comment[]): Promise<string | null> {
+  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string): Promise<string | null> {
     sharing.value = true
     shareError.value = null
 
@@ -24,6 +25,7 @@ export function useShare() {
       comments,
       sharedAt: new Date().toISOString(),
     }
+    if (sessionName) payload.sessionName = sessionName
 
     try {
       const res = await fetch(`${PASTE_API}/paste`, {
