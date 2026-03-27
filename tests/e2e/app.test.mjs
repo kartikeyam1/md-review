@@ -69,10 +69,14 @@ describe('dark mode', () => {
     const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'))
     assert.ok(isDark, 'Should have dark class after toggle')
 
+    // Second click: dark → github-light (dark removed, github-theme added)
     await page.click('.btn-icon')
     await page.waitForTimeout(300)
-    const isLight = await page.evaluate(() => !document.documentElement.classList.contains('dark'))
-    assert.ok(isLight, 'Should remove dark class after second toggle')
+    const isGithubLight = await page.evaluate(() =>
+      !document.documentElement.classList.contains('dark') &&
+      document.documentElement.classList.contains('github-theme')
+    )
+    assert.ok(isGithubLight, 'Second click should activate github-light (no dark, has github-theme)')
   })
 
   it('editor selection uses themed color in dark mode', async () => {
@@ -1104,5 +1108,125 @@ describe('selection preserved when popover opens', () => {
 
     const secondQuote = await page.locator('.popover-quote').textContent()
     assert.ok(secondQuote && secondQuote.trim().length > 0, 'Second selection should show in popover')
+  })
+})
+
+// ── Four-mode theme cycling ──────────────────────────────────
+
+describe('four-mode theme cycling', () => {
+  it('cycles light → dark → github-light → github-dark → light', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // Start: light (no classes)
+    let html = await page.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      github: document.documentElement.classList.contains('github-theme'),
+    }))
+    assert.ok(!html.dark && !html.github, 'Should start in light mode')
+
+    // Click 1 → dark
+    await page.click('.btn-icon')
+    await page.waitForTimeout(300)
+    html = await page.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      github: document.documentElement.classList.contains('github-theme'),
+    }))
+    assert.ok(html.dark && !html.github, 'After 1 click: dark mode')
+
+    // Click 2 → github-light
+    await page.click('.btn-icon')
+    await page.waitForTimeout(300)
+    html = await page.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      github: document.documentElement.classList.contains('github-theme'),
+    }))
+    assert.ok(!html.dark && html.github, 'After 2 clicks: github-light mode')
+
+    const markdownBody = await page.locator('.preview-pane.markdown-body').count()
+    assert.ok(markdownBody > 0, 'github-light: preview-pane should have markdown-body class')
+
+    // Click 3 → github-dark
+    await page.click('.btn-icon')
+    await page.waitForTimeout(300)
+    html = await page.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      github: document.documentElement.classList.contains('github-theme'),
+    }))
+    assert.ok(html.dark && html.github, 'After 3 clicks: github-dark mode')
+
+    // Click 4 → light (full cycle)
+    await page.click('.btn-icon')
+    await page.waitForTimeout(300)
+    html = await page.evaluate(() => ({
+      dark: document.documentElement.classList.contains('dark'),
+      github: document.documentElement.classList.contains('github-theme'),
+    }))
+    assert.ok(!html.dark && !html.github, 'After 4 clicks: back to light mode')
+  })
+
+  it('markdown-body class absent in non-github themes', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // light
+    let count = await page.locator('.preview-pane.markdown-body').count()
+    assert.equal(count, 0, 'light: no markdown-body class')
+
+    // dark
+    await page.click('.btn-icon')
+    await page.waitForTimeout(300)
+    count = await page.locator('.preview-pane.markdown-body').count()
+    assert.equal(count, 0, 'dark: no markdown-body class')
+  })
+
+  it('github theme persists across page reload', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    // Advance to github-light (2 clicks)
+    await page.click('.btn-icon')
+    await page.waitForTimeout(200)
+    await page.click('.btn-icon')
+    await page.waitForTimeout(300)
+
+    const githubClass = await page.evaluate(() =>
+      document.documentElement.classList.contains('github-theme')
+    )
+    assert.ok(githubClass, 'Should be in github-theme before reload')
+
+    // Reload
+    await page.reload()
+    await page.waitForTimeout(2000)
+
+    const afterReload = await page.evaluate(() =>
+      document.documentElement.classList.contains('github-theme')
+    )
+    assert.ok(afterReload, 'github-theme class should persist after reload')
+  })
+
+  it('mermaid renders in github-dark theme', async () => {
+    await page.goto(FILE_URL)
+    await page.waitForTimeout(2000)
+
+    const mermaidEl = page.locator('.preview-pane .mermaid')
+    const hasMermaid = await mermaidEl.count()
+    if (hasMermaid === 0) return // fixture has no mermaid block
+
+    await mermaidEl.first().scrollIntoViewIfNeeded()
+    await page.waitForTimeout(1000)
+
+    const lightSvg = await mermaidEl.first().locator('svg').evaluate(el => el.innerHTML)
+
+    // Navigate to github-dark (3 clicks)
+    await page.click('.btn-icon') // → dark
+    await page.waitForTimeout(300)
+    await page.click('.btn-icon') // → github-light
+    await page.waitForTimeout(300)
+    await page.click('.btn-icon') // → github-dark
+    await page.waitForTimeout(1500)
+
+    const darkSvg = await mermaidEl.first().locator('svg').evaluate(el => el.innerHTML)
+    assert.notEqual(lightSvg, darkSvg, 'Mermaid SVG should differ in github-dark mode')
   })
 })

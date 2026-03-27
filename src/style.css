@@ -31,6 +31,36 @@ html.dark {
   --overlay-bg: rgba(0, 0, 0, 0.6);
 }
 
+html.github-theme {
+  --bg-page: #f6f8fa;
+  --bg-surface: #ffffff;
+  --bg-code: #f6f8fa;
+  --text-primary: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #848d97;
+  --accent: #0969da;
+  --border: #d0d7de;
+  --comment-bg: rgba(9, 105, 218, 0.08);
+  --selection-bg: rgba(9, 105, 218, 0.18);
+  --shadow-color: rgba(31, 35, 40, 0.08);
+  --overlay-bg: rgba(31, 35, 40, 0.5);
+}
+
+html.dark.github-theme {
+  --bg-page: #010409;
+  --bg-surface: #0d1117;
+  --bg-code: #161b22;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent: #58a6ff;
+  --border: #30363d;
+  --comment-bg: rgba(88, 166, 255, 0.1);
+  --selection-bg: rgba(88, 166, 255, 0.25);
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+
 *,
 *::before,
 *::after {

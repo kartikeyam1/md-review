@@ -1,6 +1,7 @@
 import { ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import type { Comment, ThemeMode } from '@/types'
+import { applyTheme, isValidTheme } from '@/composables/useTheme'
 
 const STORAGE_KEY = 'md-review-state'
 const THEME_KEY = 'md-review-theme'
@@ -66,13 +67,10 @@ export function usePersistence(
 }
 
 export function useThemePersistence() {
-  const stored = localStorage.getItem(THEME_KEY) as ThemeMode | null
+  const stored = localStorage.getItem(THEME_KEY)
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-  const theme = ref<ThemeMode>(stored || (prefersDark ? 'dark' : 'light'))
-
-  function applyTheme(t: ThemeMode) {
-    document.documentElement.classList.toggle('dark', t === 'dark')
-  }
+  const defaultTheme: ThemeMode = prefersDark ? 'dark' : 'light'
+  const theme = ref<ThemeMode>(isValidTheme(stored) ? stored : defaultTheme)
 
   applyTheme(theme.value)
 

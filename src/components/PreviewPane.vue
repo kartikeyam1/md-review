@@ -2,15 +2,16 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import type { Comment, ThemeMode } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
+import { isGithub, isDark } from '@/composables/useTheme'
 import mermaid from 'mermaid'
-
-mermaid.initialize({ startOnLoad: false, theme: 'neutral' })
 
 const props = defineProps<{
   content: string
   comments: Comment[]
   theme?: ThemeMode
 }>()
+
+mermaid.initialize({ startOnLoad: false, theme: isDark(props.theme ?? 'light') ? 'dark' : 'neutral' })
 
 const emit = defineEmits<{
   selection: [payload: {
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 
 const { renderHtml } = useMarkdown()
 const containerRef = ref<HTMLElement | null>(null)
+const isGithubTheme = computed(() => isGithub(props.theme ?? 'light'))
 
 // renderHtml now injects data-line-start/data-line-end via the markdown-it plugin
 const renderedHtml = computed(() => renderHtml(props.content))
@@ -76,7 +78,7 @@ watch(
   (t) => {
     mermaid.initialize({
       startOnLoad: false,
-      theme: t === 'dark' ? 'dark' : 'neutral',
+      theme: isDark(t ?? 'light') ? 'dark' : 'neutral',
     })
     nextTick(() => renderMermaid())
   }
@@ -208,7 +210,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
 <template>
   <div
     ref="containerRef"
-    class="preview-pane"
+    :class="['preview-pane', { 'markdown-body': isGithubTheme, 'github-mode': isGithubTheme }]"
     @mouseup="onMouseUp"
     @mousedown="onMouseDown"
     v-html="renderedHtml"
@@ -227,7 +229,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   height: 100%;
 }
 
-.preview-pane :deep(h1) {
+.preview-pane:not(.github-mode) :deep(h1) {
   font-family: var(--font-heading);
   font-size: 24px;
   font-weight: 600;
@@ -237,7 +239,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   border-bottom: 1px solid var(--border);
 }
 
-.preview-pane :deep(h2) {
+.preview-pane:not(.github-mode) :deep(h2) {
   font-family: var(--font-heading);
   font-size: 20px;
   font-weight: 600;
@@ -245,7 +247,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   margin: 20px 0 10px;
 }
 
-.preview-pane :deep(h3) {
+.preview-pane:not(.github-mode) :deep(h3) {
   font-family: var(--font-heading);
   font-size: 16px;
   font-weight: 600;
@@ -253,23 +255,23 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   margin: 16px 0 8px;
 }
 
-.preview-pane :deep(p) {
+.preview-pane:not(.github-mode) :deep(p) {
   color: var(--text-secondary);
   margin: 0 0 12px;
 }
 
-.preview-pane :deep(ul),
-.preview-pane :deep(ol) {
+.preview-pane:not(.github-mode) :deep(ul),
+.preview-pane:not(.github-mode) :deep(ol) {
   color: var(--text-secondary);
   padding-left: 24px;
   margin: 0 0 12px;
 }
 
-.preview-pane :deep(li) {
+.preview-pane:not(.github-mode) :deep(li) {
   margin: 4px 0;
 }
 
-.preview-pane :deep(code) {
+.preview-pane:not(.github-mode) :deep(code) {
   font-family: var(--font-mono);
   background: var(--bg-code, var(--bg-page));
   padding: 2px 5px;
@@ -277,7 +279,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   font-size: 13px;
 }
 
-.preview-pane :deep(pre) {
+.preview-pane:not(.github-mode) :deep(pre) {
   background: var(--bg-code, var(--bg-page));
   border: 1px solid var(--border);
   padding: 12px;
@@ -286,62 +288,62 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   overflow-x: auto;
 }
 
-.preview-pane :deep(pre code) {
+.preview-pane:not(.github-mode) :deep(pre code) {
   background: none;
   padding: 0;
 }
 
-.preview-pane :deep(strong) {
+.preview-pane:not(.github-mode) :deep(strong) {
   color: var(--text-primary);
 }
 
-.preview-pane :deep(blockquote) {
+.preview-pane:not(.github-mode) :deep(blockquote) {
   border-left: 3px solid var(--border);
   padding-left: 16px;
   color: var(--text-muted);
   margin: 0 0 12px;
 }
 
-.preview-pane :deep(hr) {
+.preview-pane:not(.github-mode) :deep(hr) {
   border: none;
   border-top: 1px solid var(--border);
   margin: 24px 0;
 }
 
-.preview-pane :deep(a) {
+.preview-pane:not(.github-mode) :deep(a) {
   color: var(--accent);
   text-decoration: none;
 }
 
-.preview-pane :deep(a:hover) {
+.preview-pane:not(.github-mode) :deep(a:hover) {
   text-decoration: underline;
 }
 
-.preview-pane :deep(table) {
+.preview-pane:not(.github-mode) :deep(table) {
   border-collapse: collapse;
   width: 100%;
   margin: 0 0 12px;
   font-size: 14px;
 }
 
-.preview-pane :deep(th),
-.preview-pane :deep(td) {
+.preview-pane:not(.github-mode) :deep(th),
+.preview-pane:not(.github-mode) :deep(td) {
   border: 1px solid var(--border);
   padding: 8px 12px;
   text-align: left;
 }
 
-.preview-pane :deep(th) {
+.preview-pane:not(.github-mode) :deep(th) {
   background: var(--bg-page);
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.preview-pane :deep(tbody tr:nth-child(even)) {
+.preview-pane:not(.github-mode) :deep(tbody tr:nth-child(even)) {
   background: var(--bg-page);
 }
 
-.preview-pane :deep(tbody tr:hover) {
+.preview-pane:not(.github-mode) :deep(tbody tr:hover) {
   background: var(--comment-bg);
 }
 
@@ -376,67 +378,67 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
 }
 
 /* highlight.js token colours — mapped to theme CSS custom properties */
-.preview-pane :deep(.hljs-keyword),
-.preview-pane :deep(.hljs-selector-tag),
-.preview-pane :deep(.hljs-tag) {
+.preview-pane:not(.github-mode) :deep(.hljs-keyword),
+.preview-pane:not(.github-mode) :deep(.hljs-selector-tag),
+.preview-pane:not(.github-mode) :deep(.hljs-tag) {
   color: var(--accent);
   font-weight: 500;
 }
 
-.preview-pane :deep(.hljs-string),
-.preview-pane :deep(.hljs-attr),
-.preview-pane :deep(.hljs-selector-attr) {
+.preview-pane:not(.github-mode) :deep(.hljs-string),
+.preview-pane:not(.github-mode) :deep(.hljs-attr),
+.preview-pane:not(.github-mode) :deep(.hljs-selector-attr) {
   color: var(--text-secondary);
 }
 
-.preview-pane :deep(.hljs-comment),
-.preview-pane :deep(.hljs-quote) {
+.preview-pane:not(.github-mode) :deep(.hljs-comment),
+.preview-pane:not(.github-mode) :deep(.hljs-quote) {
   color: var(--text-muted);
   font-style: italic;
 }
 
-.preview-pane :deep(.hljs-number),
-.preview-pane :deep(.hljs-literal) {
+.preview-pane:not(.github-mode) :deep(.hljs-number),
+.preview-pane:not(.github-mode) :deep(.hljs-literal) {
   color: var(--accent);
   opacity: 0.85;
 }
 
-.preview-pane :deep(.hljs-function),
-.preview-pane :deep(.hljs-title),
-.preview-pane :deep(.hljs-title\.function_) {
+.preview-pane:not(.github-mode) :deep(.hljs-function),
+.preview-pane:not(.github-mode) :deep(.hljs-title),
+.preview-pane:not(.github-mode) :deep(.hljs-title\.function_) {
   color: var(--text-primary);
   font-weight: 600;
 }
 
-.preview-pane :deep(.hljs-built_in),
-.preview-pane :deep(.hljs-class) {
+.preview-pane:not(.github-mode) :deep(.hljs-built_in),
+.preview-pane:not(.github-mode) :deep(.hljs-class) {
   color: var(--text-primary);
   opacity: 0.9;
 }
 
-.preview-pane :deep(.hljs-type),
-.preview-pane :deep(.hljs-selector-class) {
+.preview-pane:not(.github-mode) :deep(.hljs-type),
+.preview-pane:not(.github-mode) :deep(.hljs-selector-class) {
   color: var(--text-secondary);
   font-weight: 500;
 }
 
-.preview-pane :deep(.hljs-variable),
-.preview-pane :deep(.hljs-template-variable) {
+.preview-pane:not(.github-mode) :deep(.hljs-variable),
+.preview-pane:not(.github-mode) :deep(.hljs-template-variable) {
   color: var(--text-secondary);
 }
 
-.preview-pane :deep(.hljs-meta),
-.preview-pane :deep(.hljs-meta-keyword) {
+.preview-pane:not(.github-mode) :deep(.hljs-meta),
+.preview-pane:not(.github-mode) :deep(.hljs-meta-keyword) {
   color: var(--text-muted);
 }
 
-.preview-pane :deep(.hljs-punctuation),
-.preview-pane :deep(.hljs-operator) {
+.preview-pane:not(.github-mode) :deep(.hljs-punctuation),
+.preview-pane:not(.github-mode) :deep(.hljs-operator) {
   color: var(--text-muted);
 }
 
 /* h4 / h5 / h6 */
-.preview-pane :deep(h4) {
+.preview-pane:not(.github-mode) :deep(h4) {
   font-family: var(--font-heading);
   font-size: 15px;
   font-weight: 600;
@@ -444,7 +446,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   margin: 14px 0 6px;
 }
 
-.preview-pane :deep(h5) {
+.preview-pane:not(.github-mode) :deep(h5) {
   font-family: var(--font-heading);
   font-size: 14px;
   font-weight: 600;
@@ -452,7 +454,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   margin: 12px 0 6px;
 }
 
-.preview-pane :deep(h6) {
+.preview-pane:not(.github-mode) :deep(h6) {
   font-family: var(--font-heading);
   font-size: 13px;
   font-weight: 600;
@@ -463,7 +465,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
 }
 
 /* Images */
-.preview-pane :deep(img) {
+.preview-pane:not(.github-mode) :deep(img) {
   max-width: 100%;
   border-radius: 6px;
   display: block;
@@ -471,19 +473,19 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
 }
 
 /* Task list checkboxes */
-.preview-pane :deep(.contains-task-list) {
+.preview-pane:not(.github-mode) :deep(.contains-task-list) {
   list-style: none;
   padding-left: 4px;
 }
 
-.preview-pane :deep(.task-list-item) {
+.preview-pane:not(.github-mode) :deep(.task-list-item) {
   list-style: none;
   display: flex;
   align-items: baseline;
   gap: 6px;
 }
 
-.preview-pane :deep(.task-list-item input[type='checkbox']) {
+.preview-pane:not(.github-mode) :deep(.task-list-item input[type='checkbox']) {
   appearance: auto;
   margin: 0;
   flex-shrink: 0;
@@ -493,8 +495,8 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   cursor: default;
 }
 
-.preview-pane :deep(.task-list-item input[type='checkbox']:checked + span),
-.preview-pane :deep(.task-list-item input[type='checkbox']:checked ~ *) {
+.preview-pane:not(.github-mode) :deep(.task-list-item input[type='checkbox']:checked + span),
+.preview-pane:not(.github-mode) :deep(.task-list-item input[type='checkbox']:checked ~ *) {
   color: var(--text-muted);
   text-decoration: line-through;
   text-decoration-color: var(--text-muted);

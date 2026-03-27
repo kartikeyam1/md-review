@@ -40,4 +40,4 @@ export interface Comment {
 
 export type AppMode = 'upload' | 'review'
 export type PaneMode = 'edit' | 'preview'
-export type ThemeMode = 'light' | 'dark'
+export type ThemeMode = 'light' | 'dark' | 'github-light' | 'github-dark'
