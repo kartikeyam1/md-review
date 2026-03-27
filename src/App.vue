@@ -172,9 +172,9 @@ function handleSelection(info: {
   selectedText: string
   coords: { x: number; y: number }
 }) {
+  if (showPopover.value) return
   selection.value = info
   showActionBar.value = true
-  showPopover.value = false
 }
 
 function handleOpenComment() {
