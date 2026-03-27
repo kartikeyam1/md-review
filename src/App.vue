@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { AppMode, PaneMode, CommentCategory } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
@@ -108,11 +108,21 @@ async function loadFromGithubHash() {
   }
 }
 
+function onHashChange() {
+  loadSharedDoc()
+  loadFromGithubHash()
+}
+
 onMounted(() => {
   filePathParam.value = new URLSearchParams(window.location.search).get('filePath')
   loadFromFilePath()
   loadSharedDoc()
   loadFromGithubHash()
+  window.addEventListener('hashchange', onHashChange)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('hashchange', onHashChange)
 })
 
 const selection = ref<{
