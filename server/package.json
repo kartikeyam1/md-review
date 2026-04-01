@@ -1,0 +1,10 @@
+{
+  "name": "md-review-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "zod": "^4.3.6"
+  }
+}
