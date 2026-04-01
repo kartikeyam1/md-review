@@ -21,6 +21,9 @@ function registerTools(server, handlers) {
       filename: z.string().optional().describe('Display name for the file (defaults to basename of filePath if provided)'),
       comments: z.array(z.any()).optional().describe('Pre-existing comments'),
       sessionName: z.string().optional().describe('Custom human-readable name for the session'),
+      callbackUrl: z.string().optional().describe('Webhook URL to POST approval status changes to'),
+      slug: z.string().optional().describe('Custom URL-safe slug (auto-generated from sessionName if omitted)'),
+      expiryDays: z.number().nullable().optional().describe('Session expiry in days (7, 30, or null for infinite). Default: 30'),
     }).refine(data => data.markdown || data.filePath, {
       message: 'Either markdown or filePath must be provided',
     }),
@@ -148,6 +151,42 @@ function registerTools(server, handlers) {
     }),
   }, async (args) => {
     const result = await handlers.update_markdown(args);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  });
+
+  server.registerTool('get_approval_status', {
+    title: 'Get Approval Status',
+    description: 'Get the approval status of a review session.',
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+    }),
+  }, async (args) => {
+    const result = await handlers.get_approval_status(args);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  });
+
+  server.registerTool('resolve_comment', {
+    title: 'Resolve Comment',
+    description: 'Mark a comment as resolved.',
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+      commentId: z.string().describe('The comment ID'),
+      resolvedBy: z.string().optional().describe('Who resolved it'),
+    }),
+  }, async (args) => {
+    const result = await handlers.resolve_comment(args);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  });
+
+  server.registerTool('unresolve_comment', {
+    title: 'Unresolve Comment',
+    description: 'Mark a comment as unresolved.',
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+      commentId: z.string().describe('The comment ID'),
+    }),
+  }, async (args) => {
+    const result = await handlers.unresolve_comment(args);
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   });
 

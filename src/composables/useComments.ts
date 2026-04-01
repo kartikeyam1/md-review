@@ -68,6 +68,20 @@ export function useComments() {
     }
   }
 
+  function resolveComment(id: string, resolvedBy?: string) {
+    const idx = _comments.value.findIndex((c) => c.id === id)
+    if (idx !== -1) {
+      _comments.value[idx] = { ..._comments.value[idx], resolved: true, resolved_by: resolvedBy || null, resolved_at: Date.now() }
+    }
+  }
+
+  function unresolveComment(id: string) {
+    const idx = _comments.value.findIndex((c) => c.id === id)
+    if (idx !== -1) {
+      _comments.value[idx] = { ..._comments.value[idx], resolved: false, resolved_by: null, resolved_at: null }
+    }
+  }
+
   function deleteReply(commentId: string, replyId: string) {
     const idx = _comments.value.findIndex((c) => c.id === commentId)
     if (idx === -1) return
@@ -81,5 +95,6 @@ export function useComments() {
     comments, addComment, editComment, deleteComment,
     clearComments, loadComments,
     addReply, editReply, deleteReply,
+    resolveComment, unresolveComment,
   }
 }

@@ -16,6 +16,8 @@ const emit = defineEmits<{
   'add-reply': [commentId: string, input: { body: string }]
   'edit-reply': [commentId: string, replyId: string, body: string]
   'delete-reply': [commentId: string, replyId: string]
+  resolve: [commentId: string]
+  unresolve: [commentId: string]
 }>()
 
 const collapsed = ref(false)
@@ -167,6 +169,7 @@ function formatTimeAgo(ts: number): string {
         v-for="comment in filteredComments"
         :key="comment.id"
         class="comment-card"
+        :class="{ resolved: comment.resolved }"
         @click="emit('scroll-to', comment.startLine)"
       >
         <div class="comment-top-row">
@@ -216,6 +219,22 @@ function formatTimeAgo(ts: number): string {
             @click.stop="emit('delete', comment.id)"
           >
             Delete
+          </button>
+          <button
+            v-if="!comment.resolved"
+            class="comment-action-btn resolve-btn"
+            title="Mark as resolved"
+            @click.stop="emit('resolve', comment.id)"
+          >
+            Resolve
+          </button>
+          <button
+            v-else
+            class="comment-action-btn unresolve-btn"
+            title="Mark as unresolved"
+            @click.stop="emit('unresolve', comment.id)"
+          >
+            Unresolve
           </button>
         </div>
 
@@ -423,6 +442,22 @@ function formatTimeAgo(ts: number): string {
 
 .comment-card:hover {
   box-shadow: 0 1px 4px var(--shadow-color, rgba(26, 22, 18, 0.08));
+}
+
+.comment-card.resolved {
+  opacity: 0.7;
+  border-left-color: #059669;
+}
+.comment-card.resolved .comment-body {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.resolve-btn { color: #059669 !important; }
+.unresolve-btn {
+  color: #b45309 !important;
+  opacity: 1 !important;
+  font-weight: 500;
 }
 
 .comment-top-row {

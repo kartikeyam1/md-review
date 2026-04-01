@@ -16,9 +16,11 @@ export function useSync(
     addReply: (commentId: string, input: { body: string; author?: string }) => Reply
     editReply: (commentId: string, replyId: string, body: string) => void
     deleteReply: (commentId: string, replyId: string) => void
+    resolveComment: (id: string, resolvedBy?: string) => void
+    unresolveComment: (id: string) => void
   },
 ) {
-  const { postComment, putComment, deleteCommentApi, postReply, putReply, deleteReplyApi, putMarkdown, pollPaste } = useShare()
+  const { postComment, putComment, deleteCommentApi, postReply, putReply, deleteReplyApi, putMarkdown, pollPaste, resolveCommentApi, unresolveCommentApi } = useShare()
 
   const syncError = ref(false)
   const syncStatus = computed<'local' | 'synced' | 'error'>(() => {
@@ -131,6 +133,36 @@ export function useSync(
     }
   }
 
+  async function resolveComment(commentId: string, resolvedBy?: string) {
+    if (!pasteId.value) {
+      localOps.resolveComment(commentId, resolvedBy)
+      return
+    }
+    const result = await resolveCommentApi(pasteId.value, commentId, resolvedBy)
+    if (result) {
+      localOps.loadComments(comments.value.map(c => c.id === commentId ? result : c))
+      syncError.value = false
+    } else {
+      localOps.resolveComment(commentId, resolvedBy)
+      syncError.value = true
+    }
+  }
+
+  async function unresolveComment(commentId: string) {
+    if (!pasteId.value) {
+      localOps.unresolveComment(commentId)
+      return
+    }
+    const result = await unresolveCommentApi(pasteId.value, commentId)
+    if (result) {
+      localOps.loadComments(comments.value.map(c => c.id === commentId ? result : c))
+      syncError.value = false
+    } else {
+      localOps.unresolveComment(commentId)
+      syncError.value = true
+    }
+  }
+
   async function saveMarkdown(filename?: string): Promise<boolean> {
     if (!pasteId.value) return false
     const ok = await putMarkdown(pasteId.value, markdown.value, filename)
@@ -170,5 +202,5 @@ export function useSync(
 
   onUnmounted(() => stopPolling())
 
-  return { addComment, editComment, deleteComment, addReply, editReply, deleteReply, saveMarkdown, syncStatus, isShared }
+  return { addComment, editComment, deleteComment, addReply, editReply, deleteReply, resolveComment, unresolveComment, saveMarkdown, syncStatus, isShared }
 }

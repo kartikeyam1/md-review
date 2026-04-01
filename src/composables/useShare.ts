@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { Comment, Reply } from '@/types'
+import type { Comment, Reply, ApprovalInfo } from '@/types'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 
@@ -61,7 +61,7 @@ export function useShare() {
 
   function getShareIdFromHash(): string | null {
     const hash = window.location.hash
-    const match = hash.match(/^#shared=([a-f0-9]+)$/)
+    const match = hash.match(/^#shared=([a-zA-Z0-9][a-zA-Z0-9-]*)$/)
     return match ? match[1] : null
   }
 
@@ -178,6 +178,53 @@ export function useShare() {
     } catch { return false }
   }
 
+  async function getApproval(pasteId: string): Promise<ApprovalInfo | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/approval`)
+      if (!res.ok) return null
+      return await res.json() as ApprovalInfo
+    } catch { return null }
+  }
+
+  async function putApproval(pasteId: string, status: string, approvedBy?: string): Promise<any> {
+    try {
+      const body: Record<string, string> = { status }
+      if (approvedBy) body.approved_by = approvedBy
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/approval`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      return await res.json()
+    } catch { return null }
+  }
+
+  async function resolveCommentApi(pasteId: string, commentId: string, resolvedBy?: string): Promise<Comment | null> {
+    try {
+      const body: Record<string, string> = {}
+      if (resolvedBy) body.resolved_by = resolvedBy
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/comments/${commentId}/resolve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) return null
+      return await res.json() as Comment
+    } catch { return null }
+  }
+
+  async function unresolveCommentApi(pasteId: string, commentId: string): Promise<Comment | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/comments/${commentId}/unresolve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) return null
+      return await res.json() as Comment
+    } catch { return null }
+  }
+
   async function pollPaste(pasteId: string, etag: string | null): Promise<{
     data: SharedPayload | null; etag: string | null; notModified: boolean
   }> {
@@ -199,5 +246,6 @@ export function useShare() {
     postComment, putComment, deleteCommentApi,
     postReply, putReply, deleteReplyApi,
     putMarkdown, pollPaste,
+    getApproval, putApproval, resolveCommentApi, unresolveCommentApi,
   }
 }

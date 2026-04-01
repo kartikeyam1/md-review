@@ -36,8 +36,19 @@ export interface Comment {
   createdAt: number
   author?: string
   replies: Reply[]
+  resolved?: boolean
+  resolved_by?: string | null
+  resolved_at?: number | null
 }
 
-export type AppMode = 'upload' | 'review'
+export type ApprovalStatus = 'pending' | 'approved' | 'changes_requested'
+
+export interface ApprovalInfo {
+  approval_status: ApprovalStatus
+  approved_by?: string | null
+  approved_at?: string | null
+}
+
+export type AppMode = 'upload' | 'review' | 'dashboard'
 export type PaneMode = 'edit' | 'preview'
 export type ThemeMode = 'light' | 'dark' | 'github-light' | 'github-dark'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import type { AppMode, PaneMode, CommentCategory } from '@/types'
+import type { AppMode, PaneMode, CommentCategory, ApprovalInfo } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
 import { useShare } from '@/composables/useShare'
@@ -14,6 +14,9 @@ import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import CommentPopover from '@/components/CommentPopover.vue'
 import PromptModal from '@/components/PromptModal.vue'
 import ShareModal from '@/components/ShareModal.vue'
+import ApprovalBanner from '@/components/ApprovalBanner.vue'
+import SummaryPanel from '@/components/SummaryPanel.vue'
+import DashboardView from '@/components/DashboardView.vue'
 
 const appMode = ref<AppMode>('upload')
 const paneMode = ref<PaneMode>('preview')
@@ -24,11 +27,12 @@ const serverMarkdown = ref('')
 const showPromptModal = ref(false)
 const sidebarHidden = ref(false)
 
-const { comments, addComment, editComment, deleteComment, clearComments, loadComments, addReply, editReply, deleteReply } = useComments()
+const { comments, addComment, editComment, deleteComment, clearComments, loadComments, addReply, editReply, deleteReply, resolveComment, unresolveComment } = useComments()
 
 const sync = useSync(pasteId, comments, markdown, {
   addComment, editComment, deleteComment, loadComments,
   addReply, editReply, deleteReply,
+  resolveComment, unresolveComment,
 })
 
 const { theme, setTheme } = useThemePersistence()
@@ -41,7 +45,32 @@ const { clearPersisted } = usePersistence(
   (mode) => { appMode.value = mode },
 )
 
-const { sharing, shareError, createShare, loadShare, fetchGithub, getShareIdFromHash, setShareHash, getShareUrls } = useShare()
+const { sharing, shareError, createShare, loadShare, fetchGithub, getShareIdFromHash, setShareHash, getShareUrls, getApproval, putApproval } = useShare()
+
+const approvalInfo = ref<ApprovalInfo | null>(null)
+
+const unresolvedMustFixCount = computed(() =>
+  comments.value.filter(c => c.category === 'must-fix' && c.resolved !== true).length
+)
+
+async function refreshApproval() {
+  if (pasteId.value) {
+    approvalInfo.value = await getApproval(pasteId.value)
+  }
+}
+
+async function handleApprove(approvedBy: string) {
+  if (!pasteId.value) return
+  const result = await putApproval(pasteId.value, 'approved', approvedBy)
+  if (result && !result.error) approvalInfo.value = result
+  else if (result?.error) alert(result.error)
+}
+
+async function handleRequestChanges(approvedBy: string) {
+  if (!pasteId.value) return
+  const result = await putApproval(pasteId.value, 'changes_requested', approvedBy)
+  if (result && !result.error) approvalInfo.value = result
+}
 
 const showShareModal = ref(false)
 const shareResult = ref<{ ui: string; api: string; comments: string; markdown: string } | null>(null)
@@ -93,6 +122,7 @@ async function loadSharedDoc() {
     }
     pasteId.value = shareId
     paneMode.value = 'preview'
+    refreshApproval()
   }
 }
 
@@ -108,16 +138,27 @@ async function loadFromGithubHash() {
   }
 }
 
+function checkDashboardHash(): boolean {
+  if (window.location.hash === '#dashboard') {
+    appMode.value = 'dashboard'
+    return true
+  }
+  return false
+}
+
 function onHashChange() {
+  if (checkDashboardHash()) return
   loadSharedDoc()
   loadFromGithubHash()
 }
 
 onMounted(() => {
   filePathParam.value = new URLSearchParams(window.location.search).get('filePath')
-  loadFromFilePath()
-  loadSharedDoc()
-  loadFromGithubHash()
+  if (!checkDashboardHash()) {
+    loadFromFilePath()
+    loadSharedDoc()
+    loadFromGithubHash()
+  }
   window.addEventListener('hashchange', onHashChange)
 })
 
@@ -308,6 +349,7 @@ function handleImportComments() {
 <template>
   <div class="app">
     <HeaderBar
+      v-if="appMode !== 'dashboard'"
       :filename="filename"
       :pane-mode="paneMode"
       :comment-count="comments.length"
@@ -330,9 +372,29 @@ function handleImportComments() {
       @save-markdown="handleSaveMarkdown"
     />
 
+    <DashboardView v-if="appMode === 'dashboard'" @new-doc="handleNewDoc" />
+
     <FileUpload v-if="appMode === 'upload'" @file-loaded="handleFileLoaded" />
 
-    <div v-else class="review-layout">
+    <ApprovalBanner
+      v-if="appMode === 'review' && pasteId && approvalInfo"
+      :approval-status="approvalInfo.approval_status"
+      :approved-by="approvalInfo.approved_by"
+      :approved-at="approvalInfo.approved_at"
+      :unresolved-must-fix-count="unresolvedMustFixCount"
+      :paste-id="pasteId"
+      @approve="handleApprove"
+      @request-changes="handleRequestChanges"
+    />
+
+    <SummaryPanel
+      v-if="appMode === 'review' && pasteId"
+      :filename="filename"
+      :comments="comments"
+      :approval-status="approvalInfo?.approval_status"
+    />
+
+    <div v-if="appMode === 'review'" class="review-layout">
       <div class="main-pane">
         <EditorPane
           v-if="paneMode === 'edit'"
@@ -373,6 +435,8 @@ function handleImportComments() {
         @add-reply="sync.addReply"
         @edit-reply="sync.editReply"
         @delete-reply="sync.deleteReply"
+        @resolve="sync.resolveComment"
+        @unresolve="sync.unresolveComment"
       />
     </div>
 

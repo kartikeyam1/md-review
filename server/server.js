@@ -19,7 +19,53 @@ const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// ── Slug index ───────────────────────────────────────────────────────────────
+const SLUG_INDEX_PATH = path.join(DATA_DIR, '_slug-index.json');
+let slugIndex = {};
+if (fs.existsSync(SLUG_INDEX_PATH)) {
+  try { slugIndex = JSON.parse(fs.readFileSync(SLUG_INDEX_PATH, 'utf-8')); } catch { slugIndex = {}; }
+}
+function saveSlugIndex() {
+  fs.writeFileSync(SLUG_INDEX_PATH, JSON.stringify(slugIndex));
+}
+function generateSlug(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+}
+function uniqueSlug(base) {
+  if (!slugIndex[base]) return base;
+  for (let i = 2; ; i++) {
+    const candidate = `${base}-${i}`;
+    if (!slugIndex[candidate]) return candidate;
+  }
+}
+function isExpired(data) {
+  if (!data.expires_at) return false;
+  return new Date(data.expires_at) < new Date();
+}
+
+function resolveId(idOrSlug) {
+  if (/^[a-f0-9]+$/.test(idOrSlug)) return idOrSlug;
+  return slugIndex[idOrSlug] || null;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fireWebhook(url, payload) {
+  const mod = url.startsWith('https') ? require('https') : require('http');
+  const body = JSON.stringify(payload);
+  const parsed = new URL(url);
+  const opts = {
+    hostname: parsed.hostname,
+    port: parsed.port,
+    path: parsed.pathname + parsed.search,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+  };
+  const req = mod.request(opts, () => {});
+  req.on('error', () => {}); // fire-and-forget
+  req.write(body);
+  req.end();
+}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -86,17 +132,48 @@ const server = http.createServer(async (req, res) => {
     req.on('end', () => {
       if (res.writableEnded) return;
 
+      let parsed;
       try {
-        JSON.parse(body); // validate JSON
+        parsed = JSON.parse(body);
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Invalid JSON' }));
       }
 
+      // Auto-set fields on new sessions
+      if (!parsed.approval_status) parsed.approval_status = 'pending';
+      if (!parsed.sharedAt) parsed.sharedAt = new Date().toISOString();
+
+      // Session expiry: default 30 days, configurable via expiry_days (7, 30, or null for infinite)
+      if (parsed.expiry_days !== null && parsed.expiry_days !== undefined) {
+        const days = [7, 30].includes(parsed.expiry_days) ? parsed.expiry_days : 30;
+        parsed.expires_at = new Date(Date.now() + days * 86400000).toISOString();
+      } else if (parsed.expiry_days === null) {
+        // Explicitly infinite — no expiry
+      } else {
+        parsed.expires_at = new Date(Date.now() + 30 * 86400000).toISOString();
+      }
+
       const id = crypto.randomBytes(6).toString('hex');
-      fs.writeFileSync(path.join(DATA_DIR, `${id}.json`), body);
+
+      // Slug support
+      let slug = null;
+      if (parsed.slug) {
+        slug = uniqueSlug(generateSlug(parsed.slug));
+      } else if (parsed.sessionName) {
+        slug = uniqueSlug(generateSlug(parsed.sessionName));
+      }
+      if (slug) {
+        parsed.slug = slug;
+        slugIndex[slug] = id;
+        saveSlugIndex();
+      }
+
+      fs.writeFileSync(path.join(DATA_DIR, `${id}.json`), JSON.stringify(parsed));
+      const result = { id };
+      if (slug) result.slug = slug;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ id }));
+      res.end(JSON.stringify(result));
     });
 
     return;
@@ -105,9 +182,12 @@ const server = http.createServer(async (req, res) => {
   // POST /paste/:id/comments/:commentId/replies — add a reply
   // PUT  /paste/:id/comments/:commentId/replies/:replyId — update a reply
   // DELETE /paste/:id/comments/:commentId/replies/:replyId — remove a reply
-  const replyMatch = req.url.match(/^\/paste\/([a-f0-9]+)\/comments\/([a-zA-Z0-9-]+)\/replies(?:\/([a-zA-Z0-9-]+))?$/);
+  const replyMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/comments\/([a-zA-Z0-9-]+)\/replies(?:\/([a-zA-Z0-9-]+))?$/);
   if (replyMatch && (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE')) {
-    const [, pasteId, commentId, replyId] = replyMatch;
+    const pasteId = resolveId(replyMatch[1]);
+    const commentId = replyMatch[2];
+    const replyId = replyMatch[3];
+    if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const data = loadPaste(pasteId);
     if (!data) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -198,12 +278,58 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // PUT /paste/:id/comments/:commentId/resolve — resolve a comment
+  // PUT /paste/:id/comments/:commentId/unresolve — unresolve a comment
+  const resolveMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/comments\/([a-zA-Z0-9-]+)\/(resolve|unresolve)$/);
+  if (resolveMatch && req.method === 'PUT') {
+    const pasteId = resolveId(resolveMatch[1]);
+    const commentId = resolveMatch[2];
+    const action = resolveMatch[3];
+    if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    const data = loadPaste(pasteId);
+    if (!data) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'not found' }));
+    }
+    if (!data.comments) data.comments = [];
+    const comment = data.comments.find(c => c.id === commentId);
+    if (!comment) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'comment not found' }));
+    }
+
+    if (action === 'resolve') {
+      let rawBody;
+      try { rawBody = await readBody(req); }
+      catch {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Payload too large' }));
+      }
+      let parsed = {};
+      try { parsed = JSON.parse(rawBody); } catch { /* optional body */ }
+
+      comment.resolved = true;
+      comment.resolved_by = parsed.resolved_by || null;
+      comment.resolved_at = Date.now();
+    } else {
+      comment.resolved = false;
+      comment.resolved_by = null;
+      comment.resolved_at = null;
+    }
+
+    savePaste(pasteId, data);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(comment));
+  }
+
   // POST /paste/:id/comments — add a comment
   // PUT  /paste/:id/comments/:commentId — update a comment
   // DELETE /paste/:id/comments/:commentId — remove a comment
-  const commentMatch = req.url.match(/^\/paste\/([a-f0-9]+)\/comments(?:\/([a-zA-Z0-9-]+))?$/);
+  const commentMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/comments(?:\/([a-zA-Z0-9-]+))?$/);
   if (commentMatch && (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE')) {
-    const [, pasteId, commentId] = commentMatch;
+    const pasteId = resolveId(commentMatch[1]);
+    const commentId = commentMatch[2];
+    if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const data = loadPaste(pasteId);
     if (!data) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -294,10 +420,100 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // GET /paste/:id/approval — get approval status
+  // PUT /paste/:id/approval — transition approval status
+  const approvalMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/approval$/);
+  if (approvalMatch && (req.method === 'GET' || req.method === 'PUT')) {
+    const pasteId = resolveId(approvalMatch[1]);
+    if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    const data = loadPaste(pasteId);
+    if (!data) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'not found' }));
+    }
+
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        approval_status: data.approval_status || 'pending',
+        approved_by: data.approved_by || null,
+        approved_at: data.approved_at || null,
+      }));
+    }
+
+    // PUT — transition approval status
+    let rawBody;
+    try { rawBody = await readBody(req); }
+    catch {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Payload too large' }));
+    }
+    let parsed;
+    try { parsed = JSON.parse(rawBody); }
+    catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Invalid JSON' }));
+    }
+
+    const current = data.approval_status || 'pending';
+    const next = parsed.status;
+    const VALID = {
+      'pending': ['approved', 'changes_requested'],
+      'approved': ['changes_requested'],
+      'changes_requested': ['approved'],
+    };
+    if (!VALID[current] || !VALID[current].includes(next)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: `Invalid transition: ${current} -> ${next}` }));
+    }
+
+    // Must-fix enforcement: block approval if unresolved must-fix comments
+    if (next === 'approved') {
+      const unresolved = (data.comments || [])
+        .filter(c => c.category === 'must-fix' && c.resolved !== true)
+        .map(c => c.id);
+      if (unresolved.length > 0) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          error: 'Cannot approve: unresolved must-fix comments',
+          unresolved_comment_ids: unresolved,
+        }));
+      }
+    }
+
+    data.approval_status = next;
+    if (next === 'approved') {
+      data.approved_by = parsed.approved_by || null;
+      data.approved_at = new Date().toISOString();
+    } else if (next === 'changes_requested') {
+      data.approved_by = null;
+      data.approved_at = null;
+    }
+    savePaste(pasteId, data);
+
+    // Fire webhook if callback_url exists
+    if (data.callback_url) {
+      fireWebhook(data.callback_url, {
+        sessionId: pasteId,
+        approval_status: data.approval_status,
+        approved_by: data.approved_by,
+        approved_at: data.approved_at,
+      });
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      approval_status: data.approval_status,
+      approved_by: data.approved_by,
+      approved_at: data.approved_at,
+    }));
+  }
+
   // PUT /paste/:id/markdown — update markdown (and optionally filename)
-  const markdownPutMatch = req.url.match(/^\/paste\/([a-f0-9]+)\/markdown$/);
+  const markdownPutMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/markdown$/);
   if (req.method === 'PUT' && markdownPutMatch) {
-    const pasteId = markdownPutMatch[1];
+    const pasteId = resolveId(markdownPutMatch[1]);
+    if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const data = loadPaste(pasteId);
     if (!data) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -326,12 +542,44 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: true }));
   }
 
+  // GET /paste/list — list sessions (optionally filtered by status)
+  if (req.method === 'GET' && req.url.startsWith('/paste/list')) {
+    const params = new URL(req.url, `http://${req.headers.host}`);
+    const statusFilter = params.searchParams.get('status');
+    const files = fs.readdirSync(DATA_DIR).filter(f => f.endsWith('.json') && !f.startsWith('_'));
+    const results = [];
+    for (const f of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf-8'));
+        if (isExpired(data)) continue;
+        if (statusFilter && data.approval_status !== statusFilter) continue;
+        const id = f.replace('.json', '');
+        results.push({
+          id,
+          slug: data.slug || null,
+          sessionName: data.sessionName || null,
+          filename: data.filename || null,
+          approval_status: data.approval_status || 'pending',
+          comment_count: (data.comments || []).length,
+          must_fix_unresolved: (data.comments || []).filter(c => c.category === 'must-fix' && c.resolved !== true).length,
+          created_at: data.sharedAt || null,
+          expires_at: data.expires_at || null,
+        });
+      } catch { /* skip corrupt files */ }
+    }
+    results.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(results));
+  }
+
   // GET /paste/:id — read full paste
   // GET /paste/:id/comments — read comments only
   // GET /paste/:id/markdown — read markdown only
-  const match = req.url.match(/^\/paste\/([a-f0-9]+)(\/comments|\/markdown)?$/);
+  const match = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)(\/comments|\/markdown)?$/);
   if (req.method === 'GET' && match) {
-    const file = path.join(DATA_DIR, `${match[1]}.json`);
+    const resolvedId = resolveId(match[1]);
+    if (!resolvedId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    const file = path.join(DATA_DIR, `${resolvedId}.json`);
     if (!fs.existsSync(file)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not found' }));
@@ -348,6 +596,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     const data = JSON.parse(rawBytes.toString('utf-8'));
+
+    if (isExpired(data)) {
+      res.writeHead(410, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Session expired' }));
+    }
+
     const sub = match[2];
 
     let result;
