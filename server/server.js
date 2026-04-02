@@ -15,9 +15,12 @@ if (!process.env.GITHUB_TOKEN) {
 
 const PORT = 3100;
 const DATA_DIR = path.join(__dirname, 'data');
+const SITES_DIR = path.join(DATA_DIR, 'sites');
 const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_SITE_BYTES = 50 * 1024 * 1024; // 50 MB for site uploads
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(SITES_DIR, { recursive: true });
 
 // ── Slug index ───────────────────────────────────────────────────────────────
 const SLUG_INDEX_PATH = path.join(DATA_DIR, '_slug-index.json');
@@ -46,6 +49,57 @@ function isExpired(data) {
 function resolveId(idOrSlug) {
   if (/^[a-f0-9]+$/.test(idOrSlug)) return idOrSlug;
   return slugIndex[idOrSlug] || null;
+}
+
+// ── Site index ───────────────────────────────────────────────────────────────
+const SITE_INDEX_PATH = path.join(DATA_DIR, '_site-index.json');
+let siteIndex = {};
+if (fs.existsSync(SITE_INDEX_PATH)) {
+  try { siteIndex = JSON.parse(fs.readFileSync(SITE_INDEX_PATH, 'utf-8')); } catch { siteIndex = {}; }
+}
+function saveSiteIndex() {
+  fs.writeFileSync(SITE_INDEX_PATH, JSON.stringify(siteIndex));
+}
+
+function resolveSiteId(idOrSlug) {
+  // Check if it's a direct site ID (directory exists)
+  if (/^[a-f0-9]+$/.test(idOrSlug) && fs.existsSync(path.join(SITES_DIR, idOrSlug))) return idOrSlug;
+  // Check slug index
+  for (const [id, meta] of Object.entries(siteIndex)) {
+    if (meta.slug === idOrSlug) return id;
+  }
+  return null;
+}
+
+const MIME_TYPES = {
+  '.html': 'text/html', '.htm': 'text/html',
+  '.css': 'text/css', '.js': 'application/javascript', '.mjs': 'application/javascript',
+  '.json': 'application/json', '.xml': 'application/xml', '.svg': 'image/svg+xml',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.ico': 'image/x-icon', '.avif': 'image/avif',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.eot': 'application/vnd.ms-fontobject',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+  '.pdf': 'application/pdf', '.zip': 'application/zip',
+  '.txt': 'text/plain', '.md': 'text/plain', '.map': 'application/json',
+  '.wasm': 'application/wasm',
+};
+function getMime(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return MIME_TYPES[ext] || 'application/octet-stream';
+}
+
+function readBodyRaw(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) { req.destroy(); return reject(new Error('Payload too large')); }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -682,11 +736,283 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Site hosting ──────────────────────────────────────────────────────────
+
+  // POST /site — create a new hosted site
+  if (req.method === 'POST' && req.url === '/site') {
+    const contentType = req.headers['content-type'] || '';
+    if (!contentType.includes('application/json')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Content-Type must be application/json' }));
+    }
+
+    let rawBody;
+    try { rawBody = await readBodyRaw(req, MAX_SITE_BYTES); }
+    catch {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Payload too large (max 50 MB)' }));
+    }
+
+    let parsed;
+    try { parsed = JSON.parse(rawBody.toString('utf-8')); }
+    catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Invalid JSON' }));
+    }
+
+    if (!parsed.name) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Missing required field: name' }));
+    }
+    if (!parsed.files && !parsed.archive) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Provide either "files" object or "archive" (base64)' }));
+    }
+
+    const id = crypto.randomBytes(6).toString('hex');
+    const siteDir = path.join(SITES_DIR, id);
+    fs.mkdirSync(siteDir, { recursive: true });
+
+    try {
+      if (parsed.files) {
+        // files mode: { "index.html": "<content>", "css/style.css": "<content>" }
+        for (const [filePath, content] of Object.entries(parsed.files)) {
+          // Prevent directory traversal
+          const resolved = path.resolve(siteDir, filePath);
+          if (!resolved.startsWith(siteDir + path.sep) && resolved !== siteDir) {
+            throw new Error(`Invalid file path: ${filePath}`);
+          }
+          fs.mkdirSync(path.dirname(resolved), { recursive: true });
+          fs.writeFileSync(resolved, content);
+        }
+      } else if (parsed.archive) {
+        // archive mode: base64-encoded zip or tar.gz
+        const format = parsed.format || 'zip';
+        const buf = Buffer.from(parsed.archive, 'base64');
+        const tmpFile = path.join(SITES_DIR, `_tmp_${id}.${format === 'tar.gz' ? 'tar.gz' : 'zip'}`);
+        fs.writeFileSync(tmpFile, buf);
+
+        try {
+          if (format === 'tar.gz' || format === 'tgz') {
+            require('child_process').execSync(`tar xzf "${tmpFile}" -C "${siteDir}"`, { timeout: 30000 });
+          } else {
+            require('child_process').execSync(`unzip -o -q "${tmpFile}" -d "${siteDir}"`, { timeout: 30000 });
+          }
+        } finally {
+          try { fs.unlinkSync(tmpFile); } catch {}
+        }
+
+        // If the archive extracted into a single subdirectory, hoist its contents up
+        const entries = fs.readdirSync(siteDir);
+        if (entries.length === 1) {
+          const sub = path.join(siteDir, entries[0]);
+          if (fs.statSync(sub).isDirectory()) {
+            const subEntries = fs.readdirSync(sub);
+            for (const e of subEntries) {
+              fs.renameSync(path.join(sub, e), path.join(siteDir, e));
+            }
+            fs.rmdirSync(sub);
+          }
+        }
+      }
+    } catch (err) {
+      // Cleanup on failure
+      try { fs.rmSync(siteDir, { recursive: true, force: true }); } catch {}
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: `Failed to create site: ${err.message}` }));
+    }
+
+    // Slug
+    let slug = null;
+    if (parsed.slug) {
+      slug = uniqueSlug(generateSlug(parsed.slug));
+    } else if (parsed.name) {
+      slug = uniqueSlug(generateSlug(parsed.name));
+    }
+
+    // Expiry
+    let expires_at = null;
+    if (parsed.expiry_days !== null && parsed.expiry_days !== undefined) {
+      const days = [7, 30].includes(parsed.expiry_days) ? parsed.expiry_days : 30;
+      expires_at = new Date(Date.now() + days * 86400000).toISOString();
+    } else if (parsed.expiry_days === null) {
+      // infinite
+    } else {
+      expires_at = new Date(Date.now() + 30 * 86400000).toISOString();
+    }
+
+    // Count files
+    let fileCount = 0;
+    const countFiles = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) countFiles(path.join(dir, e.name));
+        else fileCount++;
+      }
+    };
+    countFiles(siteDir);
+
+    siteIndex[id] = {
+      slug,
+      name: parsed.name,
+      created_at: new Date().toISOString(),
+      expires_at,
+      file_count: fileCount,
+      spa: parsed.spa !== false, // default true — SPA fallback to index.html
+    };
+    if (slug) {
+      slugIndex[slug] = id;
+      saveSlugIndex();
+    }
+    saveSiteIndex();
+
+    const result = { id, url: `/site/${slug || id}/` };
+    if (slug) result.slug = slug;
+    res.writeHead(201, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(result));
+  }
+
+  // GET /site/list — list all hosted sites
+  if (req.method === 'GET' && req.url === '/site/list') {
+    const results = [];
+    for (const [id, meta] of Object.entries(siteIndex)) {
+      if (meta.expires_at && new Date(meta.expires_at) < new Date()) continue;
+      results.push({ id, ...meta, url: `/site/${meta.slug || id}/` });
+    }
+    results.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(results));
+  }
+
+  // DELETE /site/:idOrSlug — remove a hosted site
+  const siteDeleteMatch = req.url.match(/^\/site\/([a-zA-Z0-9][a-zA-Z0-9-]*)$/);
+  if (req.method === 'DELETE' && siteDeleteMatch) {
+    const siteId = resolveSiteId(siteDeleteMatch[1]);
+    if (!siteId) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'site not found' }));
+    }
+    const meta = siteIndex[siteId];
+    // Remove slug from slugIndex
+    if (meta && meta.slug && slugIndex[meta.slug]) {
+      delete slugIndex[meta.slug];
+      saveSlugIndex();
+    }
+    // Remove files
+    const siteDir = path.join(SITES_DIR, siteId);
+    try { fs.rmSync(siteDir, { recursive: true, force: true }); } catch {}
+    delete siteIndex[siteId];
+    saveSiteIndex();
+
+    res.writeHead(204);
+    return res.end();
+  }
+
+  // GET /site/:idOrSlug/* — serve static files
+  const siteMatch = req.url.match(/^\/site\/([a-zA-Z0-9][a-zA-Z0-9-]*)(\/.*)?$/);
+  if (req.method === 'GET' && siteMatch) {
+    const siteId = resolveSiteId(siteMatch[1]);
+    if (!siteId) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Site not found');
+    }
+    const meta = siteIndex[siteId];
+    if (meta && meta.expires_at && new Date(meta.expires_at) < new Date()) {
+      res.writeHead(410, { 'Content-Type': 'text/plain' });
+      return res.end('Site expired');
+    }
+
+    const siteDir = path.join(SITES_DIR, siteId);
+    let reqPath = decodeURIComponent(siteMatch[2] || '/');
+
+    // Resolve the file path safely
+    let filePath = path.resolve(siteDir, '.' + reqPath);
+    if (!filePath.startsWith(siteDir)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      return res.end('Forbidden');
+    }
+
+    // If it's a directory, look for index.html
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+      filePath = path.join(filePath, 'index.html');
+    }
+
+    // If file doesn't exist and SPA mode is on, fall back to index.html
+    if (!fs.existsSync(filePath) && meta && meta.spa) {
+      filePath = path.join(siteDir, 'index.html');
+    }
+
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Not found');
+    }
+
+    const mime = getMime(filePath);
+    const content = fs.readFileSync(filePath);
+    const etag = `"${crypto.createHash('md5').update(content).digest('hex')}"`;
+
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag });
+      return res.end();
+    }
+
+    // Cache static assets aggressively, HTML not at all
+    const cacheControl = mime === 'text/html' ? 'no-cache' : 'public, max-age=31536000, immutable';
+    res.writeHead(200, {
+      'Content-Type': mime,
+      'Content-Length': content.length,
+      'ETag': etag,
+      'Cache-Control': cacheControl,
+    });
+    return res.end(content);
+  }
+
   // GET / — health check
   if (req.method === 'GET' && req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
     return;
+  }
+
+  // ── Root-level asset fallback for hosted sites ───────────────────────────
+  // React/Vite builds use absolute paths like /assets/index-abc.js.
+  // When a site is hosted at /site/<slug>/, the browser requests /assets/...
+  // instead of /site/<slug>/assets/... — resolve it here.
+  if (req.method === 'GET') {
+    const reqPath = decodeURIComponent(req.url.split('?')[0]);
+
+    // Try Referer header first — most reliable since the browser sends it
+    const referer = req.headers['referer'] || '';
+    const refMatch = referer.match(/\/site\/([a-zA-Z0-9][a-zA-Z0-9-]*)/);
+    if (refMatch) {
+      const siteId = resolveSiteId(refMatch[1]);
+      if (siteId) {
+        const candidate = path.resolve(path.join(SITES_DIR, siteId), '.' + reqPath);
+        if (candidate.startsWith(path.join(SITES_DIR, siteId)) && fs.existsSync(candidate) && !fs.statSync(candidate).isDirectory()) {
+          const mime = getMime(candidate);
+          const content = fs.readFileSync(candidate);
+          const etag = `"${crypto.createHash('md5').update(content).digest('hex')}"`;
+          if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); return res.end(); }
+          const cacheControl = mime === 'text/html' ? 'no-cache' : 'public, max-age=31536000, immutable';
+          res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'ETag': etag, 'Cache-Control': cacheControl });
+          return res.end(content);
+        }
+      }
+    }
+
+    // Fallback: scan all sites for the file
+    for (const [id, meta] of Object.entries(siteIndex)) {
+      if (meta.expires_at && new Date(meta.expires_at) < new Date()) continue;
+      const candidate = path.resolve(path.join(SITES_DIR, id), '.' + reqPath);
+      if (candidate.startsWith(path.join(SITES_DIR, id)) && fs.existsSync(candidate) && !fs.statSync(candidate).isDirectory()) {
+        const mime = getMime(candidate);
+        const content = fs.readFileSync(candidate);
+        const etag = `"${crypto.createHash('md5').update(content).digest('hex')}"`;
+        if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); return res.end(); }
+        const cacheControl = mime === 'text/html' ? 'no-cache' : 'public, max-age=31536000, immutable';
+        res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length, 'ETag': etag, 'Cache-Control': cacheControl });
+        return res.end(content);
+      }
+    }
   }
 
   res.writeHead(404);
