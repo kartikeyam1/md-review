@@ -148,8 +148,8 @@ function formatTimeAgo(ts: number): string {
         v-for="cat in COMMENT_CATEGORIES"
         :key="cat.value"
         class="filter-btn"
-        :class="{ active: filterCategory === cat.value }"
-        :style="filterCategory === cat.value ? { background: cat.color, color: '#fff', borderColor: cat.color } : {}"
+        :class="{ active: filterCategory === cat.value, ['filter-' + cat.value]: filterCategory === cat.value }"
+        :style="filterCategory === cat.value ? { '--cat-color': cat.color, background: 'var(--cat-bg, ' + cat.color + ')', color: 'var(--cat-text, #fff)', borderColor: 'var(--cat-bg, ' + cat.color + ')' } : {}"
         @click="toggleFilter(cat.value)"
       >
         {{ cat.label }}<template v-if="categoryCount(cat.value)"> ({{ categoryCount(cat.value) }})</template>
@@ -181,7 +181,8 @@ function formatTimeAgo(ts: number): string {
           </div>
           <span
             class="category-tag"
-            :style="{ background: getCategoryMeta(comment.category).color, color: '#fff' }"
+            :class="'cat-' + comment.category"
+            :style="{ '--cat-color': getCategoryMeta(comment.category).color }"
           >
             {{ getCategoryMeta(comment.category).label }}
           </span>
@@ -497,6 +498,18 @@ function formatTimeAgo(ts: number): string {
   letter-spacing: 0.3px;
   padding: 1px 6px;
   border-radius: 2px;
+  background: var(--cat-color);
+  color: #fff;
+}
+
+:global(html.dark .category-tag.cat-must-fix) {
+  background: #fca5a5 !important;
+  color: #7f1d1d !important;
+}
+
+:global(html.dark .filter-btn.filter-must-fix) {
+  --cat-bg: #fca5a5;
+  --cat-text: #7f1d1d;
 }
 
 .comment-quote {

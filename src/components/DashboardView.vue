@@ -173,4 +173,8 @@ onMounted(loadSessions)
   background: #fee2e2;
   color: #dc2626;
 }
+:global(html.dark .meta-tag.must-fix) {
+  background: rgba(252, 165, 165, 0.2);
+  color: #fca5a5;
+}
 </style>
