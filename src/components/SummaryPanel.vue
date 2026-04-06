@@ -111,18 +111,19 @@ const unresolvedMustFix = computed(() =>
   padding: 8px;
   font-size: 12px;
 }
-:root[data-theme="dark"] .attention,
-:root[data-theme="github-dark"] .attention {
-  --attention-bg: rgba(220, 38, 38, 0.1);
-  --attention-border: rgba(220, 38, 38, 0.25);
+:global(html.dark .attention) {
+  --attention-bg: rgba(220, 38, 38, 0.15);
+  --attention-border: rgba(220, 38, 38, 0.3);
 }
 .attention-header {
   font-weight: 600;
   color: #dc2626;
   margin-bottom: 4px;
 }
-:root[data-theme="dark"] .attention-header,
-:root[data-theme="github-dark"] .attention-header {
+:global(html.dark .attention-header) {
+  color: #f87171;
+}
+:global(html.dark .attention-line) {
   color: #f87171;
 }
 .attention-item {
