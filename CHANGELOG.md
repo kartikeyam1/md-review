@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **HTML file support** — upload, paste, load-from-GitHub, and share `.html`/`.htm` documents in addition to Markdown
+  - Content type is auto-detected from the filename extension, or sniffed from pasted content
+  - HTML documents render faithfully in a sandboxed `<iframe>` (`allow-scripts` only, opaque origin) so their styles and scripts are fully isolated from the review app
+  - Comment on HTML in both the source editor (line-based) and the rendered preview — preview text selections are mapped back to source lines
+  - Editor switches to HTML syntax highlighting (`@codemirror/lang-html`) for HTML documents
+  - `contentType` is persisted with shared sessions and localStorage, and accepted by the MCP server (`create_session`, `create_via_shell`) and CLI (`--content-type`)
+
 ## [0.1.0] - 2026-03-24
 
 ### Added

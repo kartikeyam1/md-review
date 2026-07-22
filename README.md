@@ -1,15 +1,15 @@
 # md-review
 
-Review markdown files with Google Docs-style inline comments, then generate structured prompts for any AI agent.
+Review markdown **and HTML** files with Google Docs-style inline comments, then generate structured prompts for any AI agent.
 
 A static SPA that runs entirely in the browser. No backend, no accounts, no tracking.
 
 ## Features
 
-- **Upload or paste** markdown files (`.md`, `.markdown`, `.txt`)
-- **Edit** with a full CodeMirror 6 editor (syntax highlighting, line numbers)
-- **Preview** rendered markdown with proper typography, tables, code blocks, task lists
-- **Comment** on any text selection in both edit and preview modes
+- **Upload or paste** markdown (`.md`, `.markdown`, `.txt`) or HTML (`.html`, `.htm`) files — the type is auto-detected from the extension or the pasted content
+- **Edit** with a full CodeMirror 6 editor (Markdown or HTML syntax highlighting, line numbers)
+- **Preview** rendered markdown with proper typography, tables, code blocks, task lists — or a faithful, **sandboxed render of full HTML documents** (their styles/scripts are isolated from the review app)
+- **Comment** on any text selection in both edit and preview modes — for HTML, preview selections are anchored back to source lines
 - **Categorize** comments as Suggestion, Question, Must Fix, or Nit
 - **Filter** the comment sidebar by category
 - **Edit** comments inline after creation

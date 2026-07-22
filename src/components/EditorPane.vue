@@ -1,19 +1,29 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef } from 'vue'
 import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, type ViewUpdate } from '@codemirror/view'
-import { EditorState, StateField, StateEffect, RangeSetBuilder } from '@codemirror/state'
+import { EditorState, StateField, StateEffect, RangeSetBuilder, Compartment, type Extension } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
+import { html } from '@codemirror/lang-html'
 import { languages } from '@codemirror/language-data'
 import { defaultKeymap } from '@codemirror/commands'
 import { search, searchKeymap } from '@codemirror/search'
-import type { Comment } from '@/types'
+import type { Comment, ContentType } from '@/types'
 
 // ── Props & Emits ──────────────────────────────────────────────
 
 const props = defineProps<{
   modelValue: string
   comments: Comment[]
+  contentType?: ContentType
 }>()
+
+// Language is swappable at runtime via a compartment so switching document type
+// doesn't require tearing down the editor.
+const languageCompartment = new Compartment()
+
+function languageExtension(type: ContentType | undefined): Extension {
+  return type === 'html' ? html() : markdown({ codeLanguages: languages })
+}
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -176,7 +186,7 @@ onMounted(() => {
       drawSelection(),
       search(),
       keymap.of([...defaultKeymap, ...searchKeymap]),
-      markdown({ codeLanguages: languages }),
+      languageCompartment.of(languageExtension(props.contentType)),
       commentField,
       editorTheme,
       selectionListener,
@@ -228,6 +238,16 @@ function commentLineKey(comments: Comment[]): string {
 }
 
 let lastLineKey = ''
+
+watch(
+  () => props.contentType,
+  (type) => {
+    if (!view.value) return
+    view.value.dispatch({
+      effects: languageCompartment.reconfigure(languageExtension(type)),
+    })
+  },
+)
 
 watch(
   () => props.comments,

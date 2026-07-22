@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { Comment, Reply, ApprovalInfo } from '@/types'
+import type { Comment, Reply, ApprovalInfo, ContentType } from '@/types'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 
@@ -9,13 +9,14 @@ export interface SharedPayload {
   comments: Comment[]
   sharedAt: string
   sessionName?: string
+  contentType?: ContentType
 }
 
 export function useShare() {
   const sharing = ref(false)
   const shareError = ref<string | null>(null)
 
-  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string): Promise<string | null> {
+  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType): Promise<string | null> {
     sharing.value = true
     shareError.value = null
 
@@ -26,6 +27,7 @@ export function useShare() {
       sharedAt: new Date().toISOString(),
     }
     if (sessionName) payload.sessionName = sessionName
+    if (contentType) payload.contentType = contentType
 
     try {
       const res = await fetch(`${PASTE_API}/paste`, {

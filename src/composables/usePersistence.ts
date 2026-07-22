@@ -1,7 +1,8 @@
 import { ref, watch } from 'vue'
 import type { Ref } from 'vue'
-import type { Comment, ThemeMode } from '@/types'
+import type { Comment, ThemeMode, ContentType } from '@/types'
 import { applyTheme, isValidTheme } from '@/composables/useTheme'
+import { detectContentType } from '@/composables/useContentType'
 
 const STORAGE_KEY = 'md-review-state'
 const THEME_KEY = 'md-review-theme'
@@ -11,12 +12,14 @@ interface PersistedState {
   markdown: string
   filename: string
   comments: Comment[]
+  contentType?: ContentType
 }
 
 export function usePersistence(
   markdown: Ref<string>,
   filename: Ref<string>,
   comments: Ref<Comment[]>,
+  contentType: Ref<ContentType>,
   loadComments: (c: Comment[]) => void,
   setAppMode: (mode: 'upload' | 'review') => void,
 ) {
@@ -28,6 +31,8 @@ export function usePersistence(
       if (state.markdown && state.filename) {
         markdown.value = state.markdown
         filename.value = state.filename
+        // Back-compat: older persisted state has no contentType — re-derive it.
+        contentType.value = state.contentType ?? detectContentType(state.filename, state.markdown)
         loadComments(state.comments || [])
         setAppMode('review')
       }
@@ -46,6 +51,7 @@ export function usePersistence(
         markdown: markdown.value,
         filename: filename.value,
         comments: comments.value,
+        contentType: contentType.value,
       }
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -57,6 +63,7 @@ export function usePersistence(
 
   watch(() => markdown.value, scheduleSave)
   watch(() => filename.value, scheduleSave)
+  watch(() => contentType.value, scheduleSave)
   watch(() => comments.value, scheduleSave, { deep: true })
 
   function clearPersisted() {

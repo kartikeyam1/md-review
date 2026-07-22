@@ -29,6 +29,7 @@
     "start": "npx serve dist -s"
   },
   "dependencies": {
+    "@codemirror/lang-html": "^6.0.0",
     "@codemirror/lang-markdown": "^6.0.0",
     "@codemirror/language-data": "^6.0.0",
     "@codemirror/state": "^6.0.0",

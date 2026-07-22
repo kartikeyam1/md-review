@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import type { AppMode, PaneMode, CommentCategory, ApprovalInfo } from '@/types'
+import type { AppMode, PaneMode, CommentCategory, ApprovalInfo, ContentType } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
 import { useShare } from '@/composables/useShare'
+import { detectContentType } from '@/composables/useContentType'
 import { useSync } from '@/composables/useSync'
 import HeaderBar from '@/components/HeaderBar.vue'
 import FileUpload from '@/components/FileUpload.vue'
@@ -22,6 +23,7 @@ const appMode = ref<AppMode>('upload')
 const paneMode = ref<PaneMode>('preview')
 const markdown = ref('')
 const filename = ref('')
+const contentType = ref<ContentType>('markdown')
 const pasteId = ref<string | null>(null)
 const serverMarkdown = ref('')
 const showPromptModal = ref(false)
@@ -41,6 +43,7 @@ const { clearPersisted } = usePersistence(
   markdown,
   filename,
   comments,
+  contentType,
   loadComments,
   (mode) => { appMode.value = mode },
 )
@@ -93,7 +96,7 @@ async function loadFromFilePath() {
 }
 
 async function handleShare() {
-  const id = await createShare(markdown.value, filename.value, comments.value)
+  const id = await createShare(markdown.value, filename.value, comments.value, undefined, contentType.value)
   if (id) {
     setShareHash(id)
     pasteId.value = id
@@ -115,7 +118,7 @@ async function loadSharedDoc() {
 
   const data = await loadShare(shareId)
   if (data) {
-    handleFileLoaded(data.markdown, data.filename)
+    handleFileLoaded(data.markdown, data.filename, data.contentType)
     serverMarkdown.value = data.markdown
     if (data.comments?.length) {
       loadComments(data.comments)
@@ -186,11 +189,12 @@ function dismissAll() {
   previewRef.value?.clearSelectionHighlight()
 }
 
-function handleFileLoaded(content: string, name: string) {
+function handleFileLoaded(content: string, name: string, type?: ContentType) {
   clearComments()
   dismissAll()
   markdown.value = content
   filename.value = name
+  contentType.value = type ?? detectContentType(name, content)
   appMode.value = 'review'
 }
 
@@ -200,6 +204,7 @@ function handleNewDoc() {
   dismissAll()
   markdown.value = ''
   filename.value = ''
+  contentType.value = 'markdown'
   pasteId.value = null
   appMode.value = 'upload'
   if (window.location.search || window.location.hash) {
@@ -269,7 +274,7 @@ function handleScrollTo(line: number) {
 function handleOpenFile() {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = '.md,.markdown,.txt'
+  input.accept = '.md,.markdown,.txt,.html,.htm'
   input.onchange = () => {
     const file = input.files?.[0]
     if (!file) return
@@ -401,6 +406,7 @@ function handleImportComments() {
           ref="editorRef"
           v-model="markdown"
           :comments="comments"
+          :content-type="contentType"
           @selection="handleSelection"
           @selection-clear="handleSelectionClear"
         />
@@ -410,6 +416,7 @@ function handleImportComments() {
           :content="markdown"
           :comments="comments"
           :theme="theme"
+          :content-type="contentType"
           @selection="handleSelection"
           @selection-clear="handleSelectionClear"
         />

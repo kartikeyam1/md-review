@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { detectContentType, defaultFilename } from '@/composables/useContentType'
 
 const emit = defineEmits<{
   'file-loaded': [content: string, filename: string]
@@ -69,7 +70,9 @@ function startBlank() {
 
 function submitPaste() {
   if (!pasteContent.value.trim()) return
-  emit('file-loaded', pasteContent.value, 'pasted.md')
+  // Auto-detect HTML vs markdown from the pasted body so it renders correctly.
+  const type = detectContentType('', pasteContent.value)
+  emit('file-loaded', pasteContent.value, defaultFilename(type))
   pasteContent.value = ''
   showPaste.value = false
 }
@@ -95,20 +98,20 @@ function submitPaste() {
           </svg>
         </div>
         <h2 class="upload-title">
-          Review your markdown, comment like Google Docs, and generate prompts for your favorite LLM.
+          Review your markdown or HTML, comment like Google Docs, and generate prompts for your favorite LLM.
         </h2>
         <p class="upload-subtitle">Drop your file here or click to browse</p>
-        <p class="upload-hint">.md, .markdown, .txt</p>
+        <p class="upload-hint">.md, .markdown, .txt, .html</p>
         <input
           ref="fileInput"
           type="file"
-          accept=".md,.markdown,.txt"
+          accept=".md,.markdown,.txt,.html,.htm"
           class="file-input"
           @change="onInputChange"
         />
       </div>
       <div class="alt-actions">
-        <button class="btn btn-ghost" @click.stop="showPaste = true; showGithub = false">Paste markdown</button>
+        <button class="btn btn-ghost" @click.stop="showPaste = true; showGithub = false">Paste markdown or HTML</button>
         <span class="alt-divider">or</span>
         <button class="btn btn-ghost" @click.stop="showGithub = true; showPaste = false">From GitHub</button>
         <span class="alt-divider">or</span>
@@ -117,11 +120,11 @@ function submitPaste() {
     </template>
 
     <div v-else-if="showPaste" class="paste-area">
-      <h2 class="upload-title">Paste your markdown</h2>
+      <h2 class="upload-title">Paste your markdown or HTML</h2>
       <textarea
         v-model="pasteContent"
         class="paste-input"
-        placeholder="Paste markdown content here..."
+        placeholder="Paste markdown or HTML content here…"
         rows="12"
         autofocus
       />

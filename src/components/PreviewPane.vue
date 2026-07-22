@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
-import type { Comment, ThemeMode } from '@/types'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import type { Comment, ThemeMode, ContentType } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { isGithub, isDark } from '@/composables/useTheme'
+import { findLineRange } from '@/composables/useHtmlSource'
 import mermaid from 'mermaid'
 
 const props = defineProps<{
   content: string
   comments: Comment[]
   theme?: ThemeMode
+  contentType?: ContentType
 }>()
 
 mermaid.initialize({ startOnLoad: false, theme: isDark(props.theme ?? 'light') ? 'dark' : 'neutral' })
@@ -25,10 +27,86 @@ const emit = defineEmits<{
 
 const { renderHtml } = useMarkdown()
 const containerRef = ref<HTMLElement | null>(null)
+const frameRef = ref<HTMLIFrameElement | null>(null)
 const isGithubTheme = computed(() => isGithub(props.theme ?? 'light'))
+const isHtml = computed(() => props.contentType === 'html')
 
 // renderHtml now injects data-line-start/data-line-end via the markdown-it plugin
 const renderedHtml = computed(() => renderHtml(props.content))
+
+// ── HTML preview (sandboxed iframe) ─────────────────────────────────────────
+// Full HTML documents render faithfully inside an opaque-origin sandbox
+// (allow-scripts only, NO allow-same-origin) so the reviewed page's scripts &
+// styles can never touch the review app or its storage. A tiny bridge script is
+// injected to relay text selections back to the parent for commenting.
+const BRIDGE_SCRIPT = `
+<script>(function(){
+  function send(msg){ try { parent.postMessage(Object.assign({__mdreview:true},msg),'*'); } catch(e){} }
+  document.addEventListener('mouseup', function(){
+    var sel = window.getSelection();
+    var text = sel && sel.toString().trim();
+    if(!text || !sel.rangeCount){ send({type:'selection-clear'}); return; }
+    var r = sel.getRangeAt(0).getBoundingClientRect();
+    send({type:'selection', text:text, rect:{top:r.top,right:r.right,bottom:r.bottom,left:r.left}});
+  });
+  document.addEventListener('mousedown', function(){ send({type:'selection-clear'}); });
+  window.addEventListener('message', function(e){
+    var d = e.data || {};
+    if(d.__mdreview && d.type==='scroll' && d.text){
+      var el = document.body;
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      var needle = String(d.text).replace(/\\s+/g,' ').trim().toLowerCase();
+      if(!needle) return;
+      var node;
+      while((node = walker.nextNode())){
+        if(node.nodeValue.replace(/\\s+/g,' ').toLowerCase().indexOf(needle) !== -1){
+          var p = node.parentElement; if(p){ p.scrollIntoView({behavior:'smooth',block:'center'}); }
+          break;
+        }
+      }
+    }
+  });
+})();<\/script>`
+
+const frameSrcdoc = computed(() => {
+  if (!isHtml.value) return ''
+  const html = props.content || '<!doctype html><html><body></body></html>'
+  // Inject the bridge just before </body> (fallback: append) so it runs after
+  // the document's own DOM is parsed.
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${BRIDGE_SCRIPT}</body>`)
+  return html + BRIDGE_SCRIPT
+})
+
+function onFrameMessage(e: MessageEvent) {
+  const frame = frameRef.value
+  if (!frame || e.source !== frame.contentWindow) return
+  const data: any = e.data
+  if (!data || data.__mdreview !== true) return
+
+  if (data.type === 'selection-clear') {
+    emit('selection-clear')
+    return
+  }
+  if (data.type === 'selection' && data.text) {
+    const range = findLineRange(props.content, data.text)
+    if (!range) {
+      emit('selection-clear')
+      return
+    }
+    // Selection rect is relative to the iframe viewport — translate to the
+    // parent viewport by adding the iframe's on-screen offset.
+    const box = frame.getBoundingClientRect()
+    emit('selection', {
+      startLine: range.startLine,
+      endLine: range.endLine,
+      selectedText: data.text,
+      coords: {
+        x: box.left + (data.rect?.right ?? 0),
+        y: box.top + (data.rect?.top ?? 0),
+      },
+    })
+  }
+}
 
 function applyCommentHighlights() {
   const container = containerRef.value
@@ -103,10 +181,15 @@ watch(
 )
 
 onMounted(() => {
+  window.addEventListener('message', onFrameMessage)
   nextTick(() => {
     applyCommentHighlights()
     renderMermaid()
   })
+})
+
+onUnmounted(() => {
+  window.removeEventListener('message', onFrameMessage)
 })
 
 function findBlockAncestor(node: Node): HTMLElement | null {
@@ -190,6 +273,17 @@ function onMouseDown() {
 }
 
 function scrollToLine(line: number) {
+  // HTML preview lives in a sandboxed iframe — we can't reach into its DOM, so
+  // ask the injected bridge to scroll to the text of the target source line.
+  if (isHtml.value) {
+    const frame = frameRef.value
+    const srcLine = (props.content.split('\n')[line] || '').trim()
+    if (frame?.contentWindow && srcLine) {
+      frame.contentWindow.postMessage({ __mdreview: true, type: 'scroll', text: srcLine }, '*')
+    }
+    return
+  }
+
   const container = containerRef.value
   if (!container) return
 
@@ -208,7 +302,16 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
 </script>
 
 <template>
+  <iframe
+    v-if="isHtml"
+    ref="frameRef"
+    class="html-frame"
+    title="HTML preview"
+    sandbox="allow-scripts allow-popups allow-forms"
+    :srcdoc="frameSrcdoc"
+  />
   <div
+    v-else
     ref="containerRef"
     :class="['preview-pane', { 'markdown-body': isGithubTheme, 'github-mode': isGithubTheme }]"
     @mouseup="onMouseUp"
@@ -227,6 +330,14 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
   background: var(--bg-surface);
   overflow-y: auto;
   height: 100%;
+}
+
+.html-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+  display: block;
 }
 
 .preview-pane:not(.github-mode) :deep(h1) {

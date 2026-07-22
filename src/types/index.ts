@@ -49,6 +49,8 @@ export interface ApprovalInfo {
   approved_at?: string | null
 }
 
+export type ContentType = 'markdown' | 'html'
+
 export type AppMode = 'upload' | 'review' | 'dashboard'
 export type PaneMode = 'edit' | 'preview'
 export type ThemeMode = 'light' | 'dark' | 'github-light' | 'github-dark'

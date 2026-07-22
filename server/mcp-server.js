@@ -81,7 +81,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
   }
 
   return {
-    async create_session({ markdown, filePath, filename, comments, sessionName, callbackUrl, slug, expiryDays }) {
+    async create_session({ markdown, filePath, filename, comments, sessionName, callbackUrl, slug, expiryDays, contentType }) {
       const resolved = await resolveFile(markdown, filePath, filename);
       const resolvedFilename = filename ?? resolved.name;
       const payload = {
@@ -94,6 +94,10 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       if (callbackUrl !== undefined) payload.callback_url = callbackUrl;
       if (slug !== undefined) payload.slug = slug;
       if (expiryDays !== undefined) payload.expiry_days = expiryDays;
+      // Content type ('markdown' | 'html'). When omitted, the frontend infers it
+      // from the filename extension / body, so passing it is optional but makes
+      // HTML sessions render correctly regardless of filename.
+      payload.contentType = contentType || (/\.html?$/i.test(resolvedFilename) ? 'html' : 'markdown');
       const result = await apiCall('/paste', {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -302,9 +306,11 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
 
     // ── Shell command generators (curl — runs on any client machine) ──────────
 
-    async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl }) {
+    async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl, contentType }) {
       // Build a JSON payload using jq to read the file, so the content never enters the conversation
-      const jqParts = [`.markdown = $content`, `.filename = "${basename(filePath)}"`, `.sharedAt = (now | todate)`, `.comments = []`];
+      const fname = basename(filePath);
+      const ctype = contentType || (/\.html?$/i.test(fname) ? 'html' : 'markdown');
+      const jqParts = [`.markdown = $content`, `.filename = "${fname}"`, `.contentType = ${JSON.stringify(ctype)}`, `.sharedAt = (now | todate)`, `.comments = []`];
       if (sessionName) jqParts.push(`.sessionName = ${JSON.stringify(sessionName)}`);
       if (slug) jqParts.push(`.slug = ${JSON.stringify(slug)}`);
       if (callbackUrl) jqParts.push(`.callback_url = ${JSON.stringify(callbackUrl)}`);
@@ -354,11 +360,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('create_session', {
     title: 'Create Review Session',
-    description: 'Create a review session from markdown content or a local file path. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.',
+    description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview; Markdown is rendered as before. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.',
     inputSchema: z.object({
-      markdown: z.string().optional().describe('The markdown content (provide this OR filePath)'),
-      filePath: z.string().optional().describe('Absolute path to a markdown file to read (provide this OR markdown)'),
-      filename: z.string().optional().describe('Display name for the file (defaults to basename of filePath if provided)'),
+      markdown: z.string().optional().describe('The document content — Markdown or HTML (provide this OR filePath)'),
+      filePath: z.string().optional().describe('Absolute path to a .md/.markdown/.txt/.html file to read (provide this OR markdown)'),
+      filename: z.string().optional().describe('Display name for the file, e.g. "report.html" (defaults to basename of filePath if provided)'),
+      contentType: z.enum(['markdown', 'html']).optional().describe("Force the document type. Omit to auto-detect from the filename extension (.html/.htm → html)."),
       comments: z.array(z.any()).optional().describe('Pre-existing comments'),
       sessionName: z.string().optional().describe('Custom human-readable name for the session'),
       callbackUrl: z.string().optional().describe('Webhook URL to POST approval status changes to'),
@@ -645,11 +652,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     title: 'Create Session via Shell',
     description: 'Returns a shell command that creates a review session from a local file. Run the returned command in your terminal — the file content is streamed directly to the server and never enters this conversation. Ideal for large files (60KB, 100KB+).',
     inputSchema: z.object({
-      filePath: z.string().describe('Absolute path to the file on your machine'),
+      filePath: z.string().describe('Absolute path to the file on your machine (Markdown or HTML)'),
       sessionName: z.string().optional().describe('Human-readable session name'),
       slug: z.string().optional().describe('Custom URL slug'),
       expiryDays: z.number().nullable().optional().describe('Expiry in days (7, 30, or null for infinite)'),
       callbackUrl: z.string().optional().describe('Webhook URL for approval changes'),
+      contentType: z.enum(['markdown', 'html']).optional().describe('Force document type. Omit to auto-detect from the file extension.'),
     }),
   }, async (args) => {
     const result = await handlers.create_via_shell(args);

@@ -105,7 +105,7 @@ function onFilenameKeydown(e: KeyboardEvent) {
         <button v-if="canRefresh" class="btn btn-ghost" title="Reload file from disk and reset comments" @click="emit('refresh')">Refresh</button>
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
       </template>
-      <button class="btn btn-ghost" @click="emit('open-file')">Open .md</button>
+      <button class="btn btn-ghost" @click="emit('open-file')">Open file</button>
       <button class="btn btn-ghost" :disabled="!filename || sharing" @click="emit('share')">{{ sharing ? 'Sharing…' : 'Share' }}</button>
       <button class="btn btn-primary" :disabled="commentCount === 0 || !filename" @click="emit('generate-prompt')">Generate Prompt</button>
       <button

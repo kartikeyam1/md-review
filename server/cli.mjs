@@ -120,12 +120,14 @@ async function cmdCreate(filePath, flags) {
   const filename = flags.filename || basename(filePath);
   const fileStr = encoding === 'base64' ? content.toString('base64') : content;
   const size = Buffer.byteLength(fileStr);
+  const contentType = flags['content-type'] || (/\.html?$/i.test(filename) ? 'html' : 'markdown');
 
   // For small files, create directly
   if (size < 1024 * 1024) {
     const payload = {
       markdown: fileStr,
       filename,
+      contentType,
       sharedAt: new Date().toISOString(),
       comments: [],
     };
@@ -154,6 +156,7 @@ async function cmdCreate(filePath, flags) {
   const payload = {
     markdown: '',
     filename,
+    contentType,
     sharedAt: new Date().toISOString(),
     comments: [],
   };
@@ -301,10 +304,12 @@ Options:
   --filename <name>   Override display filename
   --expiry <days>     Expiry: 7, 30, or "none"
   --encoding <enc>    utf-8 (default) or base64
+  --content-type <t>  markdown or html (default: auto-detected from extension)
   --chunk-size <KB>   Chunk size in KB (default: 512)
 
 Examples:
   md-review create ./README.md --name "README review"
+  md-review create ./report.html --name "HTML report review"
   md-review upload abc123 ./updated.md
   md-review add-file abc123 ./image.png --encoding base64
   md-review patch abc123 ./fix.diff`);
