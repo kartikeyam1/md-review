@@ -50,8 +50,31 @@ const BRIDGE_SCRIPT = `
     send({type:'selection', text:text, rect:{top:r.top,right:r.right,bottom:r.bottom,left:r.left}});
   });
   document.addEventListener('mousedown', function(){ send({type:'selection-clear'}); });
+  // In-page anchor links (a TOC, href="#section"). The frame is sandboxed
+  // without allow-same-origin, so its origin is opaque and native fragment
+  // navigation of the blob: document is blocked by the browser. Intercept the
+  // click and scroll manually. External http(s) links are left untouched.
+  document.addEventListener('click', function(ev){
+    if(ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    var a = ev.target && ev.target.closest ? ev.target.closest('a[href]') : null;
+    if(!a) return;
+    var href = a.getAttribute('href') || '';
+    if(href.charAt(0) !== '#') return;
+    ev.preventDefault();
+    var id = decodeURIComponent(href.slice(1));
+    if(!id){ window.scrollTo({top:0,behavior:'smooth'}); return; }
+    var el = document.getElementById(id);
+    if(!el){ var n = document.getElementsByName(id); el = n && n[0]; }
+    if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+  }, true);
   window.addEventListener('message', function(e){
     var d = e.data || {};
+    // Theme forwarding: stamp data-theme so theme-aware documents (e.g. claude.ai
+    // artifacts) follow the app's dark/light toggle. Harmless no-op otherwise.
+    if(d.__mdreview_theme === 'dark' || d.__mdreview_theme === 'light'){
+      document.documentElement.setAttribute('data-theme', d.__mdreview_theme);
+      return;
+    }
     if(d.__mdreview && d.type==='scroll' && d.text){
       var el = document.body;
       var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
@@ -68,14 +91,60 @@ const BRIDGE_SCRIPT = `
   });
 })();<\/script>`
 
-const frameSrcdoc = computed(() => {
+// Full document HTML with the bridge injected just before </body> (fallback:
+// append) so the bridge runs after the document's own DOM is parsed.
+const frameDoc = computed(() => {
   if (!isHtml.value) return ''
   const html = props.content || '<!doctype html><html><body></body></html>'
-  // Inject the bridge just before </body> (fallback: append) so it runs after
-  // the document's own DOM is parsed.
   if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${BRIDGE_SCRIPT}</body>`)
   return html + BRIDGE_SCRIPT
 })
+
+// We load the document from a Blob object URL (iframe.src) rather than srcdoc.
+// srcdoc documents have no URL of their own and inherit the parent's base URL,
+// so an in-page anchor like href="#section" resolves to the app's own URL and
+// navigates the whole frame there (booting the app recursively in the sandbox).
+// A blob: URL gives the document its own base URL, so fragment links become
+// native same-document scrolls and :target CSS works, with no extra JS.
+const frameUrl = ref('')
+let objectUrl: string | null = null
+
+function revokeObjectUrl() {
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl)
+    objectUrl = null
+  }
+}
+
+watch(
+  frameDoc,
+  (doc) => {
+    revokeObjectUrl()
+    if (!doc) {
+      frameUrl.value = ''
+      return
+    }
+    objectUrl = URL.createObjectURL(new Blob([doc], { type: 'text/html' }))
+    frameUrl.value = objectUrl
+  },
+  { immediate: true }
+)
+
+// ── Theme forwarding into the preview ───────────────────────────────────────
+function currentThemeName(): 'dark' | 'light' {
+  return isDark(props.theme ?? 'light') ? 'dark' : 'light'
+}
+
+function postThemeToFrame() {
+  const win = frameRef.value?.contentWindow
+  if (win) win.postMessage({ __mdreview_theme: currentThemeName() }, '*')
+}
+
+// Fired each time the iframe finishes loading a document (initial mount and
+// every content change). The bridge's message listener is registered by then.
+function onFrameLoad() {
+  postThemeToFrame()
+}
 
 function onFrameMessage(e: MessageEvent) {
   const frame = frameRef.value
@@ -159,6 +228,8 @@ watch(
       theme: isDark(t ?? 'light') ? 'dark' : 'neutral',
     })
     nextTick(() => renderMermaid())
+    // Forward the new theme into the HTML preview (no-op when not HTML).
+    postThemeToFrame()
   }
 )
 
@@ -190,6 +261,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('message', onFrameMessage)
+  revokeObjectUrl()
 })
 
 function findBlockAncestor(node: Node): HTMLElement | null {
@@ -308,7 +380,8 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
     class="html-frame"
     title="HTML preview"
     sandbox="allow-scripts allow-popups allow-forms"
-    :srcdoc="frameSrcdoc"
+    :src="frameUrl"
+    @load="onFrameLoad"
   />
   <div
     v-else

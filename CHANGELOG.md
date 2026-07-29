@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
   - Editor switches to HTML syntax highlighting (`@codemirror/lang-html`) for HTML documents
   - `contentType` is persisted with shared sessions and localStorage, and accepted by the MCP server (`create_session`, `create_via_shell`) and CLI (`--content-type`)
 
+### Fixed
+- HTML preview: in-page anchor links (a table of contents, `href="#section"`) now scroll within the preview instead of reloading the app inside the sandbox. The document is loaded from a Blob object URL (which has its own base URL) rather than `srcdoc`, so fragment links resolve as native same-document navigations and `:target` CSS works.
+
+### Changed
+- HTML preview: theme-aware documents (e.g. claude.ai artifacts that ship `[data-theme]` CSS) now follow the app's dark/light toggle. The app forwards the resolved theme into the iframe and the injected bridge stamps `data-theme` on the document root. Single-theme documents render exactly as authored.
+
 ## [0.1.0] - 2026-03-24
 
 ### Added
