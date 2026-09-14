@@ -134,6 +134,14 @@ paste backend and the header shows the state: **Saved**, **Unsaved changes**,
 - **Signed comments.** Set your name once in the header (👤). Comments, replies,
   resolves and approvals made in this browser carry it as `author` / `resolved_by`,
   alongside the names agents already use.
+- **Revision history & "what changed since I last looked".** Every content change is
+  kept as a revision (who, when, content hash); consecutive writes by the same author
+  within a few minutes fold into one. Open **History** in the header to compare any two
+  versions (line diff with word-level highlighting) or restore an earlier one as unsaved
+  edits. When the document changes while you are away — an agent revises it, another
+  reviewer edits — a banner says how many changes and by whom, and jumps you to the diff
+  from the exact version you last acknowledged. The browser remembers what you
+  acknowledged per session, so a reload never loses your place.
 - **Comment changes queue when offline.** A comment add/edit/delete/reply/resolve
   that fails is kept locally, shown as *Offline · n pending*, and retried on every
   poll. Polls never wipe queued changes.
@@ -162,6 +170,14 @@ paste backend and the header shows the state: **Saved**, **Unsaved changes**,
 - MCP tools `update_markdown` / `patch_markdown` take an optional
   `expectedContentHash` that maps to `If-Match`; the `content_hash` comes from
   `get_session`.
+- Revision history: `GET /paste/:id/revisions` lists revisions (oldest first);
+  `GET /paste/:id/revisions/:hash` (or `.../current`) returns one version's content
+  (410 if no longer stored). Writes attribute an author via the `author` body field and
+  a client via the `X-MdReview-Client` header (`ui`/`mcp`/`api`); content is only
+  re-stored when it actually changed, so comment edits don't create revisions. Retention
+  is `REVISIONS_MAX` (default 100); coalescing window is `REVISION_COALESCE_MS`
+  (default 5 min). MCP tools `list_revisions` / `get_revision` expose this to agents, and
+  the write tools take an optional `author`.
 - The HTTP MCP server (`server/mcp-server-http.js`) expires idle sessions
   (`MCP_SESSION_TTL_MS`, default 30 min, swept every `MCP_SWEEP_INTERVAL_MS`) and caps
   them (`MCP_MAX_SESSIONS`, default 200). Before this, sessions were only dropped when a

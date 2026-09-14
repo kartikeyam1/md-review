@@ -3,6 +3,28 @@ import type { Comment, Reply, ApprovalInfo, ContentType } from '@/types'
 import type { TextDelta } from '@/composables/useDelta'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
+/** Identifies content writes from the browser UI in the revision history. */
+const CLIENT_HEADER = { 'X-MdReview-Client': 'ui' }
+
+export interface RevisionEntry {
+  hash: string
+  /** ISO time of the (first) write in this revision. */
+  at: string
+  /** ISO time of the last write when several were folded into one revision. */
+  at_end?: string | null
+  by: string | null
+  client: 'ui' | 'mcp' | 'api' | null
+  size: number | null
+  parent: string | null
+  writes?: number
+  /** Seeded from a session that predates revision history. */
+  seeded?: boolean
+}
+
+export interface RevisionContent extends RevisionEntry {
+  markdown: string
+  is_current: boolean
+}
 
 export interface SharedPayload {
   markdown: string
@@ -37,6 +59,8 @@ export interface PutMarkdownOptions {
   ifMatch?: string | null
   /** Let the request outlive the page (pagehide / tab close). */
   keepalive?: boolean
+  /** Reviewer name recorded on the revision this write creates. */
+  author?: string
   /**
    * Send only the changed span instead of the whole document. Requires
    * `ifMatch`. A server that predates deltas answers 200 without a
@@ -54,11 +78,11 @@ export function useShare() {
   const sharing = ref(false)
   const shareError = ref<string | null>(null)
 
-  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType): Promise<string | null> {
+  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string): Promise<string | null> {
     sharing.value = true
     shareError.value = null
 
-    const payload: SharedPayload = {
+    const payload: SharedPayload & { author?: string } = {
       markdown,
       filename,
       comments,
@@ -66,11 +90,12 @@ export function useShare() {
     }
     if (sessionName) payload.sessionName = sessionName
     if (contentType) payload.contentType = contentType
+    if (author) payload.author = author
 
     try {
       const res = await fetch(`${PASTE_API}/paste`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...CLIENT_HEADER },
         body: JSON.stringify(payload),
       })
 
@@ -235,8 +260,9 @@ export function useShare() {
       const useDelta = !!opts.delta && !!opts.ifMatch
       const body: Record<string, unknown> = useDelta ? { delta: opts.delta } : { markdown }
       if (filename) body.filename = filename
+      if (opts.author) body.author = opts.author
       const payload = JSON.stringify(body)
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', ...CLIENT_HEADER }
       if (opts.ifMatch) headers['If-Match'] = opts.ifMatch
       const init: RequestInit = { method: 'PUT', headers, body: payload }
       if (opts.keepalive && payload.length <= KEEPALIVE_MAX_BYTES) init.keepalive = true
@@ -257,6 +283,23 @@ export function useShare() {
       if (useDelta && !data.content_hash) result.deltaIgnored = true
       return result
     } catch { return { ok: false, status: 0 } }
+  }
+
+  async function getRevisions(pasteId: string): Promise<{ current: string | null; revisions: RevisionEntry[] } | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/revisions`)
+      if (!res.ok) return null
+      return await res.json() as { current: string | null; revisions: RevisionEntry[] }
+    } catch { return null }
+  }
+
+  /** `status` 410 = the revision is known but its content is no longer stored. */
+  async function getRevision(pasteId: string, hash: string | 'current'): Promise<{ data: RevisionContent | null; status: number }> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/revisions/${hash}`)
+      if (!res.ok) return { data: null, status: res.status }
+      return { data: await res.json() as RevisionContent, status: res.status }
+    } catch { return { data: null, status: 0 } }
   }
 
   async function getApproval(pasteId: string): Promise<ApprovalInfo | null> {
@@ -328,6 +371,7 @@ export function useShare() {
     postComment, putComment, deleteCommentApi,
     postReply, putReply, deleteReplyApi,
     putMarkdown, pollPaste,
+    getRevisions, getRevision,
     getApproval, putApproval, resolveCommentApi, unresolveCommentApi,
   }
 }

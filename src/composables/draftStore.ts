@@ -14,27 +14,52 @@ export interface DraftStore {
   remove(): Promise<void>
 }
 
+/** Small per-browser key/value store (same backing as the draft, arbitrary keys). */
+export interface KeyValueStore {
+  readonly kind: 'indexeddb' | 'localstorage' | 'memory'
+  get(key: string): Promise<string | null>
+  set(key: string, value: string): Promise<void>
+  remove(key: string): Promise<void>
+}
+
 const DB_NAME = 'md-review'
 const STORE_NAME = 'drafts'
 const RECORD_KEY = 'state'
 
-export function createMemoryStore(): DraftStore {
-  let value: string | null = null
+function fixedKey(kv: KeyValueStore, key: string): DraftStore {
   return {
-    kind: 'memory',
-    async get() { return value },
-    async set(v) { value = v },
-    async remove() { value = null },
+    kind: kv.kind,
+    get: () => kv.get(key),
+    set: (v) => kv.set(key, v),
+    remove: () => kv.remove(key),
   }
 }
 
-export function createLocalStorageStore(key: string): DraftStore {
+export function createMemoryKeyValueStore(): KeyValueStore {
+  const map = new Map<string, string>()
+  return {
+    kind: 'memory',
+    async get(key) { return map.get(key) ?? null },
+    async set(key, v) { map.set(key, v) },
+    async remove(key) { map.delete(key) },
+  }
+}
+
+export function createLocalStorageKeyValueStore(prefix = ''): KeyValueStore {
   return {
     kind: 'localstorage',
-    async get() { return localStorage.getItem(key) },
-    async set(v) { localStorage.setItem(key, v) },
-    async remove() { localStorage.removeItem(key) },
+    async get(key) { return localStorage.getItem(prefix + key) },
+    async set(key, v) { localStorage.setItem(prefix + key, v) },
+    async remove(key) { localStorage.removeItem(prefix + key) },
   }
+}
+
+export function createMemoryStore(): DraftStore {
+  return fixedKey(createMemoryKeyValueStore(), RECORD_KEY)
+}
+
+export function createLocalStorageStore(key: string): DraftStore {
+  return fixedKey(createLocalStorageKeyValueStore(), key)
 }
 
 function requestToPromise<T>(req: IDBRequest<T>): Promise<T> {
@@ -56,9 +81,10 @@ function openDb(): Promise<IDBDatabase> {
   })
 }
 
-export function createIndexedDbStore(): DraftStore {
-  let dbPromise: Promise<IDBDatabase> | null = null
-  const db = () => (dbPromise ??= openDb())
+let sharedDb: Promise<IDBDatabase> | null = null
+
+export function createIndexedDbKeyValueStore(): KeyValueStore {
+  const db = () => (sharedDb ??= openDb().catch((e) => { sharedDb = null; throw e }))
 
   async function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const d = await db()
@@ -76,12 +102,35 @@ export function createIndexedDbStore(): DraftStore {
 
   return {
     kind: 'indexeddb',
-    async get() {
-      const v = await withStore('readonly', (s) => s.get(RECORD_KEY) as IDBRequest<string | undefined>)
+    async get(key) {
+      const v = await withStore('readonly', (s) => s.get(key) as IDBRequest<string | undefined>)
       return typeof v === 'string' ? v : null
     },
-    async set(value) { await withStore('readwrite', (s) => s.put(value, RECORD_KEY)) },
-    async remove() { await withStore('readwrite', (s) => s.delete(RECORD_KEY)) },
+    async set(key, value) { await withStore('readwrite', (s) => s.put(value, key)) },
+    async remove(key) { await withStore('readwrite', (s) => s.delete(key)) },
+  }
+}
+
+export function createIndexedDbStore(): DraftStore {
+  return fixedKey(createIndexedDbKeyValueStore(), RECORD_KEY)
+}
+
+/** Best available key/value store: IndexedDB → localStorage (prefixed) → memory. */
+export async function openKeyValueStore(localStoragePrefix = 'md-review-kv:'): Promise<KeyValueStore> {
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      const idb = createIndexedDbKeyValueStore()
+      await idb.get('__probe__')
+      return idb
+    } catch {
+      // fall through
+    }
+  }
+  try {
+    localStorage.getItem(localStoragePrefix + '__probe__')
+    return createLocalStorageKeyValueStore(localStoragePrefix)
+  } catch {
+    return createMemoryKeyValueStore()
   }
 }
 

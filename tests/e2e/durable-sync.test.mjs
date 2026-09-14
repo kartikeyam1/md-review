@@ -249,3 +249,85 @@ describe('shared mode: large drafts and signed comments', () => {
     assert.ok((await page.locator('[data-testid="reviewer-name"]').textContent()).includes('Kartikeya'))
   })
 })
+
+describe('revision history: what changed since I last looked', () => {
+  async function agentPut(id, markdown, author = 'agent') {
+    const res = await fetch(`${PASTE_API}/paste/${id}/markdown`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-MdReview-Client': 'mcp' },
+      body: JSON.stringify({ markdown, author }),
+    })
+    assert.equal(res.status, 200)
+  }
+
+  it('raises a "changes since you last looked" banner and shows the diff, then clears it', async () => {
+    const id = await createSharedSession('# Report\n\nFirst finding.\n\nSecond finding.')
+    await page.goto(`${BASE}/#shared=${id}`)
+    await page.locator('.preview-pane').waitFor({ timeout: 5000 })
+    // Fresh viewer: no banner.
+    assert.equal(await page.locator('[data-testid="changes-banner"]').count(), 0)
+
+    // An agent revises the document while the reader is looking.
+    await agentPut(id, '# Report\n\nFirst finding, now expanded.\n\nSecond finding.\n\nThird finding added by agent.')
+
+    // The banner appears within a poll cycle.
+    const banner = page.locator('[data-testid="changes-banner"]')
+    await banner.waitFor({ state: 'visible', timeout: 12000 })
+    assert.ok((await banner.textContent()).includes('agent'))
+
+    // View changes → diff modal shows the additions.
+    await page.locator('[data-testid="view-changes"]').click()
+    await page.locator('[data-testid="revisions-modal"]').waitFor({ timeout: 5000 })
+    await page.locator('[data-testid="diff-table"]').waitFor({ timeout: 5000 })
+    const diffText = await page.locator('[data-testid="diff-table"]').textContent()
+    assert.ok(diffText.includes('Third finding added by agent.'), 'diff should show the added line')
+    const stats = await page.locator('[data-testid="diff-stats"]').textContent()
+    assert.match(stats, /\+\d/)
+
+    // Opening the diff acknowledges the current version; closing clears the banner.
+    await page.locator('[data-testid="revisions-modal"] .modal-close').click()
+    await page.waitForFunction(() => !document.querySelector('[data-testid="changes-banner"]'), null, { timeout: 3000 })
+
+    // The acknowledgement survives a reload: no banner for the same version.
+    await page.reload()
+    await page.locator('.preview-pane').waitFor({ timeout: 5000 })
+    await page.waitForTimeout(1500)
+    assert.equal(await page.locator('[data-testid="changes-banner"]').count(), 0, 'no banner after acknowledging and reloading')
+  })
+
+  it('restores an earlier revision into the editor as unsaved edits', async () => {
+    const id = await createSharedSession('# V1 title\n\noriginal body')
+    await page.goto(`${BASE}/#shared=${id}`)
+    await page.locator('.preview-pane').waitFor({ timeout: 5000 })
+    await agentPut(id, '# V2 title\n\nrewritten body', 'agent')
+    await page.locator('[data-testid="changes-banner"]').waitFor({ state: 'visible', timeout: 12000 })
+
+    await page.locator('[data-testid="history-button"]').click()
+    await page.locator('[data-testid="revisions-modal"]').waitFor({ timeout: 5000 })
+    // The default comparison is from the acknowledged (V1) revision to current (V2); restore V1.
+    await page.locator('[data-testid="restore-revision"]').click()
+    await page.waitForFunction(() => !document.querySelector('[data-testid="revisions-modal"]'), null, { timeout: 3000 })
+
+    const preview = await page.locator('.preview-pane').textContent()
+    assert.ok(preview.includes('V1 title') && preview.includes('original body'), 'restored content should be on screen')
+    // Restore is an unsaved edit that then autosaves back to the server.
+    await page.waitForFunction(() => document.querySelector('[data-testid="save-state"]')?.textContent.includes('Saved'), null, { timeout: 8000 })
+    assert.ok((await serverMarkdown(id)).includes('original body'))
+    // History now has create, agent rewrite, and the restore.
+    const list = await (await fetch(`${PASTE_API}/paste/${id}/revisions`)).json()
+    assert.ok(list.revisions.length >= 3)
+  })
+
+  it('the History button shows the revision count and an unseen-changes dot', async () => {
+    const id = await createSharedSession('# Doc\n\nbody')
+    await page.goto(`${BASE}/#shared=${id}`)
+    await page.locator('.preview-pane').waitFor({ timeout: 5000 })
+    const btn = page.locator('[data-testid="history-button"]')
+    await btn.waitFor()
+    assert.ok((await btn.textContent()).includes('1'), 'shows the initial revision count')
+    assert.equal(await btn.locator('.history-dot').count(), 0)
+
+    await agentPut(id, '# Doc\n\nbody + more')
+    await page.locator('[data-testid="changes-banner"]').waitFor({ state: 'visible', timeout: 12000 })
+    assert.equal(await btn.locator('.history-dot').count(), 1, 'unseen dot appears on the History button')
+  })
+})

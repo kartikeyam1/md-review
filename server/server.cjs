@@ -21,6 +21,12 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 const SITES_DIR = path.join(DATA_DIR, 'sites');
 const FILES_DIR = path.join(DATA_DIR, 'files');  // per-session file collections
 const CHUNKS_DIR = path.join(DATA_DIR, 'chunks'); // temp chunked upload staging
+const REVISIONS_DIR = path.join(DATA_DIR, 'revisions'); // per-session content history (content-addressed)
+// Revision history: every content change is kept, except that consecutive
+// writes by the same author/client within REVISION_COALESCE_MS fold into one
+// revision (an "editing session"), and at most REVISIONS_MAX are retained.
+const REVISIONS_MAX = parseInt(process.env.REVISIONS_MAX || '100', 10);
+const REVISION_COALESCE_MS = parseInt(process.env.REVISION_COALESCE_MS || String(5 * 60 * 1000), 10);
 const MAX_BODY_BYTES = 50 * 1024 * 1024; // 50 MB (raised from 10 MB)
 const MAX_SITE_BYTES = 50 * 1024 * 1024; // 50 MB for site uploads
 
@@ -28,6 +34,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(SITES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
 fs.mkdirSync(CHUNKS_DIR, { recursive: true });
+fs.mkdirSync(REVISIONS_DIR, { recursive: true });
 
 // ── Slug index ───────────────────────────────────────────────────────────────
 const SLUG_INDEX_PATH = path.join(DATA_DIR, '_slug-index.json');
@@ -290,10 +297,120 @@ function loadMeta(id) {
   return meta;
 }
 
-function savePaste(id, data) {
+// ── Revision history ─────────────────────────────────────────────────────────
+
+function revisionsDir(id) { return path.join(REVISIONS_DIR, id); }
+function revisionPath(id, hash) { return path.join(revisionsDir(id), `${hash}.gz`); }
+
+/** Which client wrote: the UI and the MCP server identify themselves; anything else is 'api'. */
+function clientOf(req) {
+  const c = req.headers['x-mdreview-client'];
+  return c === 'ui' || c === 'mcp' ? c : 'api';
+}
+
+function writeRevisionBlob(id, hash, gz) {
+  const p = revisionPath(id, hash);
+  if (fs.existsSync(p)) return;
+  fs.mkdirSync(revisionsDir(id), { recursive: true });
+  writeFileAtomic(p, gz);
+}
+
+function dropRevisionBlobIfUnreferenced(id, meta, hash) {
+  if (!hash) return;
+  if ((meta.revisions || []).some(r => r.hash === hash)) return;
+  if (meta.content_hash === hash) return;
+  try { fs.unlinkSync(revisionPath(id, hash)); } catch { /* already gone */ }
+}
+
+function readRevisionBlob(id, hash) {
+  const p = revisionPath(id, hash);
+  if (!fs.existsSync(p)) return null;
+  try { return zlib.gunzipSync(fs.readFileSync(p)).toString('utf-8'); }
+  catch (e) {
+    console.error(`[md-review] corrupt revision blob ${id}/${hash}: ${e.message}`);
+    throw new HttpError(500, 'Revision content is unreadable');
+  }
+}
+
+/**
+ * Record that `id`'s content is about to change from prevHash to newHash.
+ * Must run BEFORE the new content file is written (it may need the old one to
+ * seed the history of a session created before revisions existed).
+ */
+function recordRevision(id, meta, { prevHash, newHash, gz, size, ctx }) {
+  const now = new Date().toISOString();
+  const by = ctx.by ?? null;
+  const client = ctx.client ?? 'api';
+
+  if (!Array.isArray(meta.revisions)) {
+    meta.revisions = [];
+    // Seed with the content this write replaces so the first diff has a "before".
+    if (prevHash && fs.existsSync(contentPath(id))) {
+      try {
+        const oldGz = fs.readFileSync(contentPath(id));
+        const oldSize = zlib.gunzipSync(oldGz).length;
+        writeRevisionBlob(id, prevHash, oldGz);
+        meta.revisions.push({ hash: prevHash, at: meta.sharedAt || now, by: null, client: null, size: oldSize, parent: null, seeded: true });
+      } catch (e) {
+        console.error(`[md-review] could not seed revision history for ${id}: ${e.message}`);
+      }
+    }
+  }
+
+  writeRevisionBlob(id, newHash, gz);
+
+  const last = meta.revisions[meta.revisions.length - 1];
+  const lastAt = last ? Date.parse(last.at_end || last.at) : NaN;
+  const coalesce = last
+    && !last.seeded
+    && last.by === by && last.client === client
+    && last.hash === prevHash
+    && Number.isFinite(lastAt) && (Date.now() - lastAt) < REVISION_COALESCE_MS;
+
+  if (coalesce) {
+    const superseded = last.hash;
+    last.hash = newHash;
+    last.at_end = now;
+    last.size = size;
+    last.writes = (last.writes || 1) + 1;
+    dropRevisionBlobIfUnreferenced(id, { ...meta, content_hash: newHash }, superseded);
+  } else {
+    meta.revisions.push({ hash: newHash, at: now, by, client, size, parent: prevHash || null });
+  }
+
+  while (meta.revisions.length > REVISIONS_MAX) {
+    const dropped = meta.revisions.shift();
+    dropRevisionBlobIfUnreferenced(id, { ...meta, content_hash: newHash }, dropped.hash);
+  }
+}
+
+/** Light summary for list/GET responses (the full list lives behind /revisions). */
+function revisionSummary(meta) {
+  const revs = meta.revisions || [];
+  const last = revs[revs.length - 1];
+  return {
+    revision_count: revs.length,
+    latest_revision: last ? { hash: last.hash, at: last.at_end || last.at, by: last.by ?? null, client: last.client ?? null } : null,
+  };
+}
+
+/**
+ * Persist a session. `ctx` = { by, client } describes who is writing (used for
+ * the revision entry). The content file is only rewritten when the content
+ * actually changed — comment edits no longer re-gzip the whole document.
+ */
+function savePaste(id, data, ctx = {}) {
   const { markdown, ...meta } = data;
   if (markdown !== undefined) {
-    meta.content_hash = saveContent(id, markdown);
+    const buf = Buffer.from(markdown, 'utf-8');
+    const newHash = hashContent(buf);
+    const prevHash = meta.content_hash || null;
+    if (newHash !== prevHash || !fs.existsSync(contentPath(id))) {
+      const gz = zlib.gzipSync(buf);
+      recordRevision(id, meta, { prevHash, newHash, gz, size: buf.length, ctx });
+      writeFileAtomic(contentPath(id), gz);
+      meta.content_hash = newHash;
+    }
   }
   writeFileAtomic(metaPath(id), JSON.stringify(meta));
   return meta;
@@ -458,7 +575,7 @@ function applyPatch(original, patch) {
 async function handleRequest(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, If-Match');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, If-Match, X-MdReview-Client');
   res.setHeader('Access-Control-Expose-Headers', 'ETag');
 
   if (req.method === 'OPTIONS') {
@@ -517,7 +634,10 @@ async function handleRequest(req, res) {
       saveSlugIndex();
     }
 
-    savePaste(id, parsed);
+    // `author` names who created the document (first revision); not stored as metadata.
+    const createdBy = typeof parsed.author === 'string' ? parsed.author : null;
+    delete parsed.author;
+    savePaste(id, parsed, { by: createdBy, client: clientOf(req) });
     const result = { id };
     if (slug) result.slug = slug;
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -858,10 +978,50 @@ async function handleRequest(req, res) {
       data.markdown = parsed.markdown;
     }
     if (parsed.filename !== undefined) data.filename = parsed.filename;
-    const saved = savePaste(pasteId, data);
+    const by = typeof parsed.author === 'string' && parsed.author.trim() ? parsed.author.trim().slice(0, 80) : null;
+    const saved = savePaste(pasteId, data, { by, client: clientOf(req) });
 
     res.writeHead(200, { 'Content-Type': 'application/json', ETag: `"${saved.content_hash}"` });
     return res.end(JSON.stringify({ ok: true, content_hash: saved.content_hash, filename: saved.filename }));
+  }
+
+  // GET /paste/:id/revisions — content history (oldest first)
+  // GET /paste/:id/revisions/:hash — one stored revision ('current' = live content)
+  const revisionsMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/revisions(?:\/([a-f0-9]{32}|current))?$/);
+  if (req.method === 'GET' && revisionsMatch) {
+    const pasteId = resolveId(revisionsMatch[1]);
+    if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    const meta = loadMeta(pasteId);
+    if (!meta) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    if (isExpired(meta)) { res.writeHead(410, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Session expired' })); }
+    const revisions = meta.revisions || [];
+    const which = revisionsMatch[2];
+
+    if (!which) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ current: meta.content_hash || null, revisions }));
+    }
+
+    const hash = which === 'current' ? (meta.content_hash || null) : which;
+    const entry = revisions.find(r => r.hash === hash) || null;
+    if (!hash || (!entry && hash !== meta.content_hash)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'unknown revision' }));
+    }
+    let markdown = readRevisionBlob(pasteId, hash);
+    if (markdown === null && hash === meta.content_hash) markdown = loadContent(pasteId);
+    if (markdown === null) {
+      res.writeHead(410, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Revision no longer stored' }));
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      hash, markdown,
+      at: entry ? entry.at : null, at_end: entry ? (entry.at_end || null) : null,
+      by: entry ? (entry.by ?? null) : null, client: entry ? (entry.client ?? null) : null,
+      size: entry ? entry.size : markdown.length, parent: entry ? (entry.parent ?? null) : null,
+      is_current: hash === meta.content_hash,
+    }));
   }
 
   // GET /paste/list — list sessions (filter by status, name pattern, limit)
@@ -894,6 +1054,8 @@ async function handleRequest(req, res) {
           file_count: sessionFiles.length,
           created_at: data.sharedAt || null,
           expires_at: data.expires_at || null,
+          updated_at: revisionSummary(data).latest_revision?.at || data.sharedAt || null,
+          revision_count: (data.revisions || []).length,
         });
       } catch { /* skip corrupt files */ }
     }
@@ -918,6 +1080,7 @@ async function handleRequest(req, res) {
     // Remove files
     try { fs.unlinkSync(metaPath(pasteId)); } catch {}
     try { fs.unlinkSync(contentPath(pasteId)); } catch {}
+    try { fs.rmSync(revisionsDir(pasteId), { recursive: true, force: true }); } catch {}
     const fdir = filesDir(pasteId);
     if (fs.existsSync(fdir)) { try { fs.rmSync(fdir, { recursive: true, force: true }); } catch {} }
     res.writeHead(204);
@@ -1027,8 +1190,8 @@ async function handleRequest(req, res) {
       const wanted = new Set(fields.split(',').map(f => f.trim()));
       result = {};
       if (wanted.has('meta')) {
-        const { comments, content_hash, ...rest } = meta;
-        Object.assign(result, rest);
+        const { comments, content_hash, revisions, ...rest } = meta;
+        Object.assign(result, rest, revisionSummary(meta));
       }
       if (wanted.has('content')) {
         result.markdown = loadContent(resolvedId) || '';
@@ -1042,7 +1205,8 @@ async function handleRequest(req, res) {
     } else {
       // Full response (backward compatible) — includes file list if any
       const markdown = loadContent(resolvedId) || '';
-      result = { ...meta, markdown };
+      const { revisions, ...metaRest } = meta;
+      result = { ...metaRest, markdown, ...revisionSummary(meta) };
       const sessionFiles = listSessionFiles(resolvedId);
       if (sessionFiles.length > 0) result.files = sessionFiles;
     }
@@ -1070,7 +1234,7 @@ async function handleRequest(req, res) {
     let parsed = {};
     try { parsed = JSON.parse(rawBody); } catch {}
     const uploadId = crypto.randomBytes(8).toString('hex');
-    const uploadMeta = { pasteId, totalChunks: parsed.totalChunks || null, filename: parsed.filename || null, target: parsed.target || 'markdown' };
+    const uploadMeta = { pasteId, totalChunks: parsed.totalChunks || null, filename: parsed.filename || null, target: parsed.target || 'markdown', author: typeof parsed.author === 'string' ? parsed.author : null, client: clientOf(req) };
     fs.mkdirSync(chunkDir(uploadId), { recursive: true });
     fs.writeFileSync(path.join(chunkDir(uploadId), '_meta.json'), JSON.stringify(uploadMeta));
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1142,7 +1306,7 @@ async function handleRequest(req, res) {
       if (!data) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
       data.markdown = assembled;
       if (uploadMeta.filename) data.filename = uploadMeta.filename;
-      savePaste(pasteId, data);
+      savePaste(pasteId, data, { by: uploadMeta.author || null, client: uploadMeta.client || clientOf(req) });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, size: assembled.length }));
     }

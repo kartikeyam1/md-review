@@ -53,6 +53,8 @@ export function useSync(
   options: {
     /** Tracked alongside markdown so renames are saved too. */
     filename?: Ref<string>
+    /** Reviewer name recorded on the revisions this browser writes. */
+    author?: Ref<string>
     pollIntervalMs?: number
   } = {},
 ) {
@@ -62,6 +64,7 @@ export function useSync(
   } = useShare()
 
   const filenameRef = options.filename
+  const authorRef = options.author
   const pollIntervalMs = options.pollIntervalMs ?? 5000
 
   // ── Server baseline ──────────────────────────────────────────────────────
@@ -72,6 +75,18 @@ export function useSync(
   const serverFilename = ref<string | null>(null)
   let contentHash: string | null = null
   let etag: string | null = null
+  /** content_hash of the server copy we currently mirror, and how we got it. */
+  const serverHash = ref<string | null>(null)
+  const serverHashOrigin = ref<'load' | 'save' | 'remote' | null>(null)
+
+  function setHash(hash: string | null, origin: 'load' | 'save' | 'remote') {
+    const changed = hash !== contentHash
+    contentHash = hash
+    if (changed || serverHash.value !== hash) {
+      serverHash.value = hash
+      serverHashOrigin.value = origin
+    }
+  }
 
   /** Server content observed while local had unsaved edits (conflict). */
   const remoteMarkdown = ref<string | null>(null)
@@ -121,7 +136,7 @@ export function useSync(
     expectingDraft = false
     serverMarkdown.value = base.markdown
     serverFilename.value = base.filename ?? null
-    contentHash = base.contentHash ?? null
+    setHash(base.contentHash ?? null, 'load')
     etag = base.etag ?? null
     conflict.value = false
     remoteMarkdown.value = null
@@ -139,6 +154,8 @@ export function useSync(
     serverMarkdown.value = null
     serverFilename.value = null
     contentHash = null
+    serverHash.value = null
+    serverHashOrigin.value = null
     etag = null
     conflict.value = false
     remoteMarkdown.value = null
@@ -420,7 +437,7 @@ export function useSync(
     if (result.ok) {
       serverMarkdown.value = snapshotMarkdown
       if (sendFilename) serverFilename.value = sendFilename
-      contentHash = result.contentHash ?? null
+      setHash(result.contentHash ?? null, 'save')
       etag = null // let the next poll pick up the new server ETag
       conflict.value = false
       remoteMarkdown.value = null
@@ -450,16 +467,17 @@ export function useSync(
   async function putDocument(id: string, snapshotMarkdown: string, sendFilename: string | undefined, opts: { force?: boolean; keepalive?: boolean }) {
     const ifMatch = opts.force ? null : contentHash
     const base = serverMarkdown.value
+    const author = authorRef?.value || undefined
     if (ifMatch && base !== null && base !== snapshotMarkdown) {
       const delta = computeDelta(base, snapshotMarkdown)
       if (deltaSize(delta) < snapshotMarkdown.length) {
-        const viaDelta = await putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive, delta })
+        const viaDelta = await putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive, delta, author })
         const rejectedDelta = !viaDelta.ok && !viaDelta.conflict && (viaDelta.status === 400 || viaDelta.status === 409)
         if (!viaDelta.deltaIgnored && !rejectedDelta) return viaDelta
         // Old server (saved nothing of the content) or delta refused: send it all.
       }
     }
-    return putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive })
+    return putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive, author })
   }
 
   /** Conflict resolution: discard local edits, take the server copy. */
@@ -468,7 +486,7 @@ export function useSync(
     if (remote === null) return
     markdown.value = remote
     serverMarkdown.value = remote
-    if (remoteHash) contentHash = remoteHash
+    if (remoteHash) setHash(remoteHash, 'remote')
     conflict.value = false
     remoteMarkdown.value = null
     remoteHash = null
@@ -496,7 +514,7 @@ export function useSync(
       expectingDraft = false
       serverMarkdown.value = remoteMd
       serverFilename.value = remoteName
-      contentHash = hash
+      setHash(hash, 'remote')
       conflict.value = true
       remoteMarkdown.value = remoteMd
       remoteHash = hash
@@ -509,7 +527,7 @@ export function useSync(
       if (filenameRef && remoteName && !filenameDirty() && filenameRef.value !== remoteName) filenameRef.value = remoteName
       serverMarkdown.value = remoteMd
       serverFilename.value = remoteName
-      contentHash = hash ?? contentHash
+      if (hash) setHash(hash, contentHash === null ? 'load' : 'remote')
       conflict.value = false
       remoteMarkdown.value = null
       remoteHash = null
@@ -524,7 +542,7 @@ export function useSync(
       remoteHash = hash
     } else {
       // Only comments/meta changed; the content baseline is still ours.
-      contentHash = hash ?? contentHash
+      if (hash) setHash(hash, 'load')
     }
   }
 
@@ -606,6 +624,6 @@ export function useSync(
     resolveComment, unresolveComment,
     saveMarkdown, adoptRemote, overwriteRemote,
     setBaseline, expectDraft, restoreDraft, pollNow: poll,
-    syncStatus, saveState, isShared, isDirty, conflict, remoteMarkdown, serverMarkdown, pendingCount,
+    syncStatus, saveState, isShared, isDirty, conflict, remoteMarkdown, serverMarkdown, serverHash, serverHashOrigin, pendingCount,
   }
 }

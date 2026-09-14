@@ -18,6 +18,9 @@ const props = defineProps<{
   pendingCount?: number
   pasteId: string | null
   reviewerName?: string
+  revisionCount?: number
+  /** True while there are changes the reader has not acknowledged yet. */
+  hasUnseenChanges?: boolean
 }>()
 
 const SAVE_LABEL: Record<SaveState, string> = {
@@ -48,6 +51,7 @@ const emit = defineEmits<{
   'share': []
   'save-markdown': []
   'update:reviewerName': [name: string]
+  'open-history': []
 }>()
 
 const editingReviewer = ref(false)
@@ -178,6 +182,17 @@ function onFilenameKeydown(e: KeyboardEvent) {
           @click="emit('save-markdown')"
         >
           {{ saveState === 'error' ? 'Retry save' : 'Save' }}
+        </button>
+        <button
+          v-if="pasteId"
+          class="btn btn-ghost btn-history"
+          :class="{ unseen: hasUnseenChanges }"
+          :title="hasUnseenChanges ? 'The document changed since you last looked — open history to see what' : 'Revision history: compare or restore earlier versions'"
+          data-testid="history-button"
+          @click="emit('open-history')"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          History<span v-if="revisionCount" class="history-count">{{ revisionCount }}</span><span v-if="hasUnseenChanges" class="history-dot" aria-label="unseen changes"></span>
         </button>
         <button v-if="canRefresh" class="btn btn-ghost" title="Reload file from disk and reset comments" @click="emit('refresh')">Refresh</button>
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
@@ -356,6 +371,27 @@ function onFilenameKeydown(e: KeyboardEvent) {
 .btn-save {
   padding: 4px 14px;
   font-size: 13px;
+}
+
+.btn-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+}
+
+.history-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.history-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2563eb;
+  display: inline-block;
 }
 
 .reviewer {

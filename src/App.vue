@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import type { AppMode, PaneMode, CommentCategory, ApprovalInfo, ContentType } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
@@ -7,6 +7,9 @@ import { useShare } from '@/composables/useShare'
 import { detectContentType } from '@/composables/useContentType'
 import { useSync } from '@/composables/useSync'
 import { useReviewer } from '@/composables/useReviewer'
+import { useRevisions, summarizeSince, type SinceSummary } from '@/composables/useRevisions'
+import type { RevisionEntry } from '@/composables/useShare'
+import ChangesBanner from '@/components/ChangesBanner.vue'
 import HeaderBar from '@/components/HeaderBar.vue'
 import FileUpload from '@/components/FileUpload.vue'
 import EditorPane from '@/components/EditorPane.vue'
@@ -19,6 +22,9 @@ import ShareModal from '@/components/ShareModal.vue'
 import ApprovalBanner from '@/components/ApprovalBanner.vue'
 import SummaryPanel from '@/components/SummaryPanel.vue'
 import DashboardView from '@/components/DashboardView.vue'
+
+// Carries the diff library — only loaded when someone opens History.
+const RevisionsModal = defineAsyncComponent(() => import('@/components/RevisionsModal.vue'))
 
 const appMode = ref<AppMode>('upload')
 const paneMode = ref<PaneMode>('preview')
@@ -41,7 +47,114 @@ const sync = useSync(pasteId, comments, markdown, {
   addComment, editComment, deleteComment, loadComments,
   addReply, editReply, deleteReply,
   resolveComment, unresolveComment,
-}, { filename })
+}, { filename, author: reviewerName })
+
+// ── Revision history / "what changed since I last looked" ─────────────────
+// The browser remembers the last content hash the reader ACKNOWLEDGED (wrote,
+// dismissed, or opened the diff for). Any other hash arriving on screen —
+// on open, on return, or live via polling — raises the changes banner, which
+// keeps pointing at the acknowledged hash until the reader acts on it.
+const revisionsApi = useRevisions()
+const revisionList = ref<RevisionEntry[]>([])
+const showHistory = ref(false)
+const historyFrom = ref<string | null>(null)
+const seenHash = ref<string | null>(null)
+let seenLoadedFor: string | null = null
+const pendingSince = ref<string | null>(null)
+const changeSummary = ref<SinceSummary | null>(null)
+
+function resetRevisionState() {
+  revisionList.value = []
+  showHistory.value = false
+  historyFrom.value = null
+  seenHash.value = null
+  seenLoadedFor = null
+  pendingSince.value = null
+  changeSummary.value = null
+}
+
+async function refreshRevisions() {
+  const id = pasteId.value
+  if (!id) return
+  const list = await revisionsApi.fetchList(id)
+  if (!list || pasteId.value !== id) return
+  revisionList.value = list.revisions
+  updateSummary()
+}
+
+function updateSummary() {
+  const current = sync.serverHash.value
+  if (!pendingSince.value || !current) { changeSummary.value = null; return }
+  const summary = summarizeSince(revisionList.value, pendingSince.value, current)
+  if (!summary) pendingSince.value = null
+  changeSummary.value = summary
+}
+
+/** The reader has looked at (or written) `hash`: remember it, drop the banner. */
+function acknowledge(hash: string | null) {
+  const id = pasteId.value
+  if (!id || !hash) return
+  seenHash.value = hash
+  pendingSince.value = null
+  changeSummary.value = null
+  revisionsApi.setSeen(id, hash)
+}
+
+function raiseBanner(since: string | null) {
+  if (!since || since === sync.serverHash.value) return
+  if (!pendingSince.value) pendingSince.value = since
+  refreshRevisions()
+}
+
+async function initSeen(id: string) {
+  const rec = await revisionsApi.getSeen(id)
+  if (pasteId.value !== id) return
+  seenLoadedFor = id
+  seenHash.value = rec?.hash ?? null
+  const current = sync.serverHash.value
+  if (!current) return // reconciled by the serverHash watcher once known
+  if (!seenHash.value) acknowledge(current) // first visit: nothing to compare against
+  else if (seenHash.value !== current) raiseBanner(seenHash.value)
+  refreshRevisions()
+}
+
+watch(pasteId, (id) => {
+  resetRevisionState()
+  if (id) initSeen(id)
+})
+
+watch(sync.serverHash, (hash, prev) => {
+  const id = pasteId.value
+  if (!id || !hash) return
+  const origin = sync.serverHashOrigin.value
+  if (origin === 'save') { acknowledge(hash); refreshRevisions(); return }
+  if (seenLoadedFor !== id) return // initSeen will reconcile against this hash
+  if (origin === 'remote') raiseBanner(prev ?? seenHash.value)
+  else if (seenHash.value && seenHash.value !== hash) raiseBanner(seenHash.value)
+  else if (!seenHash.value) acknowledge(hash)
+  refreshRevisions()
+})
+
+function openHistory() {
+  historyFrom.value = pendingSince.value
+  showHistory.value = true
+}
+
+function handleViewChanges() {
+  openHistory()
+}
+
+function handleDismissChanges() {
+  acknowledge(sync.serverHash.value)
+}
+
+function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null) {
+  if (!confirmDiscardIfDirty()) return
+  showHistory.value = false
+  markdown.value = oldMarkdown
+  const when = entry ? new Date(entry.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'an earlier version'
+  notice.value = `Restored the version from ${when} as unsaved edits — it will autosave shortly. Use History again to go back.`
+}
 
 const { theme, setTheme } = useThemePersistence()
 
@@ -177,7 +290,7 @@ async function handleShare() {
     showShareModal.value = true
     return
   }
-  const id = await createShare(markdown.value, filename.value, comments.value, undefined, contentType.value)
+  const id = await createShare(markdown.value, filename.value, comments.value, undefined, contentType.value, reviewerName.value || undefined)
   if (id) {
     setShareHash(id)
     pasteId.value = id
@@ -524,6 +637,8 @@ function handleImportComments() {
       :pending-count="sync.pendingCount.value"
       :paste-id="pasteId"
       :reviewer-name="reviewerName"
+      :revision-count="revisionList.length"
+      :has-unseen-changes="!!changeSummary"
       @update:pane-mode="paneMode = $event"
       @update:theme="setTheme"
       @update:filename="filename = $event"
@@ -534,6 +649,7 @@ function handleImportComments() {
       @share="handleShare"
       @save-markdown="handleSaveMarkdown"
       @update:reviewer-name="setReviewerName"
+      @open-history="openHistory"
     />
 
     <DashboardView v-if="appMode === 'dashboard'" @new-doc="handleNewDoc" />
@@ -557,6 +673,13 @@ function handleImportComments() {
       :filename="filename"
       :comments="comments"
       :approval-status="approvalInfo?.approval_status"
+    />
+
+    <ChangesBanner
+      v-if="appMode === 'review' && pasteId && changeSummary"
+      :summary="changeSummary"
+      @view="handleViewChanges"
+      @dismiss="handleDismissChanges"
     />
 
     <div v-if="notice" class="notice-bar" role="status">
@@ -649,6 +772,17 @@ function handleImportComments() {
       :comments="comments"
       :content="markdown"
       @close="showPromptModal = false"
+    />
+
+    <RevisionsModal
+      :visible="showHistory"
+      :paste-id="pasteId"
+      :revisions="revisionList"
+      :current-hash="sync.serverHash.value"
+      :initial-from="historyFrom"
+      @close="showHistory = false"
+      @restore="handleRestoreRevision"
+      @acknowledged="acknowledge"
     />
 
     <ShareModal

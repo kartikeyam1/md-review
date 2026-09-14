@@ -640,3 +640,133 @@ test('PUT /paste/:id/markdown — a hunk whose body disagrees with its @@ counts
   assert.equal(res.status, 409);
   assert.equal((await json(await fetch(`${BASE}/paste/${pasteId}/markdown`))).markdown, 'a\nb\nc');
 });
+
+// ── Revision history ────────────────────────────────────────────────────────
+
+const J = { 'Content-Type': 'application/json' };
+const revisions = async (id) => json(await fetch(`${BASE}/paste/${id}/revisions`));
+const putMd = (id, body, headers = {}) => fetch(`${BASE}/paste/${id}/markdown`, { method: 'PUT', headers: { ...J, ...headers }, body: JSON.stringify(body) });
+
+test('revisions — creating a session records revision 1 with author and client', async () => {
+  const res = await fetch(`${BASE}/paste`, {
+    method: 'POST', headers: { ...J, 'X-MdReview-Client': 'ui' },
+    body: JSON.stringify({ markdown: 'v1', filename: 'r.md', author: 'Alice' }),
+  });
+  const { id } = await json(res);
+  const list = await revisions(id);
+  assert.equal(list.revisions.length, 1);
+  assert.equal(list.revisions[0].by, 'Alice');
+  assert.equal(list.revisions[0].client, 'ui');
+  assert.equal(list.revisions[0].parent, null);
+  assert.equal(list.current, list.revisions[0].hash);
+  const full = await json(await fetch(`${BASE}/paste/${id}`));
+  assert.equal(full.author, undefined, 'author is attribution, not session metadata');
+  assert.equal(full.revision_count, 1);
+  assert.equal(full.latest_revision.by, 'Alice');
+  assert.equal(full.revisions, undefined, 'the list is not inlined in the full response');
+});
+
+test('revisions — content writes by different authors each add a revision; comment edits do not', async () => {
+  const id = await createPaste({ markdown: 'v1', filename: 'r.md' });
+  await putMd(id, { markdown: 'v2', author: 'agent' }, { 'X-MdReview-Client': 'mcp' });
+  await putMd(id, { markdown: 'v3', author: 'Bob' });
+  await fetch(`${BASE}/paste/${id}/comments`, { method: 'POST', headers: J,
+    body: JSON.stringify({ startLine: 0, endLine: 1, selectedText: 'v3', body: 'c', category: 'nit' }) });
+  const list = await revisions(id);
+  assert.deepEqual(list.revisions.map(r => [r.by, r.client]), [[null, 'api'], ['agent', 'mcp'], ['Bob', 'api']]);
+  assert.equal(list.revisions[2].parent, list.revisions[1].hash);
+  // Unchanged content is not a revision either.
+  await putMd(id, { markdown: 'v3', author: 'Bob' });
+  assert.equal((await revisions(id)).revisions.length, 3);
+});
+
+test('revisions — an older revision can be fetched; "current" aliases the live content', async () => {
+  const id = await createPaste({ markdown: 'first draft', filename: 'r.md' });
+  const v1 = (await revisions(id)).current;
+  await putMd(id, { markdown: 'second draft', author: 'Cara' });
+  const old = await json(await fetch(`${BASE}/paste/${id}/revisions/${v1}`));
+  assert.equal(old.markdown, 'first draft');
+  assert.equal(old.is_current, false);
+  const cur = await json(await fetch(`${BASE}/paste/${id}/revisions/current`));
+  assert.equal(cur.markdown, 'second draft');
+  assert.equal(cur.by, 'Cara');
+  assert.equal(cur.is_current, true);
+  const unknown = await fetch(`${BASE}/paste/${id}/revisions/${'0'.repeat(32)}`);
+  assert.equal(unknown.status, 404);
+});
+
+test('revisions — consecutive writes by the same author fold into one revision (editing session)', async () => {
+  const id = await createPaste({ markdown: 'start', filename: 'r.md' });
+  const h0 = (await revisions(id)).current;
+  await putMd(id, { markdown: 'start a', author: 'Dee' }, { 'X-MdReview-Client': 'ui' });
+  const mid = (await revisions(id)).current;
+  await putMd(id, { markdown: 'start ab', author: 'Dee' }, { 'X-MdReview-Client': 'ui' });
+  await putMd(id, { markdown: 'start abc', author: 'Dee' }, { 'X-MdReview-Client': 'ui' });
+  const list = await revisions(id);
+  assert.equal(list.revisions.length, 2, 'create + one coalesced editing session');
+  const span = list.revisions[1];
+  assert.equal(span.by, 'Dee');
+  assert.equal(span.writes, 3);
+  assert.ok(span.at_end && span.at_end >= span.at);
+  assert.equal(span.parent, h0, 'the span still points at the revision it replaced');
+  assert.equal(span.hash, list.current);
+  // The intermediate state is not listed (and its blob is gone), the start state is kept.
+  assert.equal((await fetch(`${BASE}/paste/${id}/revisions/${mid}`)).status, 404);
+  assert.equal((await json(await fetch(`${BASE}/paste/${id}/revisions/${h0}`))).markdown, 'start');
+  // A different author breaks the span.
+  await putMd(id, { markdown: 'start abcd', author: 'Eve' }, { 'X-MdReview-Client': 'ui' });
+  assert.equal((await revisions(id)).revisions.length, 3);
+});
+
+test('revisions — delta and patch writes are attributed like full writes', async () => {
+  const id = await createPaste({ markdown: 'Hello world.', filename: 'r.md' });
+  const { content_hash } = await json(await fetch(`${BASE}/paste/${id}`));
+  await putMd(id, { delta: { keepStart: 6, keepEnd: 1, insert: 'there' }, author: 'Fay' }, { 'If-Match': content_hash, 'X-MdReview-Client': 'ui' });
+  await putMd(id, { patch: '@@ -1 +1 @@\n-Hello there.\n+Hello patched.\n', author: 'agent' }, { 'X-MdReview-Client': 'mcp' });
+  const list = await revisions(id);
+  assert.deepEqual(list.revisions.slice(1).map(r => [r.by, r.client]), [['Fay', 'ui'], ['agent', 'mcp']]);
+  assert.equal((await json(await fetch(`${BASE}/paste/${id}/revisions/current`))).markdown, 'Hello patched.');
+});
+
+test('revisions — a session created before history existed is seeded with its previous content on first change', async (t) => {
+  const dataDir = process.env.DATA_DIR;
+  if (!dataDir) { t.skip('set DATA_DIR to run'); return; }
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const id = await createPaste({ markdown: 'legacy content', filename: 'l.md' });
+  // Simulate a pre-history session: strip the list and its blobs.
+  const mp = path.join(dataDir, `${id}.json`);
+  const meta = JSON.parse(fs.readFileSync(mp, 'utf-8'));
+  delete meta.revisions;
+  fs.writeFileSync(mp, JSON.stringify(meta));
+  fs.rmSync(path.join(dataDir, 'revisions', id), { recursive: true, force: true });
+  assert.equal((await revisions(id)).revisions.length, 0);
+
+  await putMd(id, { markdown: 'legacy content + agent edit', author: 'agent' }, { 'X-MdReview-Client': 'mcp' });
+  const list = await revisions(id);
+  assert.equal(list.revisions.length, 2);
+  assert.equal(list.revisions[0].seeded, true);
+  assert.equal((await json(await fetch(`${BASE}/paste/${id}/revisions/${list.revisions[0].hash}`))).markdown, 'legacy content');
+});
+
+test('revisions — retention cap drops the oldest revisions and their blobs', async (t) => {
+  const cap = parseInt(process.env.REVISIONS_MAX || '', 10);
+  if (!cap || cap > 10) { t.skip('start the test server with a small REVISIONS_MAX to run'); return; }
+  const id = await createPaste({ markdown: 'r0', filename: 'r.md' });
+  const hashes = [(await revisions(id)).current];
+  for (let i = 1; i <= cap + 2; i++) {
+    await putMd(id, { markdown: `r${i}`, author: i % 2 ? 'odd' : 'even' }); // alternate authors → no coalescing
+    hashes.push((await revisions(id)).current);
+  }
+  const list = await revisions(id);
+  assert.equal(list.revisions.length, cap);
+  assert.equal(list.revisions[list.revisions.length - 1].hash, hashes[hashes.length - 1]);
+  assert.equal((await fetch(`${BASE}/paste/${id}/revisions/${hashes[0]}`)).status, 404, 'dropped revision is unknown');
+});
+
+test('revisions — deleting a session removes its history', async () => {
+  const id = await createPaste({ markdown: 'x', filename: 'r.md' });
+  await putMd(id, { markdown: 'y', author: 'Gil' });
+  await fetch(`${BASE}/paste/${id}`, { method: 'DELETE' });
+  assert.equal((await fetch(`${BASE}/paste/${id}/revisions`)).status, 404);
+});
