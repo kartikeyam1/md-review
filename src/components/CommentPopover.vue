@@ -10,6 +10,8 @@ const props = defineProps<{
   visible: boolean
   selectedText: string
   coords: { x: number; y: number }
+  /** Name the comment will be signed with (empty = anonymous). */
+  author?: string
 }>()
 
 const emit = defineEmits<{
@@ -130,6 +132,9 @@ function submit() {
       @keydown.enter.ctrl="submit"
     />
     <div class="popover-actions">
+      <span class="popover-author" :title="author ? 'Signed with the name set in the header' : 'Set your name in the header to sign comments'">
+        {{ author ? `as ${author}` : 'anonymous' }}
+      </span>
       <button class="btn btn-ghost btn-sm" @click="emit('cancel')">Cancel</button>
       <button class="btn btn-primary btn-sm" @click="submit">Add</button>
     </div>
@@ -211,5 +216,16 @@ function submit() {
 .btn-sm {
   padding: 4px 12px;
   font-size: 12px;
+}
+
+.popover-author {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
 }
 </style>

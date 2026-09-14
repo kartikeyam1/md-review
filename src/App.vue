@@ -6,6 +6,7 @@ import { usePersistence, useThemePersistence } from '@/composables/usePersistenc
 import { useShare } from '@/composables/useShare'
 import { detectContentType } from '@/composables/useContentType'
 import { useSync } from '@/composables/useSync'
+import { useReviewer } from '@/composables/useReviewer'
 import HeaderBar from '@/components/HeaderBar.vue'
 import FileUpload from '@/components/FileUpload.vue'
 import EditorPane from '@/components/EditorPane.vue'
@@ -29,6 +30,10 @@ const showPromptModal = ref(false)
 const sidebarHidden = ref(false)
 /** One-line, dismissible status message (session gone, server unreachable…). */
 const notice = ref<string | null>(null)
+/** False until the previous draft has been restored from local storage. */
+const booted = ref(false)
+
+const { reviewerName, setReviewerName, authorField } = useReviewer()
 
 const { comments, addComment, editComment, deleteComment, clearComments, loadComments, addReply, editReply, deleteReply, resolveComment, unresolveComment } = useComments()
 
@@ -40,7 +45,7 @@ const sync = useSync(pasteId, comments, markdown, {
 
 const { theme, setTheme } = useThemePersistence()
 
-const { clearPersisted, takeRestoredDraft } = usePersistence(
+const { clearPersisted, takeRestoredDraft, restored, persistError } = usePersistence(
   markdown,
   filename,
   comments,
@@ -66,6 +71,7 @@ async function refreshApproval() {
 
 async function handleApprove(approvedBy: string) {
   if (!pasteId.value) return
+  setReviewerName(approvedBy)
   const result = await putApproval(pasteId.value, 'approved', approvedBy)
   if (result && !result.error) approvalInfo.value = result
   else if (result?.error) alert(result.error)
@@ -73,6 +79,7 @@ async function handleApprove(approvedBy: string) {
 
 async function handleRequestChanges(approvedBy: string) {
   if (!pasteId.value) return
+  setReviewerName(approvedBy)
   const result = await putApproval(pasteId.value, 'changes_requested', approvedBy)
   if (result && !result.error) approvalInfo.value = result
 }
@@ -272,8 +279,12 @@ function onHashChange() {
   loadFromGithubHash()
 }
 
-onMounted(() => {
+onMounted(async () => {
   filePathParam.value = new URLSearchParams(window.location.search).get('filePath')
+  // Put the previous draft back first: loadSharedDoc() reconciles it against
+  // the server copy and the upload screen must not flash over a restored doc.
+  await restored
+  booted.value = true
   if (!checkDashboardHash()) {
     loadFromFilePath()
     loadSharedDoc()
@@ -397,7 +408,15 @@ async function handleAddComment(body: string, category: CommentCategory) {
   // The comment's line numbers refer to the text on screen — make sure that is
   // what the server holds before the comment lands next to it.
   if (sync.isShared.value && sync.isDirty.value) await flushAutosave()
-  sync.addComment({ ...anchor, body, category })
+  sync.addComment({ ...anchor, body, category, ...authorField() })
+}
+
+function handleAddReply(commentId: string, input: { body: string }) {
+  sync.addReply(commentId, { ...input, ...authorField() })
+}
+
+function handleResolve(commentId: string) {
+  sync.resolveComment(commentId, reviewerName.value || undefined)
 }
 
 function handleCancelPopover() {
@@ -504,6 +523,7 @@ function handleImportComments() {
       :save-state="sync.saveState.value"
       :pending-count="sync.pendingCount.value"
       :paste-id="pasteId"
+      :reviewer-name="reviewerName"
       @update:pane-mode="paneMode = $event"
       @update:theme="setTheme"
       @update:filename="filename = $event"
@@ -513,11 +533,12 @@ function handleImportComments() {
       @refresh="loadFromFilePath"
       @share="handleShare"
       @save-markdown="handleSaveMarkdown"
+      @update:reviewer-name="setReviewerName"
     />
 
     <DashboardView v-if="appMode === 'dashboard'" @new-doc="handleNewDoc" />
 
-    <FileUpload v-if="appMode === 'upload'" @file-loaded="handleFileLoaded" />
+    <FileUpload v-if="appMode === 'upload' && booted" @file-loaded="handleFileLoaded" />
 
     <ApprovalBanner
       v-if="appMode === 'review' && pasteId && approvalInfo"
@@ -526,6 +547,7 @@ function handleImportComments() {
       :approved-at="approvalInfo.approved_at"
       :unresolved-must-fix-count="unresolvedMustFixCount"
       :paste-id="pasteId"
+      :default-reviewer="reviewerName"
       @approve="handleApprove"
       @request-changes="handleRequestChanges"
     />
@@ -540,6 +562,10 @@ function handleImportComments() {
     <div v-if="notice" class="notice-bar" role="status">
       <span>{{ notice }}</span>
       <button class="btn btn-ghost btn-sm" @click="notice = null">Dismiss</button>
+    </div>
+
+    <div v-if="appMode === 'review' && persistError" class="notice-bar warn" role="status" data-testid="persist-error">
+      <span>{{ persistError }}</span>
     </div>
 
     <div v-if="appMode === 'review' && sync.conflict.value" class="conflict-bar" role="alert" data-testid="conflict-bar">
@@ -593,10 +619,10 @@ function handleImportComments() {
         @scroll-to="handleScrollTo"
         @export-comments="handleExportComments"
         @import-comments="handleImportComments"
-        @add-reply="sync.addReply"
+        @add-reply="handleAddReply"
         @edit-reply="sync.editReply"
         @delete-reply="sync.deleteReply"
-        @resolve="sync.resolveComment"
+        @resolve="handleResolve"
         @unresolve="sync.unresolveComment"
       />
     </div>
@@ -612,6 +638,7 @@ function handleImportComments() {
       :visible="showPopover"
       :selected-text="selection?.selectedText ?? ''"
       :coords="selection?.coords ?? { x: 0, y: 0 }"
+      :author="reviewerName"
       @add="handleAddComment"
       @cancel="handleCancelPopover"
     />
@@ -655,6 +682,11 @@ function handleImportComments() {
 .notice-bar {
   background: var(--bg-page);
   color: var(--text-muted);
+}
+
+.notice-bar.warn {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .conflict-bar {

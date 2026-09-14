@@ -221,17 +221,47 @@ function contentHashMismatch(expected, meta, markdown) {
   return normalized === current ? null : current;
 }
 
+// An error the request wrapper turns into a JSON response instead of a crash.
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
 function loadContent(id) {
   const cp = contentPath(id);
   if (!fs.existsSync(cp)) return null;
   const gz = fs.readFileSync(cp);
-  return zlib.gunzipSync(gz).toString('utf-8');
+  try {
+    return zlib.gunzipSync(gz).toString('utf-8');
+  } catch (e) {
+    console.error(`[md-review] corrupt content file for ${id}: ${e.message}`);
+    // Never hand back '' for a document that exists — a client would treat
+    // that as the real content and could save it back.
+    throw new HttpError(500, 'Session content is unreadable (corrupt content file)');
+  }
+}
+
+// Parse a session's meta JSON. A corrupt or non-object file is treated as
+// "no such session" (404) rather than taking the whole process down.
+function readMetaFile(id) {
+  const mp = metaPath(id);
+  if (!fs.existsSync(mp)) return null;
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(mp, 'utf-8')); }
+  catch (e) {
+    console.error(`[md-review] corrupt session meta ${id}: ${e.message}`);
+    return null;
+  }
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+    console.error(`[md-review] session meta ${id} is not an object`);
+    return null;
+  }
+  return meta;
 }
 
 function loadPaste(id) {
   const mp = metaPath(id);
-  if (!fs.existsSync(mp)) return null;
-  const meta = JSON.parse(fs.readFileSync(mp, 'utf-8'));
+  const meta = readMetaFile(id);
+  if (!meta) return null;
 
   // Auto-migrate: if markdown is still inline in JSON, split it out
   if (meta.markdown !== undefined) {
@@ -248,8 +278,8 @@ function loadPaste(id) {
 
 function loadMeta(id) {
   const mp = metaPath(id);
-  if (!fs.existsSync(mp)) return null;
-  const meta = JSON.parse(fs.readFileSync(mp, 'utf-8'));
+  const meta = readMetaFile(id);
+  if (!meta) return null;
   // Auto-migrate if needed
   if (meta.markdown !== undefined) {
     const hash = saveContent(id, meta.markdown);
@@ -360,12 +390,12 @@ class PatchError extends Error {}
 function applyPatch(original, patch) {
   const lines = original.split('\n');
   // A trailing newline on the patch text is not an (empty) context line.
-  const patchLines = patch.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
+  const patchLines = patch.replace(/\n$/, '').split('\n');
   const result = [];
   let srcIdx = 0;
   let hunks = 0;
 
-  const expect = (patchLine, content) => {
+  const expect = (content) => {
     if (srcIdx >= lines.length) {
       throw new PatchError(`Patch refers to source line ${srcIdx + 1} but the document has only ${lines.length} lines`);
     }
@@ -375,13 +405,16 @@ function applyPatch(original, patch) {
   };
 
   for (let i = 0; i < patchLines.length; i++) {
-    const line = patchLines[i];
-    const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    const hunkMatch = patchLines[i].match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
     if (!hunkMatch) continue; // diff/---/+++/index headers between hunks
     hunks++;
+    // The header's line counts say exactly how many -/+/context lines follow,
+    // so a body line that happens to start with "---" or "@@" is never mistaken
+    // for a header.
+    let srcCount = hunkMatch[2] === undefined ? 1 : parseInt(hunkMatch[2], 10);
+    let dstCount = hunkMatch[4] === undefined ? 1 : parseInt(hunkMatch[4], 10);
     // Hunks with zero source lines (pure insert into an empty region) use the
     // line *before* the insertion point as their start.
-    const srcCount = hunkMatch[2] === undefined ? 1 : parseInt(hunkMatch[2], 10);
     let srcStart = parseInt(hunkMatch[1], 10) - 1;
     if (srcCount === 0) srcStart += 1;
     if (srcStart < srcIdx) throw new PatchError(`Hunk at source line ${srcStart + 1} overlaps a previous hunk`);
@@ -389,26 +422,31 @@ function applyPatch(original, patch) {
     while (srcIdx < srcStart) result.push(lines[srcIdx++]);
 
     i++;
-    while (i < patchLines.length) {
+    while (i < patchLines.length && (srcCount > 0 || dstCount > 0)) {
       const pl = patchLines[i];
-      if (pl.startsWith('@@') || pl.startsWith('diff ') || pl.startsWith('--- ') || pl.startsWith('+++ ') || pl.startsWith('index ')) {
-        i--;
-        break;
-      }
       if (pl.startsWith('\\')) { i++; continue; } // "\ No newline at end of file"
       if (pl.startsWith('-')) {
-        expect(pl, pl.slice(1));
+        expect(pl.slice(1));
         srcIdx++;
+        srcCount--;
       } else if (pl.startsWith('+')) {
         result.push(pl.slice(1));
+        dstCount--;
       } else {
         // context line: " text" (leading space) or "" (some tools strip the space)
         const content = pl.startsWith(' ') ? pl.slice(1) : pl;
-        expect(pl, content);
+        expect(content);
         result.push(lines[srcIdx++]);
+        srcCount--;
+        dstCount--;
       }
       i++;
     }
+    if (srcCount !== 0 || dstCount !== 0) {
+      throw new PatchError('Hunk body does not match the line counts in its @@ header');
+    }
+    if (i < patchLines.length && patchLines[i].startsWith('\\')) i++;
+    i--; // the for-loop's i++ moves onto the line after this hunk
   }
   if (hunks === 0) throw new PatchError('No hunks found in patch (expected "@@ -a,b +c,d @@" headers)');
   while (srcIdx < lines.length) result.push(lines[srcIdx++]);
@@ -417,7 +455,7 @@ function applyPatch(original, patch) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, If-Match');
@@ -758,9 +796,27 @@ const server = http.createServer(async (req, res) => {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const parsed = await readJsonBody(req, res);
     if (parsed === undefined) return;
-    if (parsed.patch === undefined && parsed.markdown === undefined && parsed.filename === undefined) {
+    if (parsed.patch === undefined && parsed.markdown === undefined && parsed.delta === undefined && parsed.filename === undefined) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'Provide markdown, patch, or filename' }));
+      return res.end(JSON.stringify({ error: 'Provide markdown, patch, delta, or filename' }));
+    }
+    // { delta: { keepStart, keepEnd, insert } } replaces base[keepStart .. len-keepEnd)
+    // with `insert`. It is only meaningful against one exact base, so it
+    // REQUIRES If-Match / base_hash (a stale base is rejected with 412 below).
+    const delta = parsed.delta;
+    if (delta !== undefined) {
+      const validShape = delta && typeof delta === 'object'
+        && Number.isInteger(delta.keepStart) && delta.keepStart >= 0
+        && Number.isInteger(delta.keepEnd) && delta.keepEnd >= 0
+        && typeof delta.insert === 'string';
+      if (!validShape) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'delta must be { keepStart: int, keepEnd: int, insert: string }' }));
+      }
+      if (!req.headers['if-match'] && !parsed.base_hash) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'delta requires If-Match (or base_hash) naming the content it applies to' }));
+      }
     }
     if (parsed.markdown !== undefined && typeof parsed.markdown !== 'string') {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -783,7 +839,14 @@ const server = http.createServer(async (req, res) => {
       }));
     }
 
-    if (parsed.patch !== undefined) {
+    if (delta !== undefined) {
+      const base = data.markdown || '';
+      if (delta.keepStart + delta.keepEnd > base.length) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Delta does not fit the current content', content_hash: currentContentHash(data, base) }));
+      }
+      data.markdown = base.slice(0, delta.keepStart) + delta.insert + base.slice(base.length - delta.keepEnd);
+    } else if (parsed.patch !== undefined) {
       try {
         data.markdown = applyPatch(data.markdown || '', parsed.patch);
       } catch (e) {
@@ -925,6 +988,10 @@ const server = http.createServer(async (req, res) => {
 
     // Load metadata (lightweight — no content read yet)
     const meta = loadMeta(resolvedId);
+    if (!meta) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'not found' }));
+    }
 
     if (isExpired(meta)) {
       res.writeHead(410, { 'Content-Type': 'application/json' });
@@ -1504,6 +1571,33 @@ const server = http.createServer(async (req, res) => {
 
   res.writeHead(404);
   res.end();
+}
+
+// One bad request (or one corrupt file on disk) must never take the service
+// down for everyone: every handler failure becomes a JSON error response.
+const server = http.createServer((req, res) => {
+  handleRequest(req, res).catch((err) => {
+    const status = err instanceof HttpError ? err.status : 500;
+    const message = err instanceof HttpError ? err.message : 'Internal server error';
+    if (status >= 500) console.error(`[md-review] ${req.method} ${req.url} failed:`, err);
+    try {
+      if (!res.headersSent) {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: message }));
+      } else {
+        res.end();
+      }
+    } catch { /* socket already gone */ }
+  });
+});
+
+// Last line of defence: log stray failures instead of exiting. Everything
+// request-scoped is already caught above; these cover fire-and-forget work.
+process.on('unhandledRejection', (reason) => {
+  console.error('[md-review] unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[md-review] uncaught exception:', err);
 });
 
 server.listen(PORT, () => {

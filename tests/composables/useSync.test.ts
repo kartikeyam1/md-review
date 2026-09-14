@@ -584,3 +584,81 @@ describe('useSync', () => {
     expect(sync.syncStatus.value).toBe('error')
   })
 })
+
+describe('useSync — delta saves', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    mockPollPaste.mockResolvedValue(notModified)
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('sends only the changed span when the base hash is known', async () => {
+    const big = 'x'.repeat(5000)
+    const markdown = ref(big)
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: big, contentHash: 'h1' })
+    markdown.value = big.slice(0, 2500) + 'NEW' + big.slice(2500)
+    mockPutMarkdown.mockResolvedValue(okPut)
+
+    expect(await sync.saveMarkdown()).toBe(true)
+    expect(mockPutMarkdown).toHaveBeenCalledTimes(1)
+    const opts = mockPutMarkdown.mock.calls[0][3]
+    expect(opts.ifMatch).toBe('h1')
+    expect(opts.delta).toEqual({ keepStart: 2500, keepEnd: 2500, insert: 'NEW' })
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  it('falls back to the full document when the server ignores the delta (older server)', async () => {
+    const markdown = ref('base text that is long enough to make a delta worthwhile ' + 'y'.repeat(200))
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: markdown.value, contentHash: 'h1' })
+    markdown.value = markdown.value + '!'
+    mockPutMarkdown
+      .mockResolvedValueOnce({ ok: true, status: 200, contentHash: null, deltaIgnored: true })
+      .mockResolvedValueOnce(okPut)
+
+    expect(await sync.saveMarkdown()).toBe(true)
+    expect(mockPutMarkdown).toHaveBeenCalledTimes(2)
+    expect(mockPutMarkdown.mock.calls[0][3].delta).toBeDefined()
+    expect(mockPutMarkdown.mock.calls[1][3].delta).toBeUndefined()
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  it('falls back to the full document when the server rejects the delta (409)', async () => {
+    const markdown = ref('z'.repeat(300))
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: markdown.value, contentHash: 'h1' })
+    markdown.value = 'Q' + markdown.value
+    mockPutMarkdown
+      .mockResolvedValueOnce({ ok: false, status: 409 })
+      .mockResolvedValueOnce(okPut)
+    expect(await sync.saveMarkdown()).toBe(true)
+    expect(mockPutMarkdown).toHaveBeenCalledTimes(2)
+    expect(mockPutMarkdown.mock.calls[1][3].delta).toBeUndefined()
+  })
+
+  it('a 412 on a delta save is a conflict, not a fallback', async () => {
+    const markdown = ref('w'.repeat(300))
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: markdown.value, contentHash: 'h1' })
+    markdown.value = markdown.value + 'mine'
+    mockPutMarkdown.mockResolvedValueOnce({ ok: false, status: 412, conflict: true, remoteMarkdown: 'theirs', remoteHash: 'h9' })
+    expect(await sync.saveMarkdown()).toBe(false)
+    expect(mockPutMarkdown).toHaveBeenCalledTimes(1)
+    expect(sync.saveState.value).toBe('conflict')
+  })
+
+  it('sends the full document when the base hash is unknown, when forcing, or when the delta is not smaller', async () => {
+    const markdown = ref('short')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'base' }) // no hash
+    mockPutMarkdown.mockResolvedValue(okPut)
+    await sync.saveMarkdown()
+    expect(mockPutMarkdown.mock.calls[0][3].delta).toBeUndefined()
+
+    markdown.value = 'completely different tiny doc'
+    await sync.overwriteRemote()
+    expect(mockPutMarkdown.mock.calls[1][3].delta).toBeUndefined()
+  })
+})

@@ -189,3 +189,63 @@ describe('shared mode: save state and conflicts', () => {
     await other.close()
   })
 })
+
+describe('shared mode: large drafts and signed comments', () => {
+  it('a multi-megabyte document keeps its unsaved draft across a reload (IndexedDB, not localStorage)', async () => {
+    // ~6 MB: over the ~5 MB localStorage cap, so this only passes with IndexedDB.
+    const bigBody = Array.from({ length: 60000 }, (_, i) => `Line ${i} ${'lorem ipsum dolor sit amet '.repeat(3)}`).join('\n')
+    const id = await createSharedSession(`# Big\n\n${bigBody}`)
+    await page.goto(`${BASE}/#shared=${id}`)
+    await page.locator('.preview-pane').waitFor({ timeout: 15000 })
+    await saveState().waitFor()
+
+    await page.click('button:has-text("Edit")')
+    await page.locator('.cm-content').waitFor()
+    await page.locator('.cm-content').click()
+    await page.keyboard.press('Control+Home')
+    await page.keyboard.press('End') // end of the "# Big" heading line — keep it a heading
+    await page.keyboard.type(' BIGDRAFT')
+    // Let the 500 ms local persist run, but reload before the 2 s server autosave.
+    await page.waitForTimeout(900)
+    assert.ok(!(await serverMarkdown(id)).includes('BIGDRAFT'), 'precondition: not yet autosaved')
+    const persistErr = await page.locator('[data-testid="persist-error"]').count()
+    assert.equal(persistErr, 0, 'local draft persistence must not report an error for a large document')
+
+    await page.reload()
+    await page.locator('.preview-pane').waitFor({ timeout: 15000 })
+    const text = await page.locator('.preview-pane h1').first().textContent()
+    assert.ok(text.includes('BIGDRAFT'), `large draft must be restored after reload, got heading: ${text}`)
+    await page.waitForFunction(() => document.querySelector('[data-testid="save-state"]')?.textContent.includes('Saved'), null, { timeout: 20000 })
+    assert.ok((await serverMarkdown(id)).includes('BIGDRAFT'))
+  })
+
+  it('a reviewer name set in the header signs comments and replies', async () => {
+    const id = await createSharedSession()
+    await page.goto(`${BASE}/#shared=${id}`)
+    await page.locator('.preview-pane').waitFor({ timeout: 5000 })
+
+    await page.locator('[data-testid="reviewer-name"]').click()
+    await page.locator('[data-testid="reviewer-input"]').fill('Kartikeya')
+    await page.keyboard.press('Enter')
+    assert.ok((await page.locator('[data-testid="reviewer-name"]').textContent()).includes('Kartikeya'))
+
+    await page.locator('.preview-pane p').first().click({ clickCount: 3 })
+    const bar = page.locator('.selection-action-bar .action-btn')
+    await bar.waitFor({ state: 'visible', timeout: 3000 })
+    await bar.click()
+    assert.ok((await page.locator('.popover-author').textContent()).includes('Kartikeya'))
+    await page.locator('.popover-input').fill('signed comment')
+    await page.locator('.popover .btn-primary').click()
+    await page.locator('.comment-body').first().waitFor({ timeout: 3000 })
+    await page.waitForFunction(() => document.querySelector('.comment-author')?.textContent.includes('Kartikeya'), null, { timeout: 3000 })
+
+    const stored = await (await fetch(`${PASTE_API}/paste/${id}/comments`)).json()
+    assert.equal(stored.comments[0].author, 'Kartikeya')
+    assert.equal(stored.comments[0].body, 'signed comment')
+
+    // The name is remembered across reloads.
+    await page.reload()
+    await page.locator('.preview-pane').waitFor({ timeout: 5000 })
+    assert.ok((await page.locator('[data-testid="reviewer-name"]').textContent()).includes('Kartikeya'))
+  })
+})

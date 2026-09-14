@@ -4,12 +4,17 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { createHandlers } from './mcp-server.js';
+import { createSessionRegistry } from './mcp-sessions.js';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
 // Public URL that clients use in shell commands (curl). Falls back to PASTE_API_URL.
 const PASTE_PUBLIC_URL = process.env.PASTE_PUBLIC_URL || 'http://10.0.99.151:3100';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/md-review';
 const MCP_PORT = parseInt(process.env.MCP_PORT || '3200', 10);
+// Idle sessions are closed after this long; the registry never holds more than MCP_MAX_SESSIONS.
+const MCP_SESSION_TTL_MS = parseInt(process.env.MCP_SESSION_TTL_MS || String(30 * 60 * 1000), 10);
+const MCP_MAX_SESSIONS = parseInt(process.env.MCP_MAX_SESSIONS || '200', 10);
+const MCP_SWEEP_INTERVAL_MS = parseInt(process.env.MCP_SWEEP_INTERVAL_MS || String(60 * 1000), 10);
 
 const CATEGORY_ENUM = z.enum(['suggestion', 'question', 'must-fix', 'nit']);
 
@@ -362,8 +367,20 @@ function registerTools(server, handlers) {
   );
 }
 
-// Track transports per session
-const transports = {};
+// Live sessions, expired after an idle TTL and capped (see mcp-sessions.js).
+const sessions = createSessionRegistry({
+  ttlMs: MCP_SESSION_TTL_MS,
+  maxSessions: MCP_MAX_SESSIONS,
+  onEvict: (id, transport, reason) => {
+    console.log(`[mcp] closing session ${id} (${reason}); active=${sessions.size()}`);
+    Promise.resolve(transport.close()).catch(() => {});
+  },
+});
+const sweeper = setInterval(() => {
+  const n = sessions.sweep();
+  if (n > 0) console.log(`[mcp] swept ${n} idle session(s); active=${sessions.size()}`);
+}, MCP_SWEEP_INTERVAL_MS);
+sweeper.unref();
 
 async function createTransport() {
   const transport = new StreamableHTTPServerTransport({
@@ -374,7 +391,7 @@ async function createTransport() {
   await server.connect(transport);
   transport.onclose = () => {
     const sid = transport.sessionId;
-    if (sid && transports[sid]) delete transports[sid];
+    if (sid) sessions.remove(sid);
   };
   return transport;
 }
@@ -399,7 +416,7 @@ const httpServer = http.createServer(async (req, res) => {
   // Health check
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ status: 'ok', transport: 'streamable-http' }));
+    return res.end(JSON.stringify({ status: 'ok', transport: 'streamable-http', sessions: sessions.stats() }));
   }
 
   // Only handle /mcp path
@@ -415,14 +432,15 @@ const httpServer = http.createServer(async (req, res) => {
     const transport = await createTransport();
     await transport.handleRequest(req, res);
     if (transport.sessionId) {
-      transports[transport.sessionId] = transport;
+      sessions.add(transport.sessionId, transport);
     }
     return;
   }
 
-  if (sessionId && transports[sessionId]) {
-    // Existing session — route to its transport
-    return transports[sessionId].handleRequest(req, res);
+  const existing = sessionId ? sessions.get(sessionId) : undefined;
+  if (existing) {
+    // Existing session — route to its transport (get() also refreshes its idle timer)
+    return existing.handleRequest(req, res);
   }
 
   if (sessionId && req.method === 'POST') {
@@ -432,7 +450,7 @@ const httpServer = http.createServer(async (req, res) => {
     const transport = await createTransport();
     await transport.handleRequest(req, res);
     if (transport.sessionId) {
-      transports[transport.sessionId] = transport;
+      sessions.add(transport.sessionId, transport);
     }
     return;
   }

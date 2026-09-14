@@ -3,6 +3,7 @@ import type { Ref } from 'vue'
 import type { Comment, ThemeMode, ContentType } from '@/types'
 import { applyTheme, isValidTheme } from '@/composables/useTheme'
 import { detectContentType } from '@/composables/useContentType'
+import { openDraftStore, type DraftStore } from '@/composables/draftStore'
 
 const STORAGE_KEY = 'md-review-state'
 const THEME_KEY = 'md-review-theme'
@@ -45,43 +46,72 @@ export function usePersistence(
   options: {
     pasteId?: Ref<string | null>
     serverMarkdown?: Ref<string | null>
+    /** Injected in tests; defaults to IndexedDB with a localStorage fallback. */
+    store?: DraftStore
   } = {},
 ) {
-  let restored: PersistedState | null = null
+  let restoredState: PersistedState | null = null
+  let store: DraftStore | null = options.store ?? null
+  /** Set when the local draft could not be written (storage full/blocked). */
+  const persistError = ref<string | null>(null)
+  /** Which backing store ended up in use — surfaced for diagnostics. */
+  const storeKind = ref<DraftStore['kind'] | null>(null)
 
-  // Restore state on init
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const state: PersistedState = JSON.parse(raw)
-      if (state.markdown && state.filename) {
-        restored = state
-        markdown.value = state.markdown
-        filename.value = state.filename
-        // Back-compat: older persisted state has no contentType — re-derive it.
-        contentType.value = state.contentType ?? detectContentType(state.filename, state.markdown)
-        loadComments(state.comments || [])
-        setAppMode('review')
-        // Re-attach to the shared session this document came from, unless the
-        // URL already says where to go (another share, a GitHub file, the
-        // dashboard, or a dev ?filePath=). App.loadSharedDoc() then reconciles
-        // the persisted draft against the server copy.
-        if (state.pasteId && !window.location.hash && !window.location.search) {
-          window.history.replaceState({}, '', `${window.location.pathname}#shared=${state.pasteId}`)
-        }
-      }
+  function applyRestored(state: PersistedState) {
+    restoredState = state
+    markdown.value = state.markdown
+    filename.value = state.filename
+    // Back-compat: older persisted state has no contentType — re-derive it.
+    contentType.value = state.contentType ?? detectContentType(state.filename, state.markdown)
+    loadComments(state.comments || [])
+    setAppMode('review')
+    // Re-attach to the shared session this document came from, unless the
+    // URL already says where to go (another share, a GitHub file, the
+    // dashboard, or a dev ?filePath=). App.loadSharedDoc() then reconciles
+    // the persisted draft against the server copy.
+    if (state.pasteId && !window.location.hash && !window.location.search) {
+      window.history.replaceState({}, '', `${window.location.pathname}#shared=${state.pasteId}`)
     }
-  } catch {
-    // Corrupted state — ignore
   }
+
+  /**
+   * Resolves once the previous draft (if any) has been put back on screen.
+   * App awaits this before loading anything from the URL.
+   */
+  const restored: Promise<boolean> = (async () => {
+    try {
+      store ??= await openDraftStore(STORAGE_KEY)
+      storeKind.value = store.kind
+      let raw = await store.get()
+      // One-time migration from the old localStorage-only layout.
+      if (raw === null && store.kind !== 'localstorage') {
+        try {
+          const legacy = localStorage.getItem(STORAGE_KEY)
+          if (legacy) {
+            raw = legacy
+            await store.set(legacy)
+            localStorage.removeItem(STORAGE_KEY)
+          }
+        } catch { /* no localStorage — nothing to migrate */ }
+      }
+      if (!raw) return false
+      const state: PersistedState = JSON.parse(raw)
+      if (!state.markdown || !state.filename) return false
+      applyRestored(state)
+      return true
+    } catch {
+      // Corrupted state or unusable storage — start fresh
+      return false
+    }
+  })()
 
   /**
    * The persisted copy of a shared session, if that is what was restored.
    * Consumed once: after the first call the draft is gone.
    */
   function takeRestoredDraft(pasteId: string): RestoredDraft | null {
-    const s = restored
-    restored = null
+    const s = restoredState
+    restoredState = null
     if (!s || s.pasteId !== pasteId) return null
     const clean = s.baselineEqualsLocal === true || (s.serverMarkdown != null && s.serverMarkdown === s.markdown)
     return {
@@ -95,6 +125,7 @@ export function usePersistence(
 
   // Save state on changes (debounced)
   let timer: ReturnType<typeof setTimeout> | null = null
+  let writing: Promise<void> | null = null
 
   function snapshot(): PersistedState {
     const state: PersistedState = {
@@ -112,18 +143,30 @@ export function usePersistence(
     return state
   }
 
-  function persistNow() {
+  function persistNow(): Promise<void> {
     if (timer) { clearTimeout(timer); timer = null }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot()))
-    } catch {
-      // Storage full — silently ignore
+    const payload = JSON.stringify(snapshot())
+    const run = async () => {
+      await restored
+      if (!store) return
+      try {
+        await store.set(payload)
+        persistError.value = null
+      } catch (e) {
+        const quota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+        persistError.value = quota
+          ? 'Local draft not saved: browser storage is full. Your edits still autosave to the server while shared.'
+          : 'Local draft not saved: browser storage is unavailable.'
+      }
     }
+    // Serialise writes so an older snapshot can never land after a newer one.
+    writing = (writing ?? Promise.resolve()).then(run, run)
+    return writing
   }
 
   function scheduleSave() {
     if (timer) clearTimeout(timer)
-    timer = setTimeout(persistNow, DEBOUNCE_MS)
+    timer = setTimeout(() => { persistNow() }, DEBOUNCE_MS)
   }
 
   watch(() => markdown.value, scheduleSave)
@@ -136,16 +179,18 @@ export function usePersistence(
   // Flush the debounce when the page is going away so the last keystrokes are
   // not lost to the 500 ms window.
   if (typeof window !== 'undefined') {
-    window.addEventListener('pagehide', persistNow)
+    window.addEventListener('pagehide', () => { persistNow() })
   }
 
-  function clearPersisted() {
-    restored = null
+  async function clearPersisted() {
+    restoredState = null
     if (timer) { clearTimeout(timer); timer = null }
-    localStorage.removeItem(STORAGE_KEY)
+    try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
+    await restored
+    try { await store?.remove() } catch { /* ignore */ }
   }
 
-  return { clearPersisted, takeRestoredDraft, persistNow }
+  return { clearPersisted, takeRestoredDraft, persistNow, restored, persistError, storeKind }
 }
 
 export function useThemePersistence() {

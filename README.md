@@ -121,10 +121,19 @@ paste backend and the header shows the state: **Saved**, **Unsaved changes**,
   the save is refused, your text is kept, and a bar offers **Use server version** or
   **Keep my version**. The same happens when a poll notices the server moved while
   you had unsaved edits.
-- **Drafts survive a reload.** Unsaved edits are kept in this browser together with
-  the server copy they were based on. Reloading the page restores them (and flags a
-  conflict if the server has since moved on). Closing the tab with unsaved edits
-  prompts first.
+- **Drafts survive a reload.** Unsaved edits are kept in this browser (IndexedDB, with
+  a localStorage fallback — so multi-megabyte HTML reviews are covered too) together
+  with the server copy they were based on. Reloading the page restores them (and flags
+  a conflict if the server has since moved on). If the browser refuses to store the
+  draft, a warning bar says so instead of failing silently. Closing the tab with
+  unsaved edits prompts first.
+- **Autosave sends only what changed.** When the server's `content_hash` is known,
+  a save carries the changed span (`delta`) instead of the whole document, guarded by
+  `If-Match` so it can only ever apply to the exact base it was computed from. If the
+  server ignores or refuses the delta, the full document is sent instead.
+- **Signed comments.** Set your name once in the header (👤). Comments, replies,
+  resolves and approvals made in this browser carry it as `author` / `resolved_by`,
+  alongside the names agents already use.
 - **Comment changes queue when offline.** A comment add/edit/delete/reply/resolve
   that fails is kept locally, shown as *Offline · n pending*, and retried on every
   poll. Polls never wipe queued changes.
@@ -137,6 +146,13 @@ paste backend and the header shows the state: **Saved**, **Unsaved changes**,
 - `PUT /paste/:id/markdown` accepts `If-Match: <content_hash>` (or `base_hash` in the
   body). A stale hash returns **412** with the current `content_hash` and `markdown`.
   Successful writes return `{ ok, content_hash, filename }` and an `ETag`.
+- `{ delta: { keepStart, keepEnd, insert } }` replaces `base[keepStart .. len-keepEnd)`
+  with `insert`. It **requires** `If-Match`/`base_hash` (400 otherwise) and returns
+  **409** if it does not fit the current content. Clients detect a server without
+  delta support by the missing `content_hash` in the 200 response and resend in full.
+- Every handler runs under a crash guard: a failing request (or a corrupt session file
+  on disk) returns a JSON 4xx/5xx instead of killing the process. Unparseable session
+  metadata reads as 404; an unreadable content file is a 500, never empty content.
 - `{ patch: "<unified diff>" }` is validated: removed/context lines must match the
   document, otherwise **409** and nothing is written (previously a mismatching patch
   was applied blindly).
@@ -146,9 +162,20 @@ paste backend and the header shows the state: **Saved**, **Unsaved changes**,
 - MCP tools `update_markdown` / `patch_markdown` take an optional
   `expectedContentHash` that maps to `If-Match`; the `content_hash` comes from
   `get_session`.
+- The HTTP MCP server (`server/mcp-server-http.js`) expires idle sessions
+  (`MCP_SESSION_TTL_MS`, default 30 min, swept every `MCP_SWEEP_INTERVAL_MS`) and caps
+  them (`MCP_MAX_SESSIONS`, default 200). Before this, sessions were only dropped when a
+  client sent a close — most never do — and the process eventually died of V8 OOM.
+  `GET /health` reports `sessions: { active, evicted }`.
 - Deploy order matters: the backend must run the new code before the frontend is
   deployed, because the browser now sends `If-Match` and the old backend's CORS
   preflight rejects that header (saves would fail).
+
+### Bundle
+
+Mermaid is loaded on demand (only documents containing a diagram fetch it) and
+highlight.js ships as core plus a curated language set instead of every language.
+Unknown fence languages render as plain code; add one in `useMarkdown.ts` if needed.
 
 ### Project Structure
 

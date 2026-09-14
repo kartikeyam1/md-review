@@ -4,7 +4,6 @@ import type { Comment, ThemeMode, ContentType } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { isGithub, isDark } from '@/composables/useTheme'
 import { findLineRange } from '@/composables/useHtmlSource'
-import mermaid from 'mermaid'
 
 const props = defineProps<{
   content: string
@@ -13,7 +12,24 @@ const props = defineProps<{
   contentType?: ContentType
 }>()
 
-mermaid.initialize({ startOnLoad: false, theme: isDark(props.theme ?? 'light') ? 'dark' : 'neutral' })
+// Mermaid is loaded on demand — only documents that actually contain a
+// diagram pay for it (it and its plugins are the bulk of the bundle).
+type MermaidApi = typeof import('mermaid')['default']
+let mermaidApi: MermaidApi | null = null
+let mermaidLoading: Promise<MermaidApi> | null = null
+
+function loadMermaid(): Promise<MermaidApi> {
+  if (mermaidApi) return Promise.resolve(mermaidApi)
+  mermaidLoading ??= import('mermaid').then((m) => {
+    mermaidApi = m.default
+    return mermaidApi
+  })
+  return mermaidLoading
+}
+
+function mermaidTheme(): 'dark' | 'neutral' {
+  return isDark(props.theme ?? 'light') ? 'dark' : 'neutral'
+}
 
 const emit = defineEmits<{
   selection: [payload: {
@@ -207,6 +223,10 @@ async function renderMermaid() {
   if (!container) return
   const nodes = container.querySelectorAll<HTMLElement>('.mermaid')
   if (!nodes.length) return
+  const mermaid = await loadMermaid()
+  // Re-check: the document may have changed while the library was loading.
+  if (!containerRef.value || !containerRef.value.querySelector('.mermaid')) return
+  mermaid.initialize({ startOnLoad: false, theme: mermaidTheme() })
   // Reset so mermaid re-processes them
   for (const node of nodes) {
     node.removeAttribute('data-processed')
@@ -222,11 +242,8 @@ async function renderMermaid() {
 
 watch(
   () => props.theme,
-  (t) => {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: isDark(t ?? 'light') ? 'dark' : 'neutral',
-    })
+  () => {
+    // renderMermaid re-initialises with the current theme (only when diagrams exist).
     nextTick(() => renderMermaid())
     // Forward the new theme into the HTML preview (no-op when not HTML).
     postThemeToFrame()

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { ApprovalStatus } from '@/types'
 
 const props = defineProps<{
@@ -8,6 +8,8 @@ const props = defineProps<{
   approvedAt?: string | null
   unresolvedMustFixCount: number
   pasteId: string | null
+  /** Remembered reviewer name to prefill the "Your name" field. */
+  defaultReviewer?: string
 }>()
 
 const emit = defineEmits<{
@@ -15,7 +17,8 @@ const emit = defineEmits<{
   requestChanges: [approvedBy: string]
 }>()
 
-const reviewerName = ref('')
+const reviewerName = ref(props.defaultReviewer ?? '')
+watch(() => props.defaultReviewer, (n) => { if (n && !reviewerName.value.trim()) reviewerName.value = n })
 
 const canApprove = computed(() =>
   props.unresolvedMustFixCount === 0 && reviewerName.value.trim().length > 0

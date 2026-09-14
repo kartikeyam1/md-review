@@ -1,6 +1,7 @@
 import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
 import type { Comment, Reply } from '@/types'
 import { useShare, type SharedPayload } from '@/composables/useShare'
+import { computeDelta, deltaSize } from '@/composables/useDelta'
 
 type NewComment = Omit<Comment, 'id' | 'createdAt' | 'replies'>
 
@@ -411,10 +412,7 @@ export function useSync(
     const sendFilename = snapshotFilename && snapshotFilename !== serverFilename.value ? snapshotFilename : undefined
 
     saving.value = true
-    const result = await putMarkdown(id, snapshotMarkdown, sendFilename, {
-      ifMatch: opts.force ? null : contentHash,
-      keepalive: opts.keepalive,
-    })
+    const result = await putDocument(id, snapshotMarkdown, sendFilename, opts)
     saving.value = false
 
     if (pasteId.value !== id) return false // session changed under us
@@ -440,6 +438,28 @@ export function useSync(
     saveError.value = true
     syncError.value = true
     return false
+  }
+
+  /**
+   * Write the document, sending only the changed span when we know the exact
+   * server base (content_hash + baseline text) and that is cheaper than the
+   * full document. Falls back to the full document when the server ignores
+   * (older server) or rejects the delta — everything else about the write
+   * (If-Match, 412 → conflict) is unchanged.
+   */
+  async function putDocument(id: string, snapshotMarkdown: string, sendFilename: string | undefined, opts: { force?: boolean; keepalive?: boolean }) {
+    const ifMatch = opts.force ? null : contentHash
+    const base = serverMarkdown.value
+    if (ifMatch && base !== null && base !== snapshotMarkdown) {
+      const delta = computeDelta(base, snapshotMarkdown)
+      if (deltaSize(delta) < snapshotMarkdown.length) {
+        const viaDelta = await putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive, delta })
+        const rejectedDelta = !viaDelta.ok && !viaDelta.conflict && (viaDelta.status === 400 || viaDelta.status === 409)
+        if (!viaDelta.deltaIgnored && !rejectedDelta) return viaDelta
+        // Old server (saved nothing of the content) or delta refused: send it all.
+      }
+    }
+    return putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive })
   }
 
   /** Conflict resolution: discard local edits, take the server copy. */

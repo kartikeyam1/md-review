@@ -529,3 +529,114 @@ test('concurrency — a slow PUT /markdown does not drop a comment posted while 
   assert.equal((final.comments || []).length, 1, 'comment must survive the overlapping markdown write');
   assert.ok(final.markdown.startsWith('# replaced'), 'markdown write must also land');
 });
+
+// ── Robustness: corrupt files, delta writes, count-based patches ────────────
+
+test('a corrupt session file yields 404 and the server keeps serving', async (t) => {
+  const dataDir = process.env.DATA_DIR;
+  if (!dataDir) { t.skip('set DATA_DIR to the test server\'s data dir to run'); return; }
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const id = 'c0ffeec0ffee';
+  fs.writeFileSync(path.join(dataDir, `${id}.json`), '{ definitely not json');
+  const res = await fetch(`${BASE}/paste/${id}`);
+  assert.equal(res.status, 404);
+  const res2 = await fetch(`${BASE}/paste/${id}/comments`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startLine: 0, endLine: 1, selectedText: 'x', body: 'y', category: 'nit' }),
+  });
+  assert.equal(res2.status, 404);
+  // Still alive.
+  const health = await fetch(`${BASE}/`);
+  assert.equal(health.status, 200);
+  fs.unlinkSync(path.join(dataDir, `${id}.json`));
+});
+
+test('a corrupt content file yields 500 (never empty content) and the server keeps serving', async (t) => {
+  const dataDir = process.env.DATA_DIR;
+  if (!dataDir) { t.skip('set DATA_DIR to run'); return; }
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const pasteId = await createPaste({ markdown: 'real content', filename: 'r.md' });
+  fs.writeFileSync(path.join(dataDir, `${pasteId}.content.gz`), Buffer.from('not gzip'));
+  const res = await fetch(`${BASE}/paste/${pasteId}`);
+  assert.equal(res.status, 500);
+  assert.match((await json(res)).error, /unreadable/);
+  assert.equal((await fetch(`${BASE}/`)).status, 200);
+  await fetch(`${BASE}/paste/${pasteId}`, { method: 'DELETE' });
+});
+
+test('PUT /paste/:id/markdown — delta splice applies against the exact base and returns content_hash', async () => {
+  const base = 'Hello world.\nSecond line.\n';
+  const pasteId = await createPaste({ markdown: base, filename: 'd.md' });
+  const { content_hash } = await json(await fetch(`${BASE}/paste/${pasteId}`));
+  // Replace "world" with "there": keep "Hello " (6) and ".\nSecond line.\n" (15).
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': content_hash },
+    body: JSON.stringify({ delta: { keepStart: 6, keepEnd: 15, insert: 'there' } }),
+  });
+  assert.equal(res.status, 200);
+  const body = await json(res);
+  assert.equal(body.ok, true);
+  assert.ok(body.content_hash && body.content_hash !== content_hash);
+  const { markdown } = await json(await fetch(`${BASE}/paste/${pasteId}/markdown`));
+  assert.equal(markdown, 'Hello there.\nSecond line.\n');
+});
+
+test('PUT /paste/:id/markdown — delta without If-Match/base_hash is rejected (400)', async () => {
+  const pasteId = await createPaste({ markdown: 'abc', filename: 'd.md' });
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delta: { keepStart: 1, keepEnd: 1, insert: 'X' } }),
+  });
+  assert.equal(res.status, 400);
+  assert.equal((await json(await fetch(`${BASE}/paste/${pasteId}/markdown`))).markdown, 'abc');
+});
+
+test('PUT /paste/:id/markdown — delta against a stale base is rejected (412), content untouched', async () => {
+  const pasteId = await createPaste({ markdown: 'abc', filename: 'd.md' });
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delta: { keepStart: 1, keepEnd: 1, insert: 'X' }, base_hash: '00000000000000000000000000000000' }),
+  });
+  assert.equal(res.status, 412);
+  assert.equal((await json(await fetch(`${BASE}/paste/${pasteId}/markdown`))).markdown, 'abc');
+});
+
+test('PUT /paste/:id/markdown — delta that does not fit the content is rejected (409); bad shape is 400', async () => {
+  const pasteId = await createPaste({ markdown: 'abc', filename: 'd.md' });
+  const { content_hash } = await json(await fetch(`${BASE}/paste/${pasteId}`));
+  const tooBig = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': content_hash },
+    body: JSON.stringify({ delta: { keepStart: 2, keepEnd: 2, insert: '' } }),
+  });
+  assert.equal(tooBig.status, 409);
+  const badShape = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': content_hash },
+    body: JSON.stringify({ delta: { keepStart: -1, keepEnd: 'x', insert: 3 } }),
+  });
+  assert.equal(badShape.status, 400);
+  assert.equal((await json(await fetch(`${BASE}/paste/${pasteId}/markdown`))).markdown, 'abc');
+});
+
+test('PUT /paste/:id/markdown — patch lines that look like headers ("--- ", "@@") inside a hunk are handled by line counts', async () => {
+  const original = '# T\n-- dash line\n@@ at line\nend';
+  const pasteId = await createPaste({ markdown: original, filename: 'p.md' });
+  // Remove the "-- dash line" (patch line "--- dash line") and the "@@ at line" (patch line "-@@ at line").
+  const patch = '@@ -1,4 +1,2 @@\n # T\n--- dash line\n-@@ at line\n end\n';
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patch }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await json(await fetch(`${BASE}/paste/${pasteId}/markdown`))).markdown, '# T\nend');
+});
+
+test('PUT /paste/:id/markdown — a hunk whose body disagrees with its @@ counts is rejected (409)', async () => {
+  const pasteId = await createPaste({ markdown: 'a\nb\nc', filename: 'p.md' });
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patch: '@@ -1,3 +1,3 @@\n a\n-b\n+B\n' }), // header claims 3 source lines, body has 2
+  });
+  assert.equal(res.status, 409);
+  assert.equal((await json(await fetch(`${BASE}/paste/${pasteId}/markdown`))).markdown, 'a\nb\nc');
+});

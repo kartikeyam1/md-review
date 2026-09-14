@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import type { Comment, Reply, ApprovalInfo, ContentType } from '@/types'
+import type { TextDelta } from '@/composables/useDelta'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 
@@ -27,6 +28,8 @@ export interface PutMarkdownResult {
   remoteMarkdown?: string | null
   remoteFilename?: string | null
   remoteHash?: string | null
+  /** A delta was sent but the server did not understand it (old server). */
+  deltaIgnored?: boolean
 }
 
 export interface PutMarkdownOptions {
@@ -34,6 +37,13 @@ export interface PutMarkdownOptions {
   ifMatch?: string | null
   /** Let the request outlive the page (pagehide / tab close). */
   keepalive?: boolean
+  /**
+   * Send only the changed span instead of the whole document. Requires
+   * `ifMatch`. A server that predates deltas answers 200 without a
+   * content_hash; the result then carries `deltaIgnored` so the caller can
+   * resend the full document.
+   */
+  delta?: TextDelta
 }
 
 // keepalive requests are capped at ~64 KB by browsers; above that fall back to
@@ -222,7 +232,8 @@ export function useShare() {
     opts: PutMarkdownOptions = {},
   ): Promise<PutMarkdownResult> {
     try {
-      const body: Record<string, string> = { markdown }
+      const useDelta = !!opts.delta && !!opts.ifMatch
+      const body: Record<string, unknown> = useDelta ? { delta: opts.delta } : { markdown }
       if (filename) body.filename = filename
       const payload = JSON.stringify(body)
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -242,7 +253,9 @@ export function useShare() {
       }
       if (!res.ok) return { ok: false, status: res.status }
       const data = await res.json().catch(() => ({})) as { content_hash?: string }
-      return { ok: true, status: res.status, contentHash: data.content_hash ?? null }
+      const result: PutMarkdownResult = { ok: true, status: res.status, contentHash: data.content_hash ?? null }
+      if (useDelta && !data.content_hash) result.deltaIgnored = true
+      return result
     } catch { return { ok: false, status: 0 } }
   }
 
