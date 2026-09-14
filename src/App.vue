@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { AppMode, PaneMode, CommentCategory, ApprovalInfo, ContentType } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
@@ -25,9 +25,10 @@ const markdown = ref('')
 const filename = ref('')
 const contentType = ref<ContentType>('markdown')
 const pasteId = ref<string | null>(null)
-const serverMarkdown = ref('')
 const showPromptModal = ref(false)
 const sidebarHidden = ref(false)
+/** One-line, dismissible status message (session gone, server unreachable…). */
+const notice = ref<string | null>(null)
 
 const { comments, addComment, editComment, deleteComment, clearComments, loadComments, addReply, editReply, deleteReply, resolveComment, unresolveComment } = useComments()
 
@@ -35,20 +36,21 @@ const sync = useSync(pasteId, comments, markdown, {
   addComment, editComment, deleteComment, loadComments,
   addReply, editReply, deleteReply,
   resolveComment, unresolveComment,
-})
+}, { filename })
 
 const { theme, setTheme } = useThemePersistence()
 
-const { clearPersisted } = usePersistence(
+const { clearPersisted, takeRestoredDraft } = usePersistence(
   markdown,
   filename,
   comments,
   contentType,
   loadComments,
   (mode) => { appMode.value = mode },
+  { pasteId, serverMarkdown: sync.serverMarkdown },
 )
 
-const { sharing, shareError, createShare, loadShare, fetchGithub, getShareIdFromHash, setShareHash, getShareUrls, getApproval, putApproval } = useShare()
+const { sharing, shareError, createShare, loadShareDetailed, fetchGithub, getShareIdFromHash, setShareHash, clearShareHash, getShareUrls, getApproval, putApproval } = useShare()
 
 const approvalInfo = ref<ApprovalInfo | null>(null)
 
@@ -78,6 +80,71 @@ async function handleRequestChanges(approvedBy: string) {
 const showShareModal = ref(false)
 const shareResult = ref<{ ui: string; api: string; comments: string; markdown: string } | null>(null)
 
+// ── Autosave ──────────────────────────────────────────────────────────────
+// In a shared session the document autosaves: ~2 s after the last keystroke,
+// immediately when leaving the editor for the preview, before a comment is
+// anchored (so its line numbers refer to what the server holds), when the tab
+// is hidden or closed, and on Ctrl/Cmd+S. Saves carry If-Match, so a copy
+// changed elsewhere is never overwritten silently — it surfaces as a conflict.
+const AUTOSAVE_IDLE_MS = 2000
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleAutosave() {
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null
+    if (sync.isShared.value && sync.isDirty.value) sync.saveMarkdown()
+  }, AUTOSAVE_IDLE_MS)
+}
+
+function flushAutosave(opts: { keepalive?: boolean } = {}): Promise<boolean> {
+  if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null }
+  if (!sync.isShared.value) return Promise.resolve(false)
+  return sync.saveMarkdown(opts)
+}
+
+watch(markdown, () => { if (sync.isShared.value && sync.isDirty.value) scheduleAutosave() })
+watch(filename, () => { if (sync.isShared.value && sync.isDirty.value) scheduleAutosave() })
+
+watch(paneMode, (mode, prev) => {
+  if (prev === 'edit' && mode === 'preview' && sync.isShared.value && sync.isDirty.value) {
+    flushAutosave()
+  }
+})
+
+function handleSaveMarkdown() {
+  flushAutosave()
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && appMode.value === 'review') {
+    e.preventDefault()
+    if (sync.isShared.value) flushAutosave()
+  }
+}
+
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (!sync.isShared.value) return
+  if (sync.isDirty.value || sync.conflict.value || sync.saveState.value === 'saving') {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+
+function onPageHide() {
+  if (sync.isShared.value && sync.isDirty.value && !sync.conflict.value) flushAutosave({ keepalive: true })
+}
+
+function onVisibilityChange() {
+  if (document.hidden) onPageHide()
+}
+
+/** Ask before an action that would throw away unsaved edits to a shared document. */
+function confirmDiscardIfDirty(): boolean {
+  if (!sync.isShared.value || !(sync.isDirty.value || sync.conflict.value)) return true
+  return window.confirm('You have unsaved changes to this shared document. Discard them?')
+}
+
 // Load file from ?filePath= URL param (dev server only)
 const filePathParam = ref<string | null>(null)
 
@@ -96,37 +163,87 @@ async function loadFromFilePath() {
 }
 
 async function handleShare() {
+  // Already shared: make sure the server has the latest text, then just show the links.
+  if (pasteId.value) {
+    if (sync.isDirty.value) await flushAutosave()
+    shareResult.value = getShareUrls(pasteId.value)
+    showShareModal.value = true
+    return
+  }
   const id = await createShare(markdown.value, filename.value, comments.value, undefined, contentType.value)
   if (id) {
     setShareHash(id)
     pasteId.value = id
+    sync.setBaseline({ markdown: markdown.value, filename: filename.value })
     shareResult.value = getShareUrls(id)
     showShareModal.value = true
+    refreshApproval()
   } else {
     alert(shareError.value || 'Failed to create share link.')
   }
 }
 
-async function handleSaveMarkdown() {
-  const ok = await sync.saveMarkdown()
-  if (ok) serverMarkdown.value = markdown.value
+function detachFromShare() {
+  pasteId.value = null
+  approvalInfo.value = null
+  clearShareHash()
 }
 
 async function loadSharedDoc() {
   const shareId = getShareIdFromHash()
   if (!shareId) return
+  // Already attached to this session (hash re-fired) — do not reload over local edits.
+  if (pasteId.value === shareId) return
 
-  const data = await loadShare(shareId)
-  if (data) {
-    handleFileLoaded(data.markdown, data.filename, data.contentType)
-    serverMarkdown.value = data.markdown
-    if (data.comments?.length) {
-      loadComments(data.comments)
+  const { data, status } = await loadShareDetailed(shareId)
+  if (getShareIdFromHash() !== shareId) return // navigated away meanwhile
+
+  if (!data) {
+    const draft = takeRestoredDraft(shareId)
+    if (status === 404 || status === 410) {
+      // Session gone. Keep whatever is on screen as a plain local document.
+      detachFromShare()
+      notice.value = status === 410
+        ? 'This shared session has expired. Showing your local copy.'
+        : 'This shared session no longer exists. Showing your local copy.'
+      if (!markdown.value) appMode.value = 'upload'
+      return
     }
-    pasteId.value = shareId
-    paneMode.value = 'preview'
-    refreshApproval()
+    // Server unreachable. If the persisted copy belongs to this session, stay
+    // attached so polling/autosave resume when it comes back.
+    notice.value = 'Cannot reach the review server. Showing your local copy; it will sync when the server is back.'
+    if (draft) {
+      pasteId.value = shareId
+      if (draft.baseMarkdown !== null) {
+        sync.setBaseline({ markdown: draft.baseMarkdown, filename: draft.filename })
+      } else {
+        sync.expectDraft()
+      }
+    }
+    return
   }
+
+  handleFileLoaded(data.markdown, data.filename, data.contentType, { shared: true })
+  if (data.comments?.length) {
+    loadComments(data.comments)
+  }
+  pasteId.value = shareId
+  sync.setBaseline({
+    markdown: data.markdown,
+    filename: data.filename,
+    contentHash: data.content_hash ?? null,
+    etag: data.etag ?? null,
+  })
+  // A reload with unsaved edits: put them back on top of the fresh server copy.
+  const draft = takeRestoredDraft(shareId)
+  if (draft && !draft.clean && draft.markdown !== data.markdown) {
+    sync.restoreDraft(draft.markdown, draft.baseMarkdown)
+    notice.value = sync.conflict.value
+      ? 'Restored your unsaved edits, but the server copy changed in the meantime — choose a version below.'
+      : 'Restored your unsaved edits from this browser.'
+  }
+  paneMode.value = 'preview'
+  refreshApproval()
 }
 
 async function loadFromGithubHash() {
@@ -163,10 +280,18 @@ onMounted(() => {
     loadFromGithubHash()
   }
   window.addEventListener('hashchange', onHashChange)
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('beforeunload', onBeforeUnload)
+  window.addEventListener('pagehide', onPageHide)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
 onUnmounted(() => {
   window.removeEventListener('hashchange', onHashChange)
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('beforeunload', onBeforeUnload)
+  window.removeEventListener('pagehide', onPageHide)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 
 const selection = ref<{
@@ -189,9 +314,20 @@ function dismissAll() {
   previewRef.value?.clearSelectionHighlight()
 }
 
-function handleFileLoaded(content: string, name: string, type?: ContentType) {
+/**
+ * Put a document on screen. Anything that is not the shared session itself
+ * (file picker, drop, paste, GitHub, ?filePath=) detaches from the current
+ * share first — otherwise the old session's polling would keep writing over
+ * the new document, and Save would push the new document into the old session.
+ */
+function handleFileLoaded(content: string, name: string, type?: ContentType, opts: { shared?: boolean } = {}) {
+  if (!opts.shared) {
+    if (!confirmDiscardIfDirty()) return
+    detachFromShare()
+  }
   clearComments()
   dismissAll()
+  notice.value = null
   markdown.value = content
   filename.value = name
   contentType.value = type ?? detectContentType(name, content)
@@ -199,13 +335,16 @@ function handleFileLoaded(content: string, name: string, type?: ContentType) {
 }
 
 function handleNewDoc() {
+  if (!confirmDiscardIfDirty()) return
   clearComments()
   clearPersisted()
   dismissAll()
+  notice.value = null
   markdown.value = ''
   filename.value = ''
   contentType.value = 'markdown'
   pasteId.value = null
+  approvalInfo.value = null
   appMode.value = 'upload'
   if (window.location.search || window.location.hash) {
     window.history.replaceState({}, '', window.location.pathname)
@@ -247,16 +386,18 @@ function handleSelectionClear() {
   }, 200)
 }
 
-function handleAddComment(body: string, category: CommentCategory) {
+async function handleAddComment(body: string, category: CommentCategory) {
   if (!selection.value) return
-  sync.addComment({
+  const anchor = {
     startLine: selection.value.startLine,
     endLine: selection.value.endLine,
     selectedText: selection.value.selectedText,
-    body,
-    category,
-  })
+  }
   dismissAll()
+  // The comment's line numbers refer to the text on screen — make sure that is
+  // what the server holds before the comment lands next to it.
+  if (sync.isShared.value && sync.isDirty.value) await flushAutosave()
+  sync.addComment({ ...anchor, body, category })
 }
 
 function handleCancelPopover() {
@@ -293,10 +434,6 @@ const wordCount = computed(() => {
 })
 
 const charCount = computed(() => markdown.value.length)
-
-const hasUnsavedMarkdown = computed(() =>
-  !!pasteId.value && markdown.value !== serverMarkdown.value
-)
 
 // ── Export / Import comments ──────────────────────────────────
 
@@ -364,7 +501,8 @@ function handleImportComments() {
       :can-refresh="!!filePathParam"
       :sharing="sharing"
       :sync-status="sync.syncStatus.value"
-      :has-unsaved-markdown="hasUnsavedMarkdown"
+      :save-state="sync.saveState.value"
+      :pending-count="sync.pendingCount.value"
       :paste-id="pasteId"
       @update:pane-mode="paneMode = $event"
       @update:theme="setTheme"
@@ -398,6 +536,22 @@ function handleImportComments() {
       :comments="comments"
       :approval-status="approvalInfo?.approval_status"
     />
+
+    <div v-if="notice" class="notice-bar" role="status">
+      <span>{{ notice }}</span>
+      <button class="btn btn-ghost btn-sm" @click="notice = null">Dismiss</button>
+    </div>
+
+    <div v-if="appMode === 'review' && sync.conflict.value" class="conflict-bar" role="alert" data-testid="conflict-bar">
+      <span class="conflict-text">
+        <strong>Conflict:</strong> this document changed on the server while you had unsaved edits.
+        Your edits are kept here until you choose.
+      </span>
+      <span class="conflict-actions">
+        <button class="btn btn-ghost btn-sm" title="Discard your local edits and load the server copy" @click="sync.adoptRemote()">Use server version</button>
+        <button class="btn btn-primary btn-sm" title="Overwrite the server copy with your edits" @click="sync.overwriteRemote()">Keep my version</button>
+      </span>
+    </div>
 
     <div v-if="appMode === 'review'" class="review-layout">
       <div class="main-pane">
@@ -485,6 +639,34 @@ function handleImportComments() {
   height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.notice-bar,
+.conflict-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notice-bar {
+  background: var(--bg-page);
+  color: var(--text-muted);
+}
+
+.conflict-bar {
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--text-primary);
+  border-bottom-color: rgba(220, 38, 38, 0.35);
+}
+
+.conflict-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .review-layout {

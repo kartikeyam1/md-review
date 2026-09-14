@@ -22,9 +22,10 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
   async function apiCall(path, opts = {}) {
     let res;
     try {
+      const { headers: extraHeaders, ...rest } = opts;
       res = await fetchFn(`${pasteApiUrl}${path}`, {
-        headers: { 'Content-Type': 'application/json' },
-        ...opts,
+        ...rest,
+        headers: { 'Content-Type': 'application/json', ...(extraHeaders || {}) },
       });
     } catch {
       return { error: `Could not reach paste service at ${pasteApiUrl}` };
@@ -35,7 +36,13 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       return { error: 'Session not found' };
     }
     if (!res.ok) {
-      return { error: `Paste service returned ${res.status}` };
+      // Surface the service's own message (e.g. 412 "Content changed on server",
+      // 409 "Patch failed: context mismatch") plus the current content_hash so
+      // the caller can re-read and retry instead of guessing.
+      const body = await res.json().catch(() => ({}));
+      const out = { error: body.error || `Paste service returned ${res.status}`, status: res.status };
+      if (body.content_hash) out.content_hash = body.content_hash;
+      return out;
     }
     if (res.status === 204) return {};
     return res.json();
@@ -169,13 +176,16 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       return { ok: true };
     },
 
-    async update_markdown({ sessionId, markdown, filePath, filename, patch }) {
+    async update_markdown({ sessionId, markdown, filePath, filename, patch, expectedContentHash }) {
+      // Optimistic concurrency: only write if the stored content still has this hash.
+      const headers = expectedContentHash ? { 'If-Match': expectedContentHash } : undefined;
       // Delta update via patch
       if (patch) {
         const payload = { patch };
         if (filename !== undefined) payload.filename = filename;
         return apiCall(`/paste/${sessionId}/markdown`, {
           method: 'PUT',
+          headers,
           body: JSON.stringify(payload),
         });
       }
@@ -189,6 +199,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       if (filename !== undefined) payload.filename = filename;
       return apiCall(`/paste/${sessionId}/markdown`, {
         method: 'PUT',
+        headers,
         body: JSON.stringify(payload),
       });
     },
@@ -251,11 +262,12 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
 
     // ── New: patch markdown with a unified diff ──────────────────────────────
 
-    async patch_markdown({ sessionId, patch, filename }) {
+    async patch_markdown({ sessionId, patch, filename, expectedContentHash }) {
       const payload = { patch };
       if (filename !== undefined) payload.filename = filename;
       return apiCall(`/paste/${sessionId}/markdown`, {
         method: 'PUT',
+        headers: expectedContentHash ? { 'If-Match': expectedContentHash } : undefined,
         body: JSON.stringify(payload),
       });
     },
@@ -494,6 +506,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       markdown: z.string().optional().describe('New markdown content (provide this OR filePath OR patch)'),
       filePath: z.string().optional().describe('Absolute path to a markdown file to read (provide this OR markdown OR patch)'),
       patch: z.string().optional().describe('Unified diff to apply as a delta update (provide this OR markdown OR filePath)'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }).refine(data => data.markdown || data.filePath || data.patch, {
       message: 'Either markdown, filePath, or patch must be provided',
@@ -587,6 +600,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
       patch: z.string().describe('Unified diff format patch to apply'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }),
   }, async (args) => {

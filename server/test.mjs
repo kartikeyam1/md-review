@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const BASE = 'http://localhost:3100';
+const BASE = process.env.PASTE_API || 'http://localhost:3100';
 
 async function json(res) {
   const text = await res.text();
@@ -269,7 +269,8 @@ test('PUT /paste/:id/markdown — updates markdown content, preserves filename',
 
   assert.equal(res.status, 200);
   const data = await json(res);
-  assert.deepEqual(data, { ok: true });
+  assert.equal(data.ok, true);
+  assert.ok(typeof data.content_hash === 'string', 'response carries the new content_hash');
 
   // Verify the content was updated and filename preserved
   const getRes = await fetch(`${BASE}/paste/${pasteId}/markdown`);
@@ -289,7 +290,8 @@ test('PUT /paste/:id/markdown — updates filename when provided', async () => {
 
   assert.equal(res.status, 200);
   const data = await json(res);
-  assert.deepEqual(data, { ok: true });
+  assert.equal(data.ok, true);
+  assert.ok(typeof data.content_hash === 'string', 'response carries the new content_hash');
 
   const getRes = await fetch(`${BASE}/paste/${pasteId}/markdown`);
   const updated = await json(getRes);
@@ -380,4 +382,150 @@ test('CORS — exposes ETag header', async () => {
   const exposeHeaders = res.headers.get('access-control-expose-headers');
   assert.ok(exposeHeaders, 'Access-Control-Expose-Headers header should be present');
   assert.ok(exposeHeaders.includes('ETag'), 'ETag should be in exposed headers');
+});
+
+// ── Durability: optimistic concurrency, validated patches, slug resolution ──
+
+test('PUT /paste/:id/markdown — returns content_hash that matches the stored hash', async () => {
+  const pasteId = await createPaste();
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown: '# New' }),
+  });
+  assert.equal(res.status, 200);
+  const body = await json(res);
+  assert.ok(typeof body.content_hash === 'string' && body.content_hash.length === 32);
+  assert.equal(res.headers.get('etag'), `"${body.content_hash}"`);
+
+  const full = await json(await fetch(`${BASE}/paste/${pasteId}`));
+  assert.equal(full.content_hash, body.content_hash);
+  assert.equal(full.markdown, '# New');
+});
+
+test('PUT /paste/:id/markdown — If-Match with the current hash succeeds', async () => {
+  const pasteId = await createPaste();
+  const { content_hash } = await json(await fetch(`${BASE}/paste/${pasteId}`));
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'If-Match': `"${content_hash}"` },
+    body: JSON.stringify({ markdown: '# Updated with If-Match' }),
+  });
+  assert.equal(res.status, 200);
+});
+
+test('PUT /paste/:id/markdown — stale If-Match is rejected with 412 and the current content', async () => {
+  const pasteId = await createPaste({ markdown: 'v1', filename: 'a.md' });
+  const { content_hash: staleHash } = await json(await fetch(`${BASE}/paste/${pasteId}`));
+
+  // Someone else writes in between.
+  await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markdown: 'v2' }),
+  });
+
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'If-Match': staleHash },
+    body: JSON.stringify({ markdown: 'v1 + my edits' }),
+  });
+  assert.equal(res.status, 412);
+  const body = await json(res);
+  assert.equal(body.markdown, 'v2');
+  assert.ok(body.content_hash && body.content_hash !== staleHash);
+
+  // Nothing was written.
+  const after = await json(await fetch(`${BASE}/paste/${pasteId}/markdown`));
+  assert.equal(after.markdown, 'v2');
+});
+
+test('PUT /paste/:id/markdown — base_hash in the body works like If-Match', async () => {
+  const pasteId = await createPaste({ markdown: 'v1', filename: 'a.md' });
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown: 'x', base_hash: 'deadbeefdeadbeefdeadbeefdeadbeef' }),
+  });
+  assert.equal(res.status, 412);
+});
+
+test('PUT /paste/:id/markdown — rejects a body with neither markdown, patch nor filename', async () => {
+  const pasteId = await createPaste();
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nope: 1 }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('PUT /paste/:id/markdown — applies a clean unified diff', async () => {
+  const pasteId = await createPaste({ markdown: '# Test\nLine 2\nLine 3\nLine 4', filename: 't.md' });
+  const patch = '@@ -1,2 +1,3 @@\n # Test\n+Inserted via patch\n Line 2\n';
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patch }),
+  });
+  assert.equal(res.status, 200);
+  const { markdown } = await json(await fetch(`${BASE}/paste/${pasteId}/markdown`));
+  assert.equal(markdown, '# Test\nInserted via patch\nLine 2\nLine 3\nLine 4');
+});
+
+test('PUT /paste/:id/markdown — a patch whose context does not match is rejected with 409, document untouched', async () => {
+  const original = '# Test\nLine 2\nLine 3';
+  const pasteId = await createPaste({ markdown: original, filename: 't.md' });
+  const patch = '@@ -1,2 +1,2 @@\n # Test\n-Line TWO (wrong)\n+Line 2 changed\n';
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patch }),
+  });
+  assert.equal(res.status, 409);
+  const body = await json(res);
+  assert.match(body.error, /mismatch/i);
+  const { markdown } = await json(await fetch(`${BASE}/paste/${pasteId}/markdown`));
+  assert.equal(markdown, original);
+});
+
+test('PUT /paste/:id/markdown — a patch with no hunk headers is rejected', async () => {
+  const pasteId = await createPaste();
+  const res = await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ patch: 'just some text' }),
+  });
+  assert.equal(res.status, 409);
+});
+
+test('slug resolution — an all-hex slug like "cafe" still resolves to its session', async () => {
+  const suffix = Math.random().toString(16).slice(2, 8);
+  const res = await fetch(`${BASE}/paste`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown: 'hex slug', filename: 'h.md', slug: `cafe${suffix}` }),
+  });
+  const { id, slug } = await json(res);
+  assert.match(slug, /^[a-f0-9]+$/, 'test needs an all-hex slug');
+  const bySlug = await fetch(`${BASE}/paste/${slug}`);
+  assert.equal(bySlug.status, 200);
+  assert.equal((await json(bySlug)).markdown, 'hex slug');
+  await fetch(`${BASE}/paste/${id}`, { method: 'DELETE' });
+});
+
+test('concurrency — a slow PUT /markdown does not drop a comment posted while its body was in flight', async () => {
+  const net = await import('node:net');
+  const pasteId = await createPaste();
+  const port = parseInt(new URL(BASE).port, 10);
+
+  const body = JSON.stringify({ markdown: '# replaced by slow agent\n' + 'x'.repeat(2000) });
+  const head = `PUT /paste/${pasteId}/markdown HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n`;
+  const sock = net.connect(port, 'localhost');
+  const closed = new Promise(r => { sock.on('close', r); setTimeout(r, 3000); });
+  sock.on('data', () => {});
+  await new Promise(r => sock.once('connect', r));
+  sock.write(head + body.slice(0, 100));
+  await new Promise(r => setTimeout(r, 200));
+
+  const c = await fetch(`${BASE}/paste/${pasteId}/comments`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startLine: 0, endLine: 1, selectedText: 'x', body: 'UI comment', category: 'nit' }),
+  });
+  assert.equal(c.status, 201);
+
+  sock.write(body.slice(100)); sock.end();
+  await closed;
+
+  const final = await json(await fetch(`${BASE}/paste/${pasteId}`));
+  assert.equal((final.comments || []).length, 1, 'comment must survive the overlapping markdown write');
+  assert.ok(final.markdown.startsWith('# replaced'), 'markdown write must also land');
 });

@@ -11,6 +11,8 @@ const mockPollPaste = vi.fn()
 const mockPostReply = vi.fn()
 const mockPutReply = vi.fn()
 const mockDeleteReplyApi = vi.fn()
+const mockResolveCommentApi = vi.fn()
+const mockUnresolveCommentApi = vi.fn()
 
 vi.mock('@/composables/useShare', () => ({
   useShare: () => ({
@@ -22,6 +24,8 @@ vi.mock('@/composables/useShare', () => ({
     postReply: mockPostReply,
     putReply: mockPutReply,
     deleteReplyApi: mockDeleteReplyApi,
+    resolveCommentApi: mockResolveCommentApi,
+    unresolveCommentApi: mockUnresolveCommentApi,
     loadShare: vi.fn(),
     sharing: ref(false),
     shareError: ref(null),
@@ -75,20 +79,35 @@ function makeLocalOps(comments: { value: Comment[] }) {
           : c
       )
     }),
+    resolveComment: vi.fn((id: string) => {
+      comments.value = comments.value.map(c => c.id === id ? { ...c, resolved: true } : c)
+    }),
+    unresolveComment: vi.fn((id: string) => {
+      comments.value = comments.value.map(c => c.id === id ? { ...c, resolved: false } : c)
+    }),
   }
 }
+
+const okPut = { ok: true, status: 200, contentHash: 'h2' }
+const failPut = { ok: false, status: 0 }
+const serverState = (markdown: string, comments: Comment[] = [], content_hash = 'h1', etag = '"e1"') => ({
+  data: { markdown, filename: 'test.md', comments, sharedAt: '', content_hash },
+  etag, notModified: false, status: 200,
+})
+const notModified = { data: null, etag: null, notModified: true, status: 304 }
 
 describe('useSync', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
-    // Default: polling returns not-modified so shared-mode tests don't blow up
-    mockPollPaste.mockResolvedValue({ data: null, etag: null, notModified: true })
+    mockPollPaste.mockResolvedValue(notModified)
   })
 
   afterEach(() => {
     vi.useRealTimers()
   })
+
+  // ── Comment ops ──────────────────────────────────────────────────────────
 
   it('in local mode, addComment delegates to localOps', () => {
     const pasteId = ref<string | null>(null)
@@ -102,7 +121,7 @@ describe('useSync', () => {
     expect(mockPostComment).not.toHaveBeenCalled()
   })
 
-  it('in shared mode, addComment calls API and updates via loadComments', async () => {
+  it('in shared mode, addComment calls API and swaps the optimistic comment for the server one', async () => {
     const pasteId = ref<string | null>('abc123')
     const comments = ref<Comment[]>([])
     const ops = makeLocalOps(comments)
@@ -113,7 +132,8 @@ describe('useSync', () => {
     await sync.addComment({ startLine: 0, endLine: 1, selectedText: 'Hi', body: 'nice', category: 'suggestion' })
 
     expect(mockPostComment).toHaveBeenCalledWith('abc123', expect.objectContaining({ body: 'nice' }))
-    expect(ops.loadComments).toHaveBeenCalled()
+    expect(comments.value).toHaveLength(1)
+    expect(comments.value[0].id).toBe('server-id')
   })
 
   it('in shared mode, editComment calls PUT API', async () => {
@@ -127,6 +147,7 @@ describe('useSync', () => {
     await sync.editComment('c1', { body: 'updated' })
 
     expect(mockPutComment).toHaveBeenCalledWith('abc123', 'c1', { body: 'updated' })
+    expect(comments.value[0].body).toBe('updated')
   })
 
   it('in shared mode, deleteComment calls DELETE API', async () => {
@@ -140,19 +161,7 @@ describe('useSync', () => {
     await sync.deleteComment('c1')
 
     expect(mockDeleteCommentApi).toHaveBeenCalledWith('abc123', 'c1')
-  })
-
-  it('in shared mode, saveMarkdown calls PUT API', async () => {
-    const pasteId = ref<string | null>('abc123')
-    const markdown = ref('# Updated')
-    const ops = makeLocalOps(ref([]))
-    mockPutMarkdown.mockResolvedValue(true)
-
-    const sync = useSync(pasteId, ref([]), markdown, ops)
-    const result = await sync.saveMarkdown()
-
-    expect(mockPutMarkdown).toHaveBeenCalledWith('abc123', '# Updated', undefined)
-    expect(result).toBe(true)
+    expect(comments.value).toHaveLength(0)
   })
 
   it('syncStatus is "local" when pasteId is null', () => {
@@ -165,7 +174,7 @@ describe('useSync', () => {
     expect(sync.syncStatus.value).toBe('synced')
   })
 
-  it('falls back to local on addComment API failure and sets error status', async () => {
+  it('keeps the comment locally and reports an error when addComment fails', async () => {
     const pasteId = ref<string | null>('abc123')
     const comments = ref<Comment[]>([])
     const ops = makeLocalOps(comments)
@@ -175,10 +184,12 @@ describe('useSync', () => {
     await sync.addComment({ startLine: 0, endLine: 1, selectedText: 'Hi', body: 'x', category: 'nit' })
 
     expect(ops.addComment).toHaveBeenCalled()
+    expect(comments.value).toHaveLength(1)
     expect(sync.syncStatus.value).toBe('error')
+    expect(sync.pendingCount.value).toBe(1)
   })
 
-  it('falls back to local on editComment API failure', async () => {
+  it('keeps a failed edit locally and reports an error', async () => {
     const existing = makeComment({ id: 'c1', body: 'original' })
     const pasteId = ref<string | null>('abc123')
     const comments = ref<Comment[]>([existing])
@@ -188,11 +199,11 @@ describe('useSync', () => {
     const sync = useSync(pasteId, comments, ref(''), ops)
     await sync.editComment('c1', { body: 'updated' })
 
-    expect(ops.editComment).toHaveBeenCalledWith('c1', { body: 'updated' })
+    expect(comments.value[0].body).toBe('updated')
     expect(sync.syncStatus.value).toBe('error')
   })
 
-  it('falls back to local on deleteComment API failure', async () => {
+  it('keeps a failed delete locally and reports an error', async () => {
     const existing = makeComment({ id: 'c1' })
     const pasteId = ref<string | null>('abc123')
     const comments = ref<Comment[]>([existing])
@@ -202,7 +213,7 @@ describe('useSync', () => {
     const sync = useSync(pasteId, comments, ref(''), ops)
     await sync.deleteComment('c1')
 
-    expect(ops.deleteComment).toHaveBeenCalledWith('c1')
+    expect(comments.value).toHaveLength(0)
     expect(sync.syncStatus.value).toBe('error')
   })
 
@@ -214,6 +225,57 @@ describe('useSync', () => {
     expect(sharedSync.isShared.value).toBe(true)
   })
 
+  // ── Outbox: failed comment ops survive polls and are retried ─────────────
+
+  it('a poll does not wipe a comment whose POST failed, and retries it', async () => {
+    const pasteId = ref<string | null>('abc123')
+    const comments = ref<Comment[]>([])
+    const ops = makeLocalOps(comments)
+    const markdown = ref('')
+    mockPollPaste.mockResolvedValue(serverState('doc', []))
+    const sync = useSync(pasteId, comments, markdown, ops)
+    await vi.advanceTimersByTimeAsync(0)
+
+    mockPostComment.mockResolvedValueOnce(null)
+    await sync.addComment({ startLine: 0, endLine: 1, selectedText: 'Hi', body: 'offline comment', category: 'nit' })
+    expect(sync.pendingCount.value).toBe(1)
+    const localId = comments.value[0].id
+
+    // Server still knows nothing about it; the poll must keep it.
+    mockPollPaste.mockResolvedValue(serverState('doc', [], 'h1', '"e2"'))
+    mockPostComment.mockResolvedValueOnce(null)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(comments.value.map(c => c.body)).toEqual(['offline comment'])
+
+    // Network is back: the retry succeeds and the server id replaces the local one.
+    const serverComment = makeComment({ id: 'srv-1', body: 'offline comment' })
+    mockPostComment.mockResolvedValueOnce(serverComment)
+    mockPollPaste.mockResolvedValue(serverState('doc', [serverComment], 'h1', '"e3"'))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(sync.pendingCount.value).toBe(0)
+    expect(comments.value.map(c => c.id)).toEqual(['srv-1'])
+    expect(comments.value.find(c => c.id === localId)).toBeUndefined()
+    expect(sync.syncStatus.value).toBe('synced')
+  })
+
+  it('a poll does not resurrect a comment whose DELETE is still pending', async () => {
+    const existing = makeComment({ id: 'c1' })
+    const pasteId = ref<string | null>('abc123')
+    const comments = ref<Comment[]>([existing])
+    const ops = makeLocalOps(comments)
+    mockPollPaste.mockResolvedValue(serverState('doc', [existing]))
+    const sync = useSync(pasteId, comments, ref('doc'), ops)
+    await vi.advanceTimersByTimeAsync(0)
+
+    mockDeleteCommentApi.mockResolvedValue(false)
+    await sync.deleteComment('c1')
+    mockPollPaste.mockResolvedValue(serverState('doc', [existing], 'h1', '"e2"'))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(comments.value).toHaveLength(0)
+  })
+
+  // ── Document save ────────────────────────────────────────────────────────
+
   it('saveMarkdown returns false in local mode', async () => {
     const sync = useSync(ref(null), ref([]), ref('# Hello'), makeLocalOps(ref([])))
     const result = await sync.saveMarkdown()
@@ -221,43 +283,223 @@ describe('useSync', () => {
     expect(mockPutMarkdown).not.toHaveBeenCalled()
   })
 
+  it('saveMarkdown PUTs with If-Match set to the baseline hash and updates the baseline', async () => {
+    const pasteId = ref<string | null>('abc123')
+    const markdown = ref('# Updated')
+    const sync = useSync(pasteId, ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: '# Original', contentHash: 'h1' })
+    mockPutMarkdown.mockResolvedValue(okPut)
+
+    expect(sync.isDirty.value).toBe(true)
+    expect(sync.saveState.value).toBe('dirty')
+    const result = await sync.saveMarkdown()
+
+    expect(mockPutMarkdown).toHaveBeenCalledWith('abc123', '# Updated', undefined, expect.objectContaining({ ifMatch: 'h1' }))
+    expect(result).toBe(true)
+    expect(sync.isDirty.value).toBe(false)
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  it('saveMarkdown is a no-op when nothing changed', async () => {
+    const sync = useSync(ref('abc123'), ref([]), ref('same'), makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'same', contentHash: 'h1' })
+    expect(await sync.saveMarkdown()).toBe(true)
+    expect(mockPutMarkdown).not.toHaveBeenCalled()
+  })
+
+  it('saveMarkdown also sends a changed filename', async () => {
+    const filename = ref('renamed.md')
+    const sync = useSync(ref('abc123'), ref([]), ref('doc'), makeLocalOps(ref([])), { filename })
+    sync.setBaseline({ markdown: 'doc', filename: 'old.md', contentHash: 'h1' })
+    mockPutMarkdown.mockResolvedValue(okPut)
+    expect(sync.isDirty.value).toBe(true)
+    await sync.saveMarkdown()
+    expect(mockPutMarkdown).toHaveBeenCalledWith('abc123', 'doc', 'renamed.md', expect.anything())
+    expect(sync.isDirty.value).toBe(false)
+  })
+
+  it('a failed save keeps local edits, reports error, and the next save retries', async () => {
+    const markdown = ref('local edits')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'server', contentHash: 'h1' })
+    mockPutMarkdown.mockResolvedValueOnce(failPut)
+    expect(await sync.saveMarkdown()).toBe(false)
+    expect(sync.saveState.value).toBe('error')
+    expect(markdown.value).toBe('local edits')
+
+    mockPutMarkdown.mockResolvedValueOnce(okPut)
+    expect(await sync.saveMarkdown()).toBe(true)
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  it('a 412 on save becomes a conflict: local edits kept, server copy exposed', async () => {
+    const markdown = ref('mine')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'base', contentHash: 'h1' })
+    mockPutMarkdown.mockResolvedValueOnce({ ok: false, status: 412, conflict: true, remoteMarkdown: 'theirs', remoteHash: 'h9' })
+
+    expect(await sync.saveMarkdown()).toBe(false)
+    expect(sync.saveState.value).toBe('conflict')
+    expect(sync.conflict.value).toBe(true)
+    expect(sync.remoteMarkdown.value).toBe('theirs')
+    expect(markdown.value).toBe('mine')
+
+    // Plain save refuses while in conflict; the user must choose.
+    expect(await sync.saveMarkdown()).toBe(false)
+    expect(mockPutMarkdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('adoptRemote discards local edits and clears the conflict', async () => {
+    const markdown = ref('mine')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'base', contentHash: 'h1' })
+    mockPutMarkdown.mockResolvedValueOnce({ ok: false, status: 412, conflict: true, remoteMarkdown: 'theirs', remoteHash: 'h9' })
+    await sync.saveMarkdown()
+
+    sync.adoptRemote()
+    expect(markdown.value).toBe('theirs')
+    expect(sync.conflict.value).toBe(false)
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  it('overwriteRemote force-saves local edits without If-Match', async () => {
+    const markdown = ref('mine')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'base', contentHash: 'h1' })
+    mockPutMarkdown.mockResolvedValueOnce({ ok: false, status: 412, conflict: true, remoteMarkdown: 'theirs', remoteHash: 'h9' })
+    await sync.saveMarkdown()
+
+    mockPutMarkdown.mockResolvedValueOnce(okPut)
+    expect(await sync.overwriteRemote()).toBe(true)
+    expect(mockPutMarkdown).toHaveBeenLastCalledWith('abc123', 'mine', undefined, expect.objectContaining({ ifMatch: null }))
+    expect(sync.conflict.value).toBe(false)
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  // ── Polling ──────────────────────────────────────────────────────────────
+
   it('polling calls pollPaste when pasteId is set', async () => {
     const pasteId = ref<string | null>('abc123')
     const comments = ref<Comment[]>([])
     const ops = makeLocalOps(comments)
-    mockPollPaste.mockResolvedValue({ data: null, etag: null, notModified: true })
 
     useSync(pasteId, comments, ref(''), ops)
 
-    // Initial poll fires immediately via watch
     await vi.advanceTimersByTimeAsync(0)
     expect(mockPollPaste).toHaveBeenCalledWith('abc123', null)
   })
 
-  it('poll replaces comments and markdown with server state', async () => {
+  it('first poll adopts server comments and markdown as the baseline', async () => {
     const pasteId = ref<string | null>('abc123')
     const comments = ref<Comment[]>([])
     const markdown = ref('old content')
     const ops = makeLocalOps(comments)
     const serverComment = makeComment({ id: 'srv1', body: 'from server' })
+    mockPollPaste.mockResolvedValue(serverState('new content', [serverComment]))
 
-    mockPollPaste.mockResolvedValue({
-      data: { markdown: 'new content', filename: 'test.md', comments: [serverComment], sharedAt: '' },
-      etag: '"abc"',
-      notModified: false,
-    })
-
-    useSync(pasteId, comments, markdown, ops)
+    const sync = useSync(pasteId, comments, markdown, ops)
 
     await vi.advanceTimersByTimeAsync(0)
     expect(ops.loadComments).toHaveBeenCalledWith([serverComment])
     expect(markdown.value).toBe('new content')
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  it('REGRESSION: a poll after a comment is added must not overwrite unsaved local edits', async () => {
+    const pasteId = ref<string | null>('abc123')
+    const comments = ref<Comment[]>([])
+    const markdown = ref('')
+    const ops = makeLocalOps(comments)
+    mockPollPaste.mockResolvedValue(serverState('original', []))
+    const sync = useSync(pasteId, comments, markdown, ops)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(markdown.value).toBe('original')
+
+    // User edits for a while without saving.
+    markdown.value = 'original + 20 minutes of edits'
+    expect(sync.isDirty.value).toBe(true)
+
+    // Adding a comment changes the server ETag → the next poll returns the full doc.
+    const serverComment = makeComment({ id: 'srv1' })
+    mockPostComment.mockResolvedValue(serverComment)
+    await sync.addComment({ startLine: 0, endLine: 1, selectedText: 'x', body: 'c', category: 'nit' })
+    mockPollPaste.mockResolvedValue(serverState('original', [serverComment], 'h1', '"e2"'))
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(markdown.value).toBe('original + 20 minutes of edits')
+    expect(sync.isDirty.value).toBe(true)
+    expect(sync.conflict.value).toBe(false) // server content itself did not change
+    expect(comments.value.map(c => c.id)).toEqual(['srv1'])
+  })
+
+  it('a poll that sees changed server content while local is dirty flags a conflict and keeps local', async () => {
+    const markdown = ref('')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    mockPollPaste.mockResolvedValue(serverState('v1'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    markdown.value = 'v1 + mine'
+    mockPollPaste.mockResolvedValue(serverState('v2 from agent', [], 'h2', '"e2"'))
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(markdown.value).toBe('v1 + mine')
+    expect(sync.conflict.value).toBe(true)
+    expect(sync.remoteMarkdown.value).toBe('v2 from agent')
+    expect(sync.saveState.value).toBe('conflict')
+  })
+
+  it('a poll adopts server content when local is clean', async () => {
+    const markdown = ref('')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    mockPollPaste.mockResolvedValue(serverState('v1'))
+    await vi.advanceTimersByTimeAsync(0)
+    mockPollPaste.mockResolvedValue(serverState('v2', [], 'h2', '"e2"'))
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(markdown.value).toBe('v2')
+    expect(sync.saveState.value).toBe('saved')
+  })
+
+  it('a poll that fails marks the session offline until the next success', async () => {
+    const sync = useSync(ref('abc123'), ref([]), ref(''), makeLocalOps(ref([])))
+    mockPollPaste.mockResolvedValue({ data: null, etag: null, notModified: false, status: 0 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sync.syncStatus.value).toBe('error')
+    mockPollPaste.mockResolvedValue(notModified)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(sync.syncStatus.value).toBe('synced')
+  })
+
+  it('setBaseline right after setting pasteId is not wiped by the pasteId watcher', async () => {
+    const pasteId = ref<string | null>(null)
+    const markdown = ref('doc')
+    const sync = useSync(pasteId, ref([]), markdown, makeLocalOps(ref([])))
+    pasteId.value = 'new-id'
+    sync.setBaseline({ markdown: 'doc', contentHash: 'h1', etag: '"e1"' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sync.saveState.value).toBe('saved')
+    expect(mockPollPaste).toHaveBeenCalledWith('new-id', '"e1"')
+  })
+
+  it('restoreDraft re-applies unsaved edits; flags conflict only if the server moved since', async () => {
+    const markdown = ref('server v1')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'server v1', contentHash: 'h1' })
+
+    sync.restoreDraft('server v1 + draft', 'server v1')
+    expect(markdown.value).toBe('server v1 + draft')
+    expect(sync.isDirty.value).toBe(true)
+    expect(sync.conflict.value).toBe(false)
+
+    sync.setBaseline({ markdown: 'server v2', contentHash: 'h2' })
+    markdown.value = 'server v2'
+    sync.restoreDraft('server v1 + draft', 'server v1')
+    expect(markdown.value).toBe('server v1 + draft')
+    expect(sync.conflict.value).toBe(true)
   })
 
   it('polling stops when pasteId is cleared', async () => {
     const pasteId = ref<string | null>('abc123')
     const ops = makeLocalOps(ref([]))
-    mockPollPaste.mockResolvedValue({ data: null, etag: null, notModified: true })
 
     useSync(pasteId, ref([]), ref(''), ops)
 
@@ -268,6 +510,8 @@ describe('useSync', () => {
     await vi.advanceTimersByTimeAsync(5000)
     expect(mockPollPaste).not.toHaveBeenCalled()
   })
+
+  // ── Replies ──────────────────────────────────────────────────────────────
 
   it('in local mode, addReply delegates to localOps', () => {
     const pasteId = ref<string | null>(null)
@@ -282,7 +526,7 @@ describe('useSync', () => {
     expect(mockPostReply).not.toHaveBeenCalled()
   })
 
-  it('in shared mode, addReply calls API and updates via loadComments', async () => {
+  it('in shared mode, addReply calls API and swaps in the server reply', async () => {
     const pasteId = ref<string | null>('abc123')
     const existing = makeComment({ id: 'c1' })
     const comments = ref<Comment[]>([existing])
@@ -294,7 +538,7 @@ describe('useSync', () => {
     await sync.addReply('c1', { body: 'reply text' })
 
     expect(mockPostReply).toHaveBeenCalledWith('abc123', 'c1', { body: 'reply text' })
-    expect(ops.loadComments).toHaveBeenCalled()
+    expect(comments.value[0].replies.map(r => r.id)).toEqual(['r1'])
   })
 
   it('in shared mode, editReply calls PUT API', async () => {
@@ -325,7 +569,7 @@ describe('useSync', () => {
     expect(mockDeleteReplyApi).toHaveBeenCalledWith('abc123', 'c1', 'r1')
   })
 
-  it('falls back to local on addReply API failure', async () => {
+  it('keeps a failed reply locally and reports an error', async () => {
     const pasteId = ref<string | null>('abc123')
     const existing = makeComment({ id: 'c1' })
     const comments = ref<Comment[]>([existing])
@@ -336,6 +580,7 @@ describe('useSync', () => {
     await sync.addReply('c1', { body: 'reply' })
 
     expect(ops.addReply).toHaveBeenCalledWith('c1', { body: 'reply' })
+    expect(comments.value[0].replies).toHaveLength(1)
     expect(sync.syncStatus.value).toBe('error')
   })
 })

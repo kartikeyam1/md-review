@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import type { PaneMode, ThemeMode } from '@/types'
+import type { SaveState } from '@/composables/useSync'
 import { nextTheme, THEME_META } from '@/composables/useTheme'
 
 const props = defineProps<{
@@ -13,9 +14,27 @@ const props = defineProps<{
   canRefresh: boolean
   sharing: boolean
   syncStatus: 'local' | 'synced' | 'error'
-  hasUnsavedMarkdown: boolean
+  saveState: SaveState
+  pendingCount?: number
   pasteId: string | null
 }>()
+
+const SAVE_LABEL: Record<SaveState, string> = {
+  idle: '',
+  saved: 'Saved',
+  dirty: 'Unsaved changes',
+  saving: 'Saving…',
+  error: 'Save failed',
+  conflict: 'Conflict',
+}
+const SAVE_TITLE: Record<SaveState, string> = {
+  idle: '',
+  saved: 'All changes are on the server',
+  dirty: 'Edits not yet saved to the server — they autosave shortly, or press Save (Ctrl/Cmd+S)',
+  saving: 'Writing to the server…',
+  error: 'The last save failed. Your edits are kept locally — click to retry',
+  conflict: 'The server copy changed while you had unsaved edits — choose a version below',
+}
 
 const emit = defineEmits<{
   'update:paneMode': [mode: PaneMode]
@@ -91,16 +110,28 @@ function onFilenameKeydown(e: KeyboardEvent) {
             Preview
           </button>
         </div>
-        <span v-if="syncStatus !== 'local'" class="sync-indicator" :class="syncStatus" :title="syncStatus === 'synced' ? 'Synced with server' : 'Sync error'">
+        <span v-if="syncStatus !== 'local'" class="sync-indicator" :class="syncStatus" :title="syncStatus === 'synced' ? 'Synced with server' : (pendingCount ? `${pendingCount} comment change(s) waiting to sync` : 'Cannot reach the review server — changes are kept locally and retried')">
           <span class="sync-dot"></span>
           <span class="sync-label">{{ syncStatus === 'synced' ? 'Live' : 'Offline' }}</span>
+          <span v-if="pendingCount" class="sync-pending">· {{ pendingCount }} pending</span>
+        </span>
+        <span
+          v-if="saveState !== 'idle'"
+          class="save-state"
+          :class="saveState"
+          :title="SAVE_TITLE[saveState]"
+          data-testid="save-state"
+        >
+          <span v-if="saveState === 'saved'" class="save-check">✓</span>
+          {{ SAVE_LABEL[saveState] }}
         </span>
         <button
-          v-if="syncStatus !== 'local' && hasUnsavedMarkdown && paneMode === 'edit'"
+          v-if="saveState === 'dirty' || saveState === 'error'"
           class="btn btn-primary btn-save"
+          :title="saveState === 'error' ? 'Retry saving to the server' : 'Save to the server now (Ctrl/Cmd+S)'"
           @click="emit('save-markdown')"
         >
-          Save
+          {{ saveState === 'error' ? 'Retry save' : 'Save' }}
         </button>
         <button v-if="canRefresh" class="btn btn-ghost" title="Reload file from disk and reset comments" @click="emit('refresh')">Refresh</button>
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
@@ -280,4 +311,28 @@ function onFilenameKeydown(e: KeyboardEvent) {
   padding: 4px 14px;
   font-size: 13px;
 }
+
+.sync-pending {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.save-state {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.save-state.saved { opacity: 0.8; }
+.save-state.dirty { color: var(--text-primary); }
+.save-state.saving { opacity: 0.8; }
+.save-state.error { color: #dc2626; font-weight: 500; }
+.save-state.conflict { color: #dc2626; font-weight: 600; background: rgba(220, 38, 38, 0.08); }
+
+.save-check { color: #16a34a; font-weight: 600; }
 </style>

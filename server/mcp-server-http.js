@@ -150,6 +150,7 @@ function registerTools(server, handlers) {
       markdown: z.string().optional().describe('New markdown content (provide this OR filePath OR patch)'),
       filePath: z.string().optional().describe('Absolute path to a markdown file to read (provide this OR markdown OR patch)'),
       patch: z.string().optional().describe('Unified diff to apply as a delta update (provide this OR markdown OR filePath)'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }).refine(data => data.markdown || data.filePath || data.patch, {
       message: 'Either markdown, filePath, or patch must be provided',
@@ -243,6 +244,7 @@ function registerTools(server, handlers) {
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
       patch: z.string().describe('Unified diff format patch to apply'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }),
   }, async (args) => {

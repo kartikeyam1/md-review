@@ -2,8 +2,8 @@ import { chromium } from 'playwright'
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 
-const BASE = 'http://localhost:58747'
-const PASTE_API = 'http://localhost:3100'
+const BASE = process.env.E2E_BASE || 'http://localhost:58747'
+const PASTE_API = process.env.PASTE_API || 'http://localhost:3100'
 
 let browser
 
