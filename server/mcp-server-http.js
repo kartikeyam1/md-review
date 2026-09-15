@@ -4,12 +4,17 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { createHandlers } from './mcp-server.js';
+import { createSessionRegistry } from './mcp-sessions.js';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
 // Public URL that clients use in shell commands (curl). Falls back to PASTE_API_URL.
 const PASTE_PUBLIC_URL = process.env.PASTE_PUBLIC_URL || 'http://10.0.99.151:3100';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/md-review';
 const MCP_PORT = parseInt(process.env.MCP_PORT || '3200', 10);
+// Idle sessions are closed after this long; the registry never holds more than MCP_MAX_SESSIONS.
+const MCP_SESSION_TTL_MS = parseInt(process.env.MCP_SESSION_TTL_MS || String(30 * 60 * 1000), 10);
+const MCP_MAX_SESSIONS = parseInt(process.env.MCP_MAX_SESSIONS || '200', 10);
+const MCP_SWEEP_INTERVAL_MS = parseInt(process.env.MCP_SWEEP_INTERVAL_MS || String(60 * 1000), 10);
 
 const CATEGORY_ENUM = z.enum(['suggestion', 'question', 'must-fix', 'nit']);
 
@@ -18,6 +23,7 @@ function registerTools(server, handlers) {
     title: 'Create Review Session',
     description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.',
     inputSchema: z.object({
+      author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       markdown: z.string().optional().describe('The document content — Markdown or HTML (provide this OR filePath)'),
       filePath: z.string().optional().describe('Absolute path to a .md/.markdown/.txt/.html file to read (provide this OR markdown)'),
       filename: z.string().optional().describe('Display name for the file, e.g. "report.html" (defaults to basename of filePath if provided)'),
@@ -146,10 +152,12 @@ function registerTools(server, handlers) {
     title: 'Update Markdown',
     description: 'Update the markdown content of a session. Provide markdown, filePath, or patch (unified diff). For large files (>1MB), content is automatically uploaded in chunks.',
     inputSchema: z.object({
+      author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
       markdown: z.string().optional().describe('New markdown content (provide this OR filePath OR patch)'),
       filePath: z.string().optional().describe('Absolute path to a markdown file to read (provide this OR markdown OR patch)'),
       patch: z.string().optional().describe('Unified diff to apply as a delta update (provide this OR markdown OR filePath)'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }).refine(data => data.markdown || data.filePath || data.patch, {
       message: 'Either markdown, filePath, or patch must be provided',
@@ -197,6 +205,29 @@ function registerTools(server, handlers) {
 
   // ── Session management tools ─────────────────────────────────────────────
 
+  server.registerTool('list_revisions', {
+    title: 'List Revisions',
+    description: "Content history of a session, oldest first: who changed the document, when, and the content hash of each revision. Consecutive writes by the same author within a few minutes are folded into one revision. Use get_revision to read an older version, or diff two hashes to see what changed since you last read it.",
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+    }),
+  }, async (args) => {
+    const result = await handlers.list_revisions(args);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  });
+
+  server.registerTool('get_revision', {
+    title: 'Get Revision',
+    description: "Read one stored revision of a session's content by hash (from list_revisions), or 'current' for the live content. Returns 410 if that version is no longer stored.",
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+      hash: z.string().optional().describe("Revision content hash, or 'current' (default)"),
+    }),
+  }, async (args) => {
+    const result = await handlers.get_revision(args);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  });
+
   server.registerTool('list_sessions', {
     title: 'List Sessions',
     description: 'List all review sessions. Filter by approval status, session/file name pattern, or limit results.',
@@ -241,8 +272,10 @@ function registerTools(server, handlers) {
     title: 'Patch Markdown',
     description: 'Apply a unified diff patch to the session markdown. Much more efficient than re-sending the entire file for small changes.',
     inputSchema: z.object({
+      author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
       patch: z.string().describe('Unified diff format patch to apply'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }),
   }, async (args) => {
@@ -360,8 +393,20 @@ function registerTools(server, handlers) {
   );
 }
 
-// Track transports per session
-const transports = {};
+// Live sessions, expired after an idle TTL and capped (see mcp-sessions.js).
+const sessions = createSessionRegistry({
+  ttlMs: MCP_SESSION_TTL_MS,
+  maxSessions: MCP_MAX_SESSIONS,
+  onEvict: (id, transport, reason) => {
+    console.log(`[mcp] closing session ${id} (${reason}); active=${sessions.size()}`);
+    Promise.resolve(transport.close()).catch(() => {});
+  },
+});
+const sweeper = setInterval(() => {
+  const n = sessions.sweep();
+  if (n > 0) console.log(`[mcp] swept ${n} idle session(s); active=${sessions.size()}`);
+}, MCP_SWEEP_INTERVAL_MS);
+sweeper.unref();
 
 async function createTransport() {
   const transport = new StreamableHTTPServerTransport({
@@ -372,7 +417,7 @@ async function createTransport() {
   await server.connect(transport);
   transport.onclose = () => {
     const sid = transport.sessionId;
-    if (sid && transports[sid]) delete transports[sid];
+    if (sid) sessions.remove(sid);
   };
   return transport;
 }
@@ -397,7 +442,7 @@ const httpServer = http.createServer(async (req, res) => {
   // Health check
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ status: 'ok', transport: 'streamable-http' }));
+    return res.end(JSON.stringify({ status: 'ok', transport: 'streamable-http', sessions: sessions.stats() }));
   }
 
   // Only handle /mcp path
@@ -413,14 +458,15 @@ const httpServer = http.createServer(async (req, res) => {
     const transport = await createTransport();
     await transport.handleRequest(req, res);
     if (transport.sessionId) {
-      transports[transport.sessionId] = transport;
+      sessions.add(transport.sessionId, transport);
     }
     return;
   }
 
-  if (sessionId && transports[sessionId]) {
-    // Existing session — route to its transport
-    return transports[sessionId].handleRequest(req, res);
+  const existing = sessionId ? sessions.get(sessionId) : undefined;
+  if (existing) {
+    // Existing session — route to its transport (get() also refreshes its idle timer)
+    return existing.handleRequest(req, res);
   }
 
   if (sessionId && req.method === 'POST') {
@@ -430,7 +476,7 @@ const httpServer = http.createServer(async (req, res) => {
     const transport = await createTransport();
     await transport.handleRequest(req, res);
     if (transport.sessionId) {
-      transports[transport.sessionId] = transport;
+      sessions.add(transport.sessionId, transport);
     }
     return;
   }

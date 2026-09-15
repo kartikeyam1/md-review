@@ -262,3 +262,33 @@ test('error handling — 404 returns descriptive error', async () => {
 
   assert.equal(result.error, 'Session not found');
 });
+
+// ── Revision history tools ──────────────────────────────────────────────────
+
+test('list_revisions — GETs /revisions for the session', async () => {
+  const fetchMock = mockFetch(200, { current: 'h2', revisions: [{ hash: 'h1' }, { hash: 'h2' }] });
+  const h = makeHandlers(fetchMock);
+  const result = await h.list_revisions({ sessionId: 'abc' });
+  assert.equal(result.revisions.length, 2);
+  assert.ok(fetchMock.calls[0].url.endsWith('/paste/abc/revisions'));
+});
+
+test('get_revision — defaults to current and passes the hash through', async () => {
+  const fetchMock = mockFetch(200, { hash: 'h1', markdown: 'old' });
+  const h = makeHandlers(fetchMock);
+  await h.get_revision({ sessionId: 'abc' });
+  assert.ok(fetchMock.calls[0].url.endsWith('/paste/abc/revisions/current'));
+  await h.get_revision({ sessionId: 'abc', hash: 'h1' });
+  assert.ok(fetchMock.calls[1].url.endsWith('/paste/abc/revisions/h1'));
+});
+
+test('update_markdown — identifies itself as an MCP client and defaults author to "agent"', async () => {
+  const fetchMock = mockFetch(200, { ok: true, content_hash: 'h9' });
+  const h = makeHandlers(fetchMock);
+  await h.update_markdown({ sessionId: 'abc', markdown: '# new' });
+  const call = fetchMock.calls[0];
+  assert.equal(call.opts.headers['X-MdReview-Client'], 'mcp');
+  assert.equal(JSON.parse(call.opts.body).author, 'agent');
+  await h.update_markdown({ sessionId: 'abc', markdown: '# new', author: 'Claude for Kartikeya' });
+  assert.equal(JSON.parse(fetchMock.calls[1].opts.body).author, 'Claude for Kartikeya');
+});

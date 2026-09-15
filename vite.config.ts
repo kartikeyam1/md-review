@@ -46,6 +46,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**'],
+    // server/ has its own node_modules whose packages ship test suites (zod
+    // alone adds ~1,800 tests) — keep vitest on the app's own tests.
+    exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**', 'server/**'],
   },
 })

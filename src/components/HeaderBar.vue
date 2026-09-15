@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import type { PaneMode, ThemeMode } from '@/types'
+import type { SaveState } from '@/composables/useSync'
 import { nextTheme, THEME_META } from '@/composables/useTheme'
 
 const props = defineProps<{
@@ -13,9 +14,31 @@ const props = defineProps<{
   canRefresh: boolean
   sharing: boolean
   syncStatus: 'local' | 'synced' | 'error'
-  hasUnsavedMarkdown: boolean
+  saveState: SaveState
+  pendingCount?: number
   pasteId: string | null
+  reviewerName?: string
+  revisionCount?: number
+  /** True while there are changes the reader has not acknowledged yet. */
+  hasUnseenChanges?: boolean
 }>()
+
+const SAVE_LABEL: Record<SaveState, string> = {
+  idle: '',
+  saved: 'Saved',
+  dirty: 'Unsaved changes',
+  saving: 'Saving…',
+  error: 'Save failed',
+  conflict: 'Conflict',
+}
+const SAVE_TITLE: Record<SaveState, string> = {
+  idle: '',
+  saved: 'All changes are on the server',
+  dirty: 'Edits not yet saved to the server — they autosave shortly, or press Save (Ctrl/Cmd+S)',
+  saving: 'Writing to the server…',
+  error: 'The last save failed. Your edits are kept locally — click to retry',
+  conflict: 'The server copy changed while you had unsaved edits — choose a version below',
+}
 
 const emit = defineEmits<{
   'update:paneMode': [mode: PaneMode]
@@ -27,7 +50,31 @@ const emit = defineEmits<{
   'generate-prompt': []
   'share': []
   'save-markdown': []
+  'update:reviewerName': [name: string]
+  'open-history': []
 }>()
+
+const editingReviewer = ref(false)
+const reviewerInput = ref<HTMLInputElement>()
+
+async function startEditReviewer() {
+  editingReviewer.value = true
+  await nextTick()
+  reviewerInput.value?.focus()
+  reviewerInput.value?.select()
+}
+
+function commitReviewer() {
+  if (!editingReviewer.value) return
+  const val = (reviewerInput.value?.value ?? '').trim()
+  if (val !== (props.reviewerName ?? '')) emit('update:reviewerName', val)
+  editingReviewer.value = false
+}
+
+function onReviewerKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') commitReviewer()
+  if (e.key === 'Escape') editingReviewer.value = false
+}
 
 const editingFilename = ref(false)
 const filenameInput = ref<HTMLInputElement>()
@@ -66,6 +113,28 @@ function onFilenameKeydown(e: KeyboardEvent) {
       />
       <span v-else-if="filename" class="filename" title="Click to rename" @click="startEditFilename">{{ filename }}</span>
       <span v-if="pasteId" class="paste-id" :title="pasteId">id: {{ pasteId }}</span>
+      <input
+        v-if="editingReviewer"
+        ref="reviewerInput"
+        class="filename-edit reviewer-edit"
+        :value="reviewerName ?? ''"
+        placeholder="Your name"
+        maxlength="80"
+        data-testid="reviewer-input"
+        @blur="commitReviewer"
+        @keydown="onReviewerKeydown"
+      />
+      <button
+        v-else
+        class="reviewer"
+        :class="{ unset: !reviewerName }"
+        :title="reviewerName ? 'Comments, replies and approvals are signed with this name. Click to change.' : 'Set your name so your comments are signed'"
+        data-testid="reviewer-name"
+        @click="startEditReviewer"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        {{ reviewerName || 'Set your name' }}
+      </button>
       <span v-if="filename" class="doc-stats">
         <span class="doc-stats-sep">·</span>
         <span class="doc-stats-num">{{ wordCount.toLocaleString() }}</span> words
@@ -91,16 +160,39 @@ function onFilenameKeydown(e: KeyboardEvent) {
             Preview
           </button>
         </div>
-        <span v-if="syncStatus !== 'local'" class="sync-indicator" :class="syncStatus" :title="syncStatus === 'synced' ? 'Synced with server' : 'Sync error'">
+        <span v-if="syncStatus !== 'local'" class="sync-indicator" :class="syncStatus" :title="syncStatus === 'synced' ? 'Synced with server' : (pendingCount ? `${pendingCount} comment change(s) waiting to sync` : 'Cannot reach the review server — changes are kept locally and retried')">
           <span class="sync-dot"></span>
           <span class="sync-label">{{ syncStatus === 'synced' ? 'Live' : 'Offline' }}</span>
+          <span v-if="pendingCount" class="sync-pending">· {{ pendingCount }} pending</span>
+        </span>
+        <span
+          v-if="saveState !== 'idle'"
+          class="save-state"
+          :class="saveState"
+          :title="SAVE_TITLE[saveState]"
+          data-testid="save-state"
+        >
+          <span v-if="saveState === 'saved'" class="save-check">✓</span>
+          {{ SAVE_LABEL[saveState] }}
         </span>
         <button
-          v-if="syncStatus !== 'local' && hasUnsavedMarkdown && paneMode === 'edit'"
+          v-if="saveState === 'dirty' || saveState === 'error'"
           class="btn btn-primary btn-save"
+          :title="saveState === 'error' ? 'Retry saving to the server' : 'Save to the server now (Ctrl/Cmd+S)'"
           @click="emit('save-markdown')"
         >
-          Save
+          {{ saveState === 'error' ? 'Retry save' : 'Save' }}
+        </button>
+        <button
+          v-if="pasteId"
+          class="btn btn-ghost btn-history"
+          :class="{ unseen: hasUnseenChanges }"
+          :title="hasUnseenChanges ? 'The document changed since you last looked — open history to see what' : 'Revision history: compare or restore earlier versions'"
+          data-testid="history-button"
+          @click="emit('open-history')"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          History<span v-if="revisionCount" class="history-count">{{ revisionCount }}</span><span v-if="hasUnseenChanges" class="history-dot" aria-label="unseen changes"></span>
         </button>
         <button v-if="canRefresh" class="btn btn-ghost" title="Reload file from disk and reset comments" @click="emit('refresh')">Refresh</button>
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
@@ -280,4 +372,76 @@ function onFilenameKeydown(e: KeyboardEvent) {
   padding: 4px 14px;
   font-size: 13px;
 }
+
+.btn-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+}
+
+.history-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.history-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2563eb;
+  display: inline-block;
+}
+
+.reviewer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+.reviewer:hover {
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+
+.reviewer.unset {
+  border: 1px dashed var(--border);
+}
+
+.reviewer-edit {
+  width: 140px;
+}
+
+.sync-pending {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.save-state {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.save-state.saved { opacity: 0.8; }
+.save-state.dirty { color: var(--text-primary); }
+.save-state.saving { opacity: 0.8; }
+.save-state.error { color: #dc2626; font-weight: 500; }
+.save-state.conflict { color: #dc2626; font-weight: 600; background: rgba(220, 38, 38, 0.08); }
+
+.save-check { color: #16a34a; font-weight: 600; }
 </style>

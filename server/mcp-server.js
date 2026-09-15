@@ -22,9 +22,11 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
   async function apiCall(path, opts = {}) {
     let res;
     try {
+      const { headers: extraHeaders, ...rest } = opts;
       res = await fetchFn(`${pasteApiUrl}${path}`, {
-        headers: { 'Content-Type': 'application/json' },
-        ...opts,
+        ...rest,
+        // Identify agent writes in the revision history.
+        headers: { 'Content-Type': 'application/json', 'X-MdReview-Client': 'mcp', ...(extraHeaders || {}) },
       });
     } catch {
       return { error: `Could not reach paste service at ${pasteApiUrl}` };
@@ -35,7 +37,13 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       return { error: 'Session not found' };
     }
     if (!res.ok) {
-      return { error: `Paste service returned ${res.status}` };
+      // Surface the service's own message (e.g. 412 "Content changed on server",
+      // 409 "Patch failed: context mismatch") plus the current content_hash so
+      // the caller can re-read and retry instead of guessing.
+      const body = await res.json().catch(() => ({}));
+      const out = { error: body.error || `Paste service returned ${res.status}`, status: res.status };
+      if (body.content_hash) out.content_hash = body.content_hash;
+      return out;
     }
     if (res.status === 204) return {};
     return res.json();
@@ -81,10 +89,11 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
   }
 
   return {
-    async create_session({ markdown, filePath, filename, comments, sessionName, callbackUrl, slug, expiryDays, contentType }) {
+    async create_session({ markdown, filePath, filename, comments, sessionName, callbackUrl, slug, expiryDays, contentType, author }) {
       const resolved = await resolveFile(markdown, filePath, filename);
       const resolvedFilename = filename ?? resolved.name;
       const payload = {
+        ...(author ? { author } : {}),
         markdown: resolved.content,
         filename: resolvedFilename,
         sharedAt: new Date().toISOString(),
@@ -169,13 +178,17 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       return { ok: true };
     },
 
-    async update_markdown({ sessionId, markdown, filePath, filename, patch }) {
+    async update_markdown({ sessionId, markdown, filePath, filename, patch, expectedContentHash, author }) {
+      // Optimistic concurrency: only write if the stored content still has this hash.
+      const headers = expectedContentHash ? { 'If-Match': expectedContentHash } : undefined;
+      const by = author || 'agent';
       // Delta update via patch
       if (patch) {
-        const payload = { patch };
+        const payload = { patch, author: by };
         if (filename !== undefined) payload.filename = filename;
         return apiCall(`/paste/${sessionId}/markdown`, {
           method: 'PUT',
+          headers,
           body: JSON.stringify(payload),
         });
       }
@@ -185,12 +198,22 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       if (content.length > 1024 * 1024) {
         return uploadLargeContent(sessionId, content, filename || resolved.name);
       }
-      const payload = { markdown: content };
+      const payload = { markdown: content, author: by };
       if (filename !== undefined) payload.filename = filename;
       return apiCall(`/paste/${sessionId}/markdown`, {
         method: 'PUT',
+        headers,
         body: JSON.stringify(payload),
       });
+    },
+
+    // ── Revision history ────────────────────────────────────────────────────
+    async list_revisions({ sessionId }) {
+      return apiCall(`/paste/${sessionId}/revisions`);
+    },
+
+    async get_revision({ sessionId, hash }) {
+      return apiCall(`/paste/${sessionId}/revisions/${hash || 'current'}`);
     },
 
     async get_approval_status({ sessionId }) {
@@ -251,11 +274,12 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
 
     // ── New: patch markdown with a unified diff ──────────────────────────────
 
-    async patch_markdown({ sessionId, patch, filename }) {
-      const payload = { patch };
+    async patch_markdown({ sessionId, patch, filename, expectedContentHash, author }) {
+      const payload = { patch, author: author || 'agent' };
       if (filename !== undefined) payload.filename = filename;
       return apiCall(`/paste/${sessionId}/markdown`, {
         method: 'PUT',
+        headers: expectedContentHash ? { 'If-Match': expectedContentHash } : undefined,
         body: JSON.stringify(payload),
       });
     },
@@ -362,6 +386,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     title: 'Create Review Session',
     description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview; Markdown is rendered as before. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.',
     inputSchema: z.object({
+      author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       markdown: z.string().optional().describe('The document content — Markdown or HTML (provide this OR filePath)'),
       filePath: z.string().optional().describe('Absolute path to a .md/.markdown/.txt/.html file to read (provide this OR markdown)'),
       filename: z.string().optional().describe('Display name for the file, e.g. "report.html" (defaults to basename of filePath if provided)'),
@@ -490,10 +515,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     title: 'Update Markdown',
     description: 'Update the markdown content of a session. Provide markdown, filePath, or patch (unified diff). For large files (>1MB), content is automatically uploaded in chunks.',
     inputSchema: z.object({
+      author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
       markdown: z.string().optional().describe('New markdown content (provide this OR filePath OR patch)'),
       filePath: z.string().optional().describe('Absolute path to a markdown file to read (provide this OR markdown OR patch)'),
       patch: z.string().optional().describe('Unified diff to apply as a delta update (provide this OR markdown OR filePath)'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }).refine(data => data.markdown || data.filePath || data.patch, {
       message: 'Either markdown, filePath, or patch must be provided',
@@ -541,6 +568,29 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   // ── Session management tools ─────────────────────────────────────────────
 
+  server.registerTool('list_revisions', {
+    title: 'List Revisions',
+    description: "Content history of a session, oldest first: who changed the document, when, and the content hash of each revision. Consecutive writes by the same author within a few minutes are folded into one revision. Use get_revision to read an older version, or diff two hashes to see what changed since you last read it.",
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+    }),
+  }, async (args) => {
+    const result = await handlers.list_revisions(args);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  });
+
+  server.registerTool('get_revision', {
+    title: 'Get Revision',
+    description: "Read one stored revision of a session's content by hash (from list_revisions), or 'current' for the live content. Returns 410 if that version is no longer stored.",
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+      hash: z.string().optional().describe("Revision content hash, or 'current' (default)"),
+    }),
+  }, async (args) => {
+    const result = await handlers.get_revision(args);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  });
+
   server.registerTool('list_sessions', {
     title: 'List Sessions',
     description: 'List all review sessions. Filter by approval status, session/file name pattern, or limit results. Use this to find sessions created earlier.',
@@ -585,8 +635,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     title: 'Patch Markdown',
     description: 'Apply a unified diff patch to the session markdown. Much more efficient than re-sending the entire file for small changes.',
     inputSchema: z.object({
+      author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
       patch: z.string().describe('Unified diff format patch to apply'),
+      expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
     }),
   }, async (args) => {
