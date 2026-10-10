@@ -257,8 +257,9 @@ function restore() {
   color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  width: min(1200px, 94vw);
+  width: min(1200px, calc(100vw - 32px));
   height: min(84vh, 900px);
+  max-height: calc(100dvh - 32px);
   display: flex;
   flex-direction: column;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -326,6 +327,22 @@ function restore() {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* Phone (#5 rule 10): the revision list stacks above the diff. */
+@media (max-width: 640.98px) {
+  .revisions-body {
+    flex-direction: column;
+  }
+  .rev-list {
+    width: auto;
+    max-height: 35%;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-footer {
+    flex-wrap: wrap;
+  }
 }
 
 .rev-list-hint {

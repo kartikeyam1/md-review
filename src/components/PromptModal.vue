@@ -77,9 +77,9 @@ async function copyToClipboard(text: string) {
 .modal {
   background: var(--bg-surface);
   border-radius: 8px;
-  width: 90%;
-  max-width: 640px;
+  width: min(calc(100vw - 32px), 640px);
   max-height: 80vh;
+  max-height: 80dvh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px var(--shadow-color, rgba(26, 22, 18, 0.15));

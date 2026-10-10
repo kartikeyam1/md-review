@@ -211,9 +211,9 @@ async function copyText(text: string, label: string) {
 .modal {
   background: var(--bg-surface);
   border-radius: 8px;
-  width: 90%;
-  max-width: 580px;
+  width: min(calc(100vw - 32px), 580px);
   max-height: 80vh;
+  max-height: 80dvh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px var(--shadow-color, rgba(26, 22, 18, 0.15));

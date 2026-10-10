@@ -13,6 +13,7 @@ import SaveState from '@/components/SaveState.vue'
 import CopyLinkButton from '@/components/CopyLinkButton.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import HeaderOverflowMenu from '@/components/HeaderOverflowMenu.vue'
+import { truncateTitle } from '@/composables/useDocTitle'
 
 // The doc header (00 §2): one line, never wraps. `reader` in the read view,
 // `editor` in the edit view (editors only). Order and per-width placement are
@@ -90,12 +91,12 @@ function onLibraryClick(e: MouseEvent) {
         <SyncIndicator />
         <DocStats v-if="desktop" />
       </template>
-      <SaveState />
+      <SaveState :compact="phone" />
       <span class="spacer"></span>
     </template>
     <template v-else>
       <div class="doc-title-group">
-        <span v-if="onScreen" class="doc-title" data-testid="doc-title" :title="docTitle">{{ docTitle }}</span>
+        <span v-if="onScreen" class="doc-title" data-testid="doc-title" :title="docTitle">{{ truncateTitle(docTitle) }}</span>
         <template v-if="onScreen && desktop">
           <DocUpdated v-if="!isLocal" />
           <span v-else-if="editor" class="badge local-badge" data-testid="doc-local-badge">Not shared</span>
@@ -120,7 +121,7 @@ function onLibraryClick(e: MouseEvent) {
     >{{ sharing ? 'Sharing…' : 'Share' }}</button>
     <CopyLinkButton v-if="!phone" :icon-only="!desktop" />
     <ThemeSwitcher />
-    <HeaderOverflowMenu :demoted="demoted" @edit-reviewer="editingNameFromMenu = true" />
+    <HeaderOverflowMenu :demoted="demoted" :sheet="phone" @edit-reviewer="editingNameFromMenu = true" />
   </header>
   <div v-if="variant === 'reader' && onScreen && !desktop" class="doc-meta-row" data-testid="doc-meta-row">
     <DocUpdated v-if="!isLocal" />
@@ -135,14 +136,30 @@ function onLibraryClick(e: MouseEvent) {
   flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 0 16px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border);
-  height: 52px;
+  height: var(--header-h);
   min-width: 0;
   overflow: hidden;
-  position: relative;
+  /* Sticks in the document-scrolling read view (#5 rule 2); a no-op in the fixed layouts. */
+  position: sticky;
+  top: 0;
+  flex-shrink: 0;
   z-index: 100;
+}
+
+/* Phone (#5 rule 6): every control is at least 40×40, a tighter gutter. */
+.header[data-breakpoint='phone'] {
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.header[data-breakpoint='phone'] :deep(button),
+.header[data-breakpoint='phone'] :deep(a[href]),
+.header[data-breakpoint='phone'] :deep(input) {
+  min-width: 40px;
+  min-height: 40px;
 }
 
 /* Let an open header menu (overflow, Style) escape the header box. */

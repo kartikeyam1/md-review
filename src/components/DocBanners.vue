@@ -155,4 +155,17 @@ function onAppLinkClick(e: MouseEvent, path: string) {
 .pinned-banner {
   color: var(--text-primary);
 }
+
+/* Phone (#5 rule 9): text wraps, buttons stack below it. */
+@media (max-width: 640.98px) {
+  .notice-bar,
+  .conflict-bar {
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
+  }
+  .conflict-actions {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+}
 </style>

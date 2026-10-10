@@ -145,6 +145,23 @@ function handleRequestChanges() {
   margin-left: auto;
 }
 
+/* Phone (#5 rule 9): text wraps, the buttons get their own row. */
+@media (max-width: 640.98px) {
+  .approval-banner {
+    overflow-wrap: anywhere;
+  }
+  .approval-actions,
+  .approval-note {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
+  .reviewer-input {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
+}
+
 .reviewer-input {
   padding: 4px 8px;
   border: 1px solid var(--border);

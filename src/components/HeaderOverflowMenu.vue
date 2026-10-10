@@ -10,6 +10,8 @@ import { copyDocLink } from '@/composables/useCopyLink'
 const props = defineProps<{
   /** Bar controls that live in this menu at the current width (00 §2.2). */
   demoted: { reviewer?: boolean; share?: boolean; copyLink?: boolean; library?: boolean; home?: boolean }
+  /** Phone: open as a full-width sheet (#5 rule 7). */
+  sheet?: boolean
 }>()
 const emit = defineEmits<{ 'edit-reviewer': [] }>()
 
@@ -94,6 +96,7 @@ const entries = computed<AppMenuEntry[]>(() => {
     :trigger-title="triggerLabel"
     trigger-testid="header-overflow-btn"
     menu-testid="header-overflow-menu"
+    :sheet="sheet"
   >
     <template #trigger>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>

@@ -1,4 +1,6 @@
 :root {
+  /* The doc header bar's height (00 §2.1): sticky offsets and sheets under it. */
+  --header-h: 52px;
   --bg-page: #f7f3eb;
   --bg-surface: #fdfbf7;
   --bg-code: #f0ebe2;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watchEffect } from 'vue'
 import { provideDocState } from '@/composables/docState'
 import { useDocLoader } from '@/composables/useDocLoader'
 import { useGlobalShortcuts } from '@/composables/useGlobalShortcuts'
@@ -11,6 +11,7 @@ import DashboardView from '@/components/DashboardView.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
 import AppToast from '@/components/AppToast.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
+import { APP_NAME, formatDocumentTitle } from '@/composables/useDocTitle'
 
 // The router shell (00 §4.2): landing / doc routes → DocView, the library,
 // not-found. The doc state lives here so it survives a trip to the library.
@@ -34,6 +35,17 @@ useGlobalShortcuts([
 ])
 
 const docArea = computed(() => embed.value || (route.value.kind !== 'library' && route.value.kind !== 'not-found'))
+
+// The tab title (#5 rule 18): `<docTitle> · md-review` while a doc is open,
+// fixed titles for the library / not-found pages, else the app name.
+const pageTitle = computed(() => {
+  const kind = route.value.kind
+  if (!embed.value && kind === 'library') return `Library · ${APP_NAME}`
+  if (kind === 'not-found' || doc.docMissing.value) return `Not found · ${APP_NAME}`
+  if (doc.onScreen.value) return formatDocumentTitle(doc.docTitle.value)
+  return APP_NAME
+})
+watchEffect(() => { document.title = pageTitle.value })
 
 function goHome() {
   router.push(router.base)

@@ -89,7 +89,7 @@ describe('triple-click selection shows action bar', () => {
 
 async function waitForPreview() {
   await page.goto(FILE_URL)
-  await page.locator('[data-testid="doc-title"]', { hasText: 'fixture.md' }).waitFor({ timeout: 10000 })
+  await page.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
   await page.locator('.preview-pane').waitFor({ state: 'visible', timeout: 3000 })
   await page.locator('.preview-pane p').first().waitFor({ state: 'visible', timeout: 3000 })
 }

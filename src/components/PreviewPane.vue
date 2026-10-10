@@ -413,7 +413,25 @@ function applyCommentHighlights() {
 
 let mermaidSeq = 0
 
-async function renderMermaid() {
+// #5 rule 13: printing a dark-themed doc swaps every diagram for a light
+// rendering on `beforeprint` and back on `afterprint`. Both renderings are kept
+// per node, and the light one is prepared in idle time after a dark render, so
+// the swap is synchronous (the browser snapshots right after beforeprint).
+type MermaidTarget = 'screen' | 'print'
+const svgCache = new WeakMap<HTMLElement, Partial<Record<MermaidTarget, { key: string; svg: string; bind?: (el: Element) => void }>>>()
+let printing = false
+
+function printMermaidConfig(): ReturnType<typeof mermaidConfig> {
+  const t = props.theme ?? 'light'
+  if (isLocus(t)) return { theme: 'base', themeVariables: locusThemeVariables(false) }
+  return { theme: 'neutral' }
+}
+
+function printNeedsLightDiagrams(): boolean {
+  return isDark(props.theme ?? 'light')
+}
+
+async function renderMermaid(target: MermaidTarget) {
   const container = containerRef.value
   if (!container) return
   const nodes = container.querySelectorAll<HTMLElement>('.mermaid')
@@ -421,12 +439,31 @@ async function renderMermaid() {
   const mermaid = await loadMermaid()
   // Re-check: the document may have changed while the library was loading.
   if (!containerRef.value || !containerRef.value.querySelector('.mermaid')) return
-  const config = mermaidConfig()
+  const config = target === 'print' ? printMermaidConfig() : mermaidConfig()
   const key = JSON.stringify(config)
   mermaid.initialize({ startOnLoad: false, ...config })
   for (const node of nodes) {
     // The first render keeps the raw source for later ones (e.g. theme change).
     node.dataset.source ??= node.textContent ?? ''
+    const cache = svgCache.get(node) ?? {}
+    svgCache.set(node, cache)
+    if (target === 'print') {
+      // Light copy for print; shown now only while printing.
+      if (cache.print?.key !== key) {
+        try {
+          const { svg } = await mermaid.render(`mermaid-${++mermaidSeq}`, node.dataset.source)
+          cache.print = { key, svg }
+        } catch { continue }
+      }
+      if (printing && node.isConnected) { node.innerHTML = cache.print.svg; node.dataset.printShown = '1' }
+      continue
+    }
+    // Printing ended without an afterprint (some PDF paths): put the screen drawing back.
+    if (!printing && node.dataset.printShown && cache.screen) {
+      node.innerHTML = cache.screen.svg
+      cache.screen.bind?.(node)
+      delete node.dataset.printShown
+    }
     // Already drawn with this source and theme: nothing to do.
     if (node.dataset.renderedKey === key) continue
     try {
@@ -438,6 +475,7 @@ async function renderMermaid() {
       bindFunctions?.(node)
       node.dataset.renderedKey = key
       node.setAttribute('data-processed', 'true')
+      cache.screen = { key, svg, bind: bindFunctions }
     } catch (e) {
       if (!node.isConnected) continue
       const msg = document.createElement('pre')
@@ -445,22 +483,56 @@ async function renderMermaid() {
       msg.textContent = `Diagram error: ${e instanceof Error ? e.message : String(e)}`
       node.replaceChildren(msg)
       delete node.dataset.renderedKey
+      delete cache.screen
     }
   }
+  if (target === 'screen' && printNeedsLightDiagrams()) schedulePrintPrepare()
 }
 
 // Renders run one at a time (a theme flip mid-render must not interleave two
 // runs on the same nodes); calls made while one is queued coalesce into it, and
 // each run reads the theme current when it starts.
-let mermaidQueued = false
-function runMermaid() {
-  if (mermaidQueued) return mermaidRun
-  mermaidQueued = true
+const mermaidQueued: Record<MermaidTarget, boolean> = { screen: false, print: false }
+function runMermaid(target: MermaidTarget = 'screen') {
+  if (mermaidQueued[target]) return mermaidRun
+  mermaidQueued[target] = true
   mermaidRun = mermaidRun.catch(() => {}).then(() => {
-    mermaidQueued = false
-    return renderMermaid()
+    mermaidQueued[target] = false
+    return renderMermaid(target)
   })
   return mermaidRun
+}
+
+let prepareHandle: number | null = null
+function schedulePrintPrepare() {
+  if (prepareHandle !== null) return
+  const run = () => { prepareHandle = null; runMermaid('print') }
+  prepareHandle = typeof requestIdleCallback === 'function'
+    ? requestIdleCallback(run, { timeout: 2000 }) as unknown as number
+    : window.setTimeout(run, 500)
+}
+
+function onBeforePrint() {
+  if (!printNeedsLightDiagrams()) return
+  printing = true
+  const container = containerRef.value
+  for (const node of container?.querySelectorAll<HTMLElement>('.mermaid') ?? []) {
+    const light = svgCache.get(node)?.print
+    if (light) { node.innerHTML = light.svg; node.dataset.printShown = '1' }
+  }
+  // Anything not prepared yet is drawn now (in time for a PDF export, best effort for a quick Ctrl+P).
+  runMermaid('print')
+}
+
+function onAfterPrint() {
+  if (!printing) return
+  printing = false
+  const container = containerRef.value
+  for (const node of container?.querySelectorAll<HTMLElement>('.mermaid') ?? []) {
+    const screen = svgCache.get(node)?.screen
+    if (screen) { node.innerHTML = screen.svg; screen.bind?.(node) }
+    delete node.dataset.printShown
+  }
 }
 
 watch(
@@ -493,6 +565,8 @@ watch(
 
 onMounted(() => {
   window.addEventListener('message', onFrameMessage)
+  window.addEventListener('beforeprint', onBeforePrint)
+  window.addEventListener('afterprint', onAfterPrint)
   nextTick(() => {
     applyCommentHighlights()
     runMermaid()
@@ -502,6 +576,12 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('message', onFrameMessage)
+  window.removeEventListener('beforeprint', onBeforePrint)
+  window.removeEventListener('afterprint', onAfterPrint)
+  if (prepareHandle !== null) {
+    if (typeof cancelIdleCallback === 'function') cancelIdleCallback(prepareHandle)
+    else clearTimeout(prepareHandle)
+  }
   revokeObjectUrl()
   realignCleanup?.()
   if (anchorTimer) clearTimeout(anchorTimer)

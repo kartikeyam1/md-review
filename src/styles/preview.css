@@ -3,7 +3,13 @@
    HTML exports). Extracted verbatim from PreviewPane.vue's scoped block. */
 
 :root .preview-pane {
-  padding: 24px 32px;
+  /* #5 rule 4: a centred reading column of 50em (#18 later owns the width),
+     side padding 32px desktop / 24px tablet / 16px phone. */
+  --read-pad: 32px;
+  --read-width: 50em;
+  max-width: calc(var(--read-width) + 2 * var(--read-pad));
+  margin: 0 auto;
+  padding: 24px var(--read-pad);
   font-family: var(--font-body);
   font-size: 15px;
   line-height: 1.7;
@@ -11,6 +17,78 @@
   background: var(--bg-surface);
   overflow-y: auto;
   height: 100%;
+}
+
+@media (max-width: 1099.98px) {
+  :root .preview-pane { --read-pad: 24px; }
+}
+
+@media (max-width: 640.98px) {
+  /* Body text is at least 16px on a phone. */
+  :root .preview-pane { --read-pad: 16px; font-size: 16px; }
+  html.locus-theme .preview-pane p,
+  html.locus-theme .preview-pane li { font-size: 16px; }
+}
+
+/* ── Overflow containment (#5 rule 5): nothing in a doc widens the page ── */
+.preview-pane p,
+.preview-pane li,
+.preview-pane h1,
+.preview-pane h2,
+.preview-pane h3,
+.preview-pane h4,
+.preview-pane h5,
+.preview-pane h6,
+.preview-pane blockquote,
+.preview-pane dt,
+.preview-pane dd {
+  overflow-wrap: anywhere;
+}
+
+/* Cells wrap long words but keep their natural width (break-word, not
+   anywhere, so a wide table scrolls in its .table-scroll instead of
+   squeezing every column to one character). */
+.preview-pane th,
+.preview-pane td {
+  overflow-wrap: break-word;
+}
+
+.preview-pane :not(pre) > code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.preview-pane img,
+.preview-pane video {
+  max-width: 100%;
+  height: auto;
+}
+
+.preview-pane .mermaid svg {
+  max-width: 100% !important;
+  height: auto;
+}
+
+.preview-pane .table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+
+.preview-pane .table-scroll > table {
+  margin-bottom: 0;
+}
+
+/* GitHub's sheet makes the table its own scroll box; the wrapper is the box here. */
+.preview-pane.markdown-body .table-scroll > table {
+  display: table;
+  max-width: none;
+  overflow: visible;
+}
+
+.preview-pane .table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .preview-pane:not(.github-mode) h1 {
@@ -141,8 +219,12 @@
 /* YAML frontmatter table */
 .preview-pane .frontmatter {
   font-size: 13px;
-  margin-bottom: 20px;
+  margin-bottom: 0;
   opacity: 0.85;
+}
+
+.preview-pane .table-scroll:has(> .frontmatter) {
+  margin-bottom: 20px;
 }
 
 .preview-pane .frontmatter td:first-child {
@@ -157,9 +239,6 @@
   margin: 12px 0;
 }
 
-.preview-pane .mermaid svg {
-  max-width: 100%;
-}
 
 /* highlight.js token colours — mapped to theme CSS custom properties */
 .preview-pane:not(.github-mode) .hljs-keyword,

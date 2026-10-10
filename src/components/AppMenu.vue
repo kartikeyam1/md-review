@@ -25,12 +25,15 @@ withDefaults(defineProps<{
   menuTestid?: string
   triggerClass?: string
   triggerTitle?: string
+  /** Phone (#5 rule 7): open as a full-width sheet under the doc header instead of a dropdown. */
+  sheet?: boolean
 }>(), {
   triggerTestid: undefined,
   menuTestid: undefined,
   triggerClass: 'btn btn-ghost',
   triggerTitle: undefined,
   menuLabel: undefined,
+  sheet: false,
 })
 
 const triggerRef = ref<HTMLButtonElement>()
@@ -69,6 +72,7 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
       v-if="menu.open.value"
       ref="listRef"
       class="app-menu-list"
+      :class="{ 'app-menu-sheet': sheet }"
       role="menu"
       :aria-label="menuLabel ?? label"
       :data-testid="menuTestid"
@@ -170,6 +174,28 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   display: flex;
   flex-direction: column;
+}
+
+/* #5 rule 7: a full-width sheet anchored under the header, internal scroll. */
+.app-menu-list.app-menu-sheet {
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  right: 0;
+  min-width: 0;
+  max-width: none;
+  max-height: 70vh;
+  max-height: 70dvh;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0 0 8px 8px;
+  padding: 4px 8px 8px;
+}
+
+.app-menu-sheet .app-menu-item {
+  min-height: 44px;
+  font-size: 15px;
+  white-space: normal;
 }
 
 .app-menu-item {

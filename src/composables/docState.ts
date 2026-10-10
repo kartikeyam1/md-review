@@ -15,6 +15,10 @@ import { onTokenRejected, sameDoc, docIdOf, type DocAccess } from '@/composables
 import { saveLocalCopy, clearLocalCopy, type LocalCopy } from '@/composables/localCopy'
 import { toast } from '@/composables/useToast'
 import type { SharedPayload } from '@/composables/useShare'
+import { docTitle as computeDocTitle } from '@/composables/useDocTitle'
+
+/** How long the tab title waits after the last keystroke in the editor (#5 rule 18: within 1 s). */
+const TITLE_TYPING_DELAY_MS = 300
 
 // ── Doc state assembly (spec #2, 00 §4.1) ────────────────────────────────────
 // Everything a document on screen is made of: its content, the shared session
@@ -178,11 +182,26 @@ export function createDocState(router: Router) {
   /** Publish hides every review surface: drop a half-made comment with it. */
   watch(mode, (m) => { if (m === 'publish') commentSelection.dismissAll() })
 
-  /** Reader header title (00 §5 until #5 supplies docTitle): sessionName, else filename. */
-  const docTitle = computed(() => {
-    const name = docMeta.value.sessionName?.replace(/\s+/g, ' ').trim()
-    return name || docMeta.value.filename?.trim() || filename.value.trim() || 'Untitled'
+  /**
+   * The text docTitle reads (#5 rule 18): the markdown on screen, followed with
+   * a short delay while typing in the editor (one parse per pause, not per key)
+   * and immediately otherwise (loads, polls, doc switches).
+   */
+  const titleSource = ref(markdown.value)
+  let titleTimer: ReturnType<typeof setTimeout> | null = null
+  watch(markdown, (text) => {
+    if (titleTimer) { clearTimeout(titleTimer); titleTimer = null }
+    if (paneMode.value !== 'preview') titleTimer = setTimeout(() => { titleTimer = null; titleSource.value = markdown.value }, TITLE_TYPING_DELAY_MS)
+    else titleSource.value = text
   })
+
+  /** docTitle (00 §5, #5): the reader header's doc-title and the tab title. */
+  const docTitle = computed(() => computeDocTitle({
+    sessionName: docMeta.value.sessionName,
+    content: titleSource.value,
+    contentType: contentType.value,
+    filename: docMeta.value.filename || filename.value,
+  }))
 
   /** FE-built link to the doc on screen (00 §6): <origin><base>d/<slug||id>; null for a local doc. */
   const docLink = computed(() => {

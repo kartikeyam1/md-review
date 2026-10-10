@@ -72,6 +72,13 @@ function goHome() {
   router.push(router.base)
 }
 
+/**
+ * #5 rule 2: the read view of a markdown doc scrolls the document itself (the
+ * header is sticky); edit view, HTML (iframe) docs and file views keep the
+ * fixed-viewport layout with internally scrolling panes.
+ */
+const docScroll = computed(() => onScreen.value && !editorShown.value && !fileView.value && contentType.value !== 'html')
+
 const isDocRoute = computed(() => ['doc', 'pinned', 'file'].includes(route.value.kind))
 const showHeader = computed(() => route.value.kind !== 'library' && route.value.kind !== 'not-found' && !docMissing.value)
 
@@ -99,7 +106,7 @@ const embedOpenHref = computed(() => {
       <a class="embed-open-link" data-testid="embed-open-link" :href="embedOpenHref" target="_blank" rel="noopener">Open in md-review</a>
     </div>
   </div>
-  <div v-else class="app" :data-view="view" :data-mode="mode" :data-capability="capability">
+  <div v-else class="app" :class="{ 'doc-scroll': docScroll }" :data-view="view" :data-mode="mode" :data-capability="capability">
     <DocHeader v-if="showHeader" />
     <DocBanners />
 
@@ -177,8 +184,16 @@ const embedOpenHref = computed(() => {
 <style scoped>
 .app {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+}
+
+/* #5 rule 2: document scroll in the read view; the header sticks (DocHeader). */
+.app.doc-scroll {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app.embed {
@@ -258,6 +273,30 @@ const embedOpenHref = computed(() => {
   overflow: hidden;
 }
 
+.doc-scroll .doc-body {
+  flex: 1 0 auto;
+  overflow: visible;
+}
+
+.doc-scroll .doc-content {
+  overflow: visible;
+  background: var(--bg-surface);
+}
+
+.doc-scroll .doc-content :deep(.preview-pane) {
+  height: auto;
+  overflow: visible;
+}
+
+/* The desktop comments rail stays in view while the document scrolls under it. */
+.doc-scroll .doc-aside {
+  position: sticky;
+  top: var(--header-h);
+  align-self: flex-start;
+  height: calc(100vh - var(--header-h));
+  height: calc(100dvh - var(--header-h));
+}
+
 /* The comments sidebar keeps its old share of the row: 30%, 260–340px (+ the 16px strip). */
 .doc-aside {
   flex: 3;
@@ -273,5 +312,14 @@ const embedOpenHref = computed(() => {
 .doc-aside > :deep(.sidebar) {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* #5 rule 8: below 1100px the comments are a bottom-sheet drawer (CommentsLayer):
+   no rail and no toggle strip take width from the doc. */
+@media (max-width: 1099.98px) {
+  .doc-aside,
+  .doc-scroll .doc-aside {
+    display: contents;
+  }
 }
 </style>

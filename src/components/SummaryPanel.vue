@@ -138,6 +138,7 @@ const unresolvedMustFix = computed(() =>
   min-width: 36px;
 }
 .attention-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -55,6 +55,9 @@ hljs.registerAliases(['toml'], { languageName: 'ini' })
 hljs.registerAliases(['zsh', 'sh'], { languageName: 'bash' })
 hljs.registerAliases(['text', 'txt', 'plain'], { languageName: 'plaintext' })
 import taskLists from 'markdown-it-task-lists'
+import { tableScroll } from '@/markdown/tableScroll'
+import { autolink } from '@/markdown/autolink'
+import { parseFrontMatter, frontMatterTable, bodyWithAbsoluteLines } from '@/markdown/frontMatter'
 
 export interface LineMapEntry {
   startLine: number
@@ -131,38 +134,6 @@ function lineDataPlugin(md: MarkdownIt) {
   }
 }
 
-const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/
-
-function extractFrontmatter(source: string): { body: string; table: string; endLine: number } | null {
-  const match = source.match(FRONTMATTER_RE)
-  if (!match) return null
-
-  const raw = match[1]
-  const endLine = match[0].split('\n').length - 1
-  const rows = raw
-    .split('\n')
-    .map((line) => {
-      const idx = line.indexOf(':')
-      if (idx === -1) return null
-      return { key: line.slice(0, idx).trim(), value: line.slice(idx + 1).trim() }
-    })
-    .filter(Boolean) as { key: string; value: string }[]
-
-  if (!rows.length) return null
-
-  const escape = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-
-  const trs = rows
-    .map((r) => `<tr><td>${escape(r.key)}</td><td>${escape(r.value)}</td></tr>`)
-    .join('\n')
-  const table = `<table class="frontmatter" data-line-start="0" data-line-end="${endLine}">
-<thead><tr><th>Field</th><th>Value</th></tr></thead>
-<tbody>\n${trs}\n</tbody></table>\n`
-
-  return { body: source.slice(match[0].length), table, endLine }
-}
-
 export function useMarkdown() {
   const md = new MarkdownIt({
     html: true,
@@ -179,20 +150,26 @@ export function useMarkdown() {
       return '' // use default escaping
     },
   })
-  md.use(headingAnchorPlugin)
-  md.use(lineDataPlugin)
-  md.use(taskLists, { enabled: true })
+  // Markdown plugins (00 §4.4): one file each under src/markdown/, registered here.
+  const PLUGINS: ((md: MarkdownIt) => void)[] = [
+    headingAnchorPlugin,
+    lineDataPlugin,
+    (m) => m.use(taskLists, { enabled: true }),
+    tableScroll, // #5 rule 5
+    autolink, // #5 rule 15
+  ]
+  for (const plugin of PLUGINS) plugin(md)
 
+  // Front matter renders as a table; the body keeps absolute line numbers (#5 rule 20).
   function renderHtml(source: string): string {
-    const fm = extractFrontmatter(source)
-    if (fm) {
-      return fm.table + md.render(fm.body)
-    }
+    const fm = parseFrontMatter(source)
+    if (fm) return frontMatterTable(fm) + md.render(bodyWithAbsoluteLines(fm))
     return md.render(source)
   }
 
   function getLineMap(source: string): LineMapEntry[] {
-    const tokens = md.parse(source, {})
+    const fm = parseFrontMatter(source)
+    const tokens = md.parse(fm ? bodyWithAbsoluteLines(fm) : source, {})
     const entries: LineMapEntry[] = []
     let htmlIndex = 0
 

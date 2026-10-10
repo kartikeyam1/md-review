@@ -34,7 +34,7 @@ beforeEach(async () => {
 describe('table row comment highlight', () => {
   it('commenting on one table row should not highlight the entire table', async () => {
     await page.goto(FILE_URL)
-    await page.locator('[data-testid="doc-title"]', { hasText: 'fixture.md' }).waitFor({ timeout: 10000 })
+    await page.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
 
     // Switch to preview
     await page.click('[data-testid="view-toggle-read"]')

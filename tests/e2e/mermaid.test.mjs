@@ -14,7 +14,7 @@ let browser, context, page
 /** Open the fixture and wait until the document has rendered. */
 async function openFixture() {
   await page.goto(FILE_URL)
-  await page.locator('[data-testid="doc-title"]', { hasText: 'fixture.md' }).waitFor({ timeout: 10000 })
+  await page.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
   await page.locator('.preview-pane .mermaid').first().waitFor({ state: 'attached', timeout: 10000 })
 }
 

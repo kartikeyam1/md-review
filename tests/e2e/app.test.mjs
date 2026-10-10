@@ -45,7 +45,7 @@ async function switchToEdit(p = page) {
 
 /** Wait until the ?filePath= fixture has loaded and rendered. */
 async function waitForFixture(p = page) {
-  await p.locator('[data-testid="doc-title"]', { hasText: 'fixture.md' }).waitFor()
+  await p.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor()
   await p.locator('.preview-pane [data-line-start]').first().waitFor()
 }
 
@@ -99,7 +99,8 @@ describe('file loading via ?filePath=', () => {
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should be visible')
     const filename = await page.locator('[data-testid="doc-title"]').textContent()
-    assert.ok(filename.includes('fixture.md'))
+    // #5 docTitle (00 §5): the H1 of fixture.md, not the filename
+    assert.ok(filename.includes('Test Document'))
   })
 
   it('shows upload screen without filePath param', async () => {
@@ -441,7 +442,8 @@ describe('paste and blank document', () => {
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should appear after starting blank')
     const filename = await page.locator('[data-testid="doc-title"]').textContent()
-    assert.ok(filename.includes('untitled.md'))
+    // #5 docTitle (00 §5): an empty doc falls back to the filename without its extension
+    assert.ok(filename.includes('untitled'))
   })
 
   it('can paste markdown and review it', async () => {
@@ -461,7 +463,8 @@ describe('paste and blank document', () => {
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should appear after pasting')
     const filename = await page.locator('[data-testid="doc-title"]').textContent()
-    assert.ok(filename.includes('pasted.md'))
+    // #5 docTitle (00 §5): the pasted doc's H1
+    assert.ok(filename.includes('Pasted Title'))
   })
 })
 

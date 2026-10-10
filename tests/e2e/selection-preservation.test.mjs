@@ -21,7 +21,7 @@ async function clickCommentAction(p = page) {
 /** Open the fixture and wait until the document has rendered. */
 async function openFixture(p = page) {
   await p.goto(FILE_URL)
-  await p.locator('[data-testid="doc-title"]', { hasText: 'fixture.md' }).waitFor({ timeout: 10000 })
+  await p.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
   await p.locator('.preview-pane p').first().waitFor({ timeout: 10000 })
 }
 
