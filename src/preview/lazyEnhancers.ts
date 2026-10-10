@@ -3,6 +3,7 @@ import { headingAnchors } from './headingAnchors'
 import { sectionReactions } from './sectionReactions'
 import { codeCopy } from './codeCopy'
 import { folding } from './folding'
+import { zoom } from './zoom'
 
 // The enhancers that load in their own chunk (fetched as soon as the app
 // starts, see enhancers.ts), keeping #6's entry-size budget. Order matters:
@@ -12,4 +13,5 @@ export const LAZY_ENHANCERS: Enhancer[] = [
   sectionReactions, // #24 (after headingAnchors: its chips go before the heading-anchor)
   codeCopy, // #14
   folding, // #17
+  zoom, // #15
 ]

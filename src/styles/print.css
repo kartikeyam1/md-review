@@ -260,6 +260,16 @@
     display: none !important;
   }
 
+  /* ── #15 rule 17: diagrams/images print plainly; the viewer never prints ── */
+  .preview-pane [data-zoomable] {
+    cursor: auto !important;
+  }
+
+  .zoom-viewer,
+  .zoom-viewer-host {
+    display: none !important;
+  }
+
   /* ── Rule 15: show where external links go ── */
   .preview-pane a[href^='http://']:not(.autolink)::after,
   .preview-pane a[href^='https://']:not(.autolink)::after {
