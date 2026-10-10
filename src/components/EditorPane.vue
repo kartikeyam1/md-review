@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef } from 'vue'
-import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, type ViewUpdate } from '@codemirror/view'
+import { EditorView, Decoration, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import { EditorState, StateField, StateEffect, RangeSetBuilder, Compartment, type Extension } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { html } from '@codemirror/lang-html'
 import { languages } from '@codemirror/language-data'
-import { defaultKeymap } from '@codemirror/commands'
-import { search, searchKeymap } from '@codemirror/search'
+import { undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
 import type { Comment, ContentType } from '@/types'
+import EditorToolbar from '@/components/EditorToolbar.vue'
+import { editorExtensions } from '@/editor/extensions'
+import { applyExternal, clearHistory, externalWrite, keepState, takeKeptState } from '@/editor/history'
+import { onHistoryBarrier, takeExternalOrigin } from '@/composables/useExternalChange'
 
 // ── Props & Emits ──────────────────────────────────────────────
 
@@ -36,8 +39,14 @@ const emit = defineEmits<{
 const container = ref<HTMLDivElement | null>(null)
 const view = shallowRef<EditorView | null>(null)
 
-// Guard: prevent echoing external updates back to the parent
-let ignoreNextUpdate = false
+// Toolbar state: each button is enabled exactly when its stack has a step.
+const canUndo = ref(false)
+const canRedo = ref(false)
+
+function syncDepths(state: EditorState) {
+  canUndo.value = undoDepth(state) > 0
+  canRedo.value = redoDepth(state) > 0
+}
 
 // ── Comment decoration machinery ───────────────────────────────
 
@@ -179,36 +188,25 @@ const selectionListener = ViewPlugin.fromClass(
 onMounted(() => {
   if (!container.value) return
 
+  // Same document as when this editor was last unmounted (a view switch):
+  // take its selection and undo history back (#8 rule 7).
+  const kept = takeKeptState(props.modelValue)
   const state = EditorState.create({
     doc: props.modelValue,
+    selection: kept?.selection,
     extensions: [
-      lineNumbers(),
-      drawSelection(),
-      search(),
-      keymap.of([...defaultKeymap, ...searchKeymap]),
+      ...editorExtensions({ restoredHistory: kept?.extension ?? null }),
       languageCompartment.of(languageExtension(props.contentType)),
       commentField,
       editorTheme,
       selectionListener,
-      EditorView.domEventHandlers({
-        paste(event, editorView) {
-          const text = event.clipboardData?.getData('text/plain') ?? ''
-          if (text.trimStart().startsWith('<svg') && text.trimEnd().endsWith('</svg>')) {
-            event.preventDefault()
-            const cursor = editorView.state.selection.main.head
-            editorView.dispatch({
-              changes: { from: cursor, insert: `\n${text.trim()}\n` },
-            })
-            return true
-          }
-          return false
-        },
-      }),
       EditorView.updateListener.of((update: ViewUpdate) => {
-        if (update.docChanged && !ignoreNextUpdate) {
+        // External writes already come from the model: never echo them back.
+        const external = update.transactions.some((tr) => tr.annotation(externalWrite) !== undefined)
+        if (update.docChanged && !external) {
           emit('update:modelValue', update.state.doc.toString())
         }
-        ignoreNextUpdate = false
+        syncDepths(update.state)
       }),
     ],
   })
@@ -217,6 +215,7 @@ onMounted(() => {
     state,
     parent: container.value,
   })
+  syncDepths(state)
 
   // Apply initial comments
   if (props.comments.length > 0) {
@@ -226,7 +225,17 @@ onMounted(() => {
   }
 })
 
+// A barrier (another document, a remote write) also empties this live
+// editor's history: #6 keeps the instance across a local file replacement.
+const stopBarrier = onHistoryBarrier(() => {
+  if (!view.value) return
+  clearHistory(view.value)
+  syncDepths(view.value.state)
+})
+
 onBeforeUnmount(() => {
+  stopBarrier()
+  if (view.value) keepState(view.value.state)
   view.value?.destroy()
 })
 
@@ -267,17 +276,12 @@ watch(
   () => props.modelValue,
   (newValue) => {
     if (!view.value) return
-    const current = view.value.state.doc.toString()
-    if (newValue === current) return
-
-    ignoreNextUpdate = true
-    view.value.dispatch({
-      changes: {
-        from: 0,
-        to: view.value.state.doc.length,
-        insert: newValue,
-      },
-    })
+    // An external write (the editor's own edits arrive here equal to its doc):
+    // a minimal change; remote ones bypass and clear history, local ones
+    // (revision restore) are one undo step (#8 rules 4, 6).
+    const origin = takeExternalOrigin(newValue)
+    if (newValue === view.value.state.doc.toString()) return
+    applyExternal(view.value, newValue, origin)
   },
 )
 
@@ -298,16 +302,39 @@ function focus() {
   view.value?.focus()
 }
 
+function runHistory(command: typeof undo) {
+  const v = view.value
+  if (!v) return
+  command(v)
+  v.focus()
+}
+
 defineExpose({ scrollToLine, focus })
 </script>
 
 <template>
-  <div ref="container" class="editor-pane" />
+  <div class="editor-pane">
+    <EditorToolbar
+      :can-undo="canUndo"
+      :can-redo="canRedo"
+      @undo="runHistory(undo)"
+      @redo="runHistory(redo)"
+    />
+    <div ref="container" class="editor-host" />
+  </div>
 </template>
 
 <style scoped>
 .editor-pane {
   height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
 }
 

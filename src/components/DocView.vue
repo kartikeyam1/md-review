@@ -3,6 +3,7 @@ import { ref, computed, defineAsyncComponent, onMounted, watch } from 'vue'
 import type { RevisionEntry } from '@/composables/useShare'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
+import { markExternalChange } from '@/composables/useExternalChange'
 import DocHeader from '@/components/DocHeader.vue'
 import DocBanners from '@/components/DocBanners.vue'
 import CommentsLayer from '@/components/CommentsLayer.vue'
@@ -56,6 +57,7 @@ watch(capability, (c) => { if (c !== 'editor') editorMounted.value = false })
 function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null) {
   if (!confirmDiscardIfDirty()) return
   showHistory.value = false
+  markExternalChange(oldMarkdown, 'local') // one undo step back (#8 rule 6)
   markdown.value = oldMarkdown
   const when = entry ? new Date(entry.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'an earlier version'
   notice.value = `Restored the version from ${when} as unsaved edits — it will autosave shortly. Use History again to go back.`

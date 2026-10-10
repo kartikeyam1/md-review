@@ -33,6 +33,10 @@ export interface PersistedState {
    */
   serverMarkdown?: string | null
   baselineEqualsLocal?: boolean
+  /** content_hash of that server copy — the If-Match base of the edits. */
+  baseHash?: string | null
+  /** The edits were in conflict with a newer server copy when saved (#8 scope add). */
+  conflict?: boolean
   savedAt?: string
 }
 
@@ -45,6 +49,10 @@ export interface RestoredDraft {
   /** True when the persisted copy was already in sync with the server. */
   clean: boolean
   mode: DocMode
+  /** content_hash of `baseMarkdown`, when known. */
+  baseHash: string | null
+  /** The draft was in conflict with the server when it was saved. */
+  conflict: boolean
 }
 
 export function usePersistence(
@@ -59,6 +67,10 @@ export function usePersistence(
     serverMarkdown?: Ref<string | null>
     /** Doc mode (#2), stored with the draft. */
     mode?: Ref<DocMode>
+    /** content_hash of `serverMarkdown` (the If-Match base). */
+    baseHash?: Ref<string | null>
+    /** Whether the local edits are in conflict with the server. */
+    conflict?: Ref<boolean>
     /** Injected in tests; defaults to IndexedDB with a localStorage fallback. */
     store?: DraftStore
     /** Slot for the never-shared local draft (tests); defaults like `store`, or memory when `store` is injected. */
@@ -103,6 +115,30 @@ export function usePersistence(
     return { pasteId: s.pasteId ?? null, dirty: !!s.pasteId && !isClean(s) }
   }
 
+  /** Set once `restored` has settled: before that a snapshot would overwrite the draft being restored. */
+  let restoredDone = false
+
+  /**
+   * Read a slot, preferring its localStorage copy (`lsKey`) when that is newer
+   * — a synchronous flush from the last page that went away — or when the slot
+   * is empty (the old localStorage-only layout). The adopted copy is written
+   * into the slot and the localStorage copy removed.
+   */
+  async function adoptFlushed(slot: DraftStore, lsKey: string): Promise<string | null> {
+    const raw = await slot.get()
+    if (slot.kind === 'localstorage') return raw
+    let flushed: string | null = null
+    try { flushed = localStorage.getItem(lsKey) } catch { return raw }
+    if (!flushed) return raw
+    const at = (r: string | null) => { try { return r ? String(JSON.parse(r).savedAt ?? '') : '' } catch { return '' } }
+    const useFlushed = raw === null || at(flushed) > at(raw)
+    try {
+      if (useFlushed) await slot.set(flushed)
+      localStorage.removeItem(lsKey)
+    } catch { /* keep the localStorage copy for the next try */ }
+    return useFlushed ? flushed : raw
+  }
+
   /**
    * Resolves once the previous draft (if any) has been put back on screen.
    * App awaits this before loading anything from the URL.
@@ -112,18 +148,9 @@ export function usePersistence(
       store ??= await openDraftStore(STORAGE_KEY)
       storeKind.value = store.kind
       try { localStore ??= await openDraftStore(LOCAL_KEY, LOCAL_RECORD) } catch { localStore = createMemoryStore() }
-      let raw = await store.get()
-      // One-time migration from the old localStorage-only layout.
-      if (raw === null && store.kind !== 'localstorage') {
-        try {
-          const legacy = localStorage.getItem(STORAGE_KEY)
-          if (legacy) {
-            raw = legacy
-            await store.set(legacy)
-            localStorage.removeItem(STORAGE_KEY)
-          }
-        } catch { /* no localStorage — nothing to migrate */ }
-      }
+      // The localStorage copy is the old localStorage-only layout (one-time
+      // migration) or the synchronous flush written as the page went away.
+      const raw = await adoptFlushed(store, STORAGE_KEY)
       if (!raw) return false
       const state: PersistedState = JSON.parse(raw)
       if (!state.markdown || !state.filename) return false
@@ -133,7 +160,7 @@ export function usePersistence(
       // Corrupted state or unusable storage — start fresh
       return false
     }
-  })()
+  })().finally(() => { restoredDone = true })
 
   /**
    * The persisted copy of a shared session, if that is what was restored.
@@ -151,6 +178,8 @@ export function usePersistence(
       baseMarkdown: clean ? s.markdown : (s.serverMarkdown ?? null),
       clean,
       mode: payloadMode(s.mode),
+      baseHash: s.baseHash ?? null,
+      conflict: !clean && s.conflict === true,
     }
   }
 
@@ -172,6 +201,10 @@ export function usePersistence(
     if (base === null) state.serverMarkdown = null
     else if (base === markdown.value) state.baselineEqualsLocal = true
     else state.serverMarkdown = base
+    if (state.pasteId) {
+      state.baseHash = options.baseHash?.value ?? null
+      if (options.conflict?.value) state.conflict = true
+    }
     return state
   }
 
@@ -189,7 +222,11 @@ export function usePersistence(
       if (!store) return
       try {
         await store.set(payload)
-        if (isLocal) await localStore?.set(payload)
+        dropFlushed(store, STORAGE_KEY, payload)
+        if (isLocal && localStore) {
+          await localStore.set(payload)
+          dropFlushed(localStore, LOCAL_KEY, payload)
+        }
         persistError.value = null
       } catch (e) {
         const quota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
@@ -215,11 +252,41 @@ export function usePersistence(
   if (options.pasteId) watch(() => options.pasteId!.value, scheduleSave)
   if (options.serverMarkdown) watch(() => options.serverMarkdown!.value, scheduleSave)
   if (options.mode) watch(() => options.mode!.value, scheduleSave)
+  if (options.baseHash) watch(() => options.baseHash!.value, scheduleSave)
+  if (options.conflict) watch(() => options.conflict!.value, scheduleSave)
 
-  // Flush the debounce when the page is going away so the last keystrokes are
-  // not lost to the 500 ms window.
-  if (typeof window !== 'undefined') {
-    window.addEventListener('pagehide', () => { persistNow() })
+  /**
+   * The page is going away (reload, close, tab hidden). The normal write is
+   * asynchronous (IndexedDB, after a 500 ms debounce) and does not finish
+   * before an unload, so the snapshot is ALSO written to localStorage
+   * synchronously; the next load takes whichever copy is newer
+   * (`adoptFlushed`), and the copy is dropped once the async write lands
+   * (`dropFlushed`). A snapshot too big for localStorage still gets the
+   * asynchronous attempt. Called from the one leave-page path (useAutosave:
+   * pagehide, visibilitychange→hidden).
+   */
+  function flushDraft() {
+    if (!restoredDone || !store || options.paused?.()) return
+    const snap = snapshot()
+    if (!snap.markdown && !snap.filename) return
+    const payload = JSON.stringify(snap)
+    if (store.kind !== 'memory') {
+      try { localStorage.setItem(STORAGE_KEY, payload) } catch { /* full or blocked */ }
+    }
+    if (!snap.pasteId && localStore && localStore.kind !== 'memory') {
+      try { localStorage.setItem(LOCAL_KEY, payload) } catch { /* full or blocked */ }
+    }
+    persistNow()
+  }
+
+  /**
+   * The async write of `payload` landed: its localStorage flush copy is no
+   * longer needed. Only removed when it is that very snapshot — a newer flush
+   * written meanwhile must survive until its own write lands.
+   */
+  function dropFlushed(slot: DraftStore, lsKey: string, payload: string) {
+    if (slot.kind === 'localstorage') return
+    try { if (localStorage.getItem(lsKey) === payload) localStorage.removeItem(lsKey) } catch { /* ignore */ }
   }
 
   /** Drop the persisted draft. `keepLocal` leaves the never-shared local draft alone. */
@@ -236,7 +303,7 @@ export function usePersistence(
   async function loadLocalDraft(): Promise<(Pick<PersistedState, 'markdown' | 'filename' | 'comments' | 'contentType'> & { mode: DocMode }) | null> {
     await restored
     try {
-      const raw = await localStore?.get()
+      const raw = localStore ? await adoptFlushed(localStore, LOCAL_KEY) : null
       if (!raw) return null
       const s = JSON.parse(raw) as PersistedState
       if (!s.markdown || !s.filename || s.pasteId) return null
@@ -246,6 +313,7 @@ export function usePersistence(
 
   /** The local doc became shared (or was discarded): it is no longer a local draft. */
   function forgetLocalDraft(): Promise<void> {
+    try { localStorage.removeItem(LOCAL_KEY) } catch { /* ignore */ }
     const run = async () => {
       await restored
       try { await localStore?.remove() } catch { /* ignore */ }
@@ -255,7 +323,7 @@ export function usePersistence(
     return writing
   }
 
-  return { clearPersisted, takeRestoredDraft, restoredInfo, loadLocalDraft, forgetLocalDraft, persistNow, restored, persistError, storeKind }
+  return { clearPersisted, takeRestoredDraft, restoredInfo, loadLocalDraft, forgetLocalDraft, persistNow, flushDraft, restored, persistError, storeKind }
 }
 
 export function useThemePersistence() {

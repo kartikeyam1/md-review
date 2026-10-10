@@ -18,6 +18,8 @@ export function useAutosave(opts: {
   paneMode: Ref<PaneMode>
   /** #23: false for a viewer — no autosave, no keepalive write, no leave prompt. */
   canWrite?: () => boolean
+  /** Synchronous local-draft flush (usePersistence.flushDraft, #8): runs first on every leave. */
+  flushDraft?: () => void
 }) {
   const { sync, markdown, filename, paneMode } = opts
   const canWrite = () => opts.canWrite?.() ?? true
@@ -62,6 +64,10 @@ export function useAutosave(opts: {
   }
 
   function onPageHide() {
+    // The one leave-page path: the local draft is written synchronously first
+    // (an unload does not wait for IndexedDB), then dirty shared edits go out —
+    // never for a viewer (#23).
+    opts.flushDraft?.()
     if (sync.isShared.value && sync.isDirty.value && !sync.conflict.value && canWrite()) flushAutosave({ keepalive: true })
   }
 

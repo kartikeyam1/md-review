@@ -2,6 +2,7 @@ import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
 import type { Comment, Reply } from '@/types'
 import { useShare, type SharedPayload } from '@/composables/useShare'
 import { computeDelta, deltaSize } from '@/composables/useDelta'
+import { markExternalChange, historyBarrier } from '@/composables/useExternalChange'
 
 type NewComment = Omit<Comment, 'id' | 'createdAt' | 'replies'>
 
@@ -80,6 +81,12 @@ export function useSync(
   const serverMarkdown = ref<string | null>(null)
   const serverFilename = ref<string | null>(null)
   let contentHash: string | null = null
+  /**
+   * `contentHash` made observable: the If-Match base of the local edits. It is
+   * persisted with the draft so a reload keeps saving against the copy the
+   * edits were based on, never against a newer server copy.
+   */
+  const baseHash = ref<string | null>(null)
   let etag: string | null = null
   /** content_hash of the server copy we currently mirror, and how we got it. */
   const serverHash = ref<string | null>(null)
@@ -88,6 +95,7 @@ export function useSync(
   function setHash(hash: string | null, origin: 'load' | 'save' | 'remote') {
     const changed = hash !== contentHash
     contentHash = hash
+    baseHash.value = hash
     if (changed || serverHash.value !== hash) {
       serverHash.value = hash
       serverHashOrigin.value = origin
@@ -160,6 +168,7 @@ export function useSync(
     serverMarkdown.value = null
     serverFilename.value = null
     contentHash = null
+    baseHash.value = null
     serverHash.value = null
     serverHashOrigin.value = null
     etag = null
@@ -175,17 +184,36 @@ export function useSync(
   /**
    * Re-apply a locally persisted draft on top of a freshly loaded baseline.
    * If the server still holds what the draft was based on, the draft simply
-   * becomes unsaved edits (autosave will write it). If the server moved on,
-   * keep the draft locally and flag a conflict for the user to resolve.
+   * becomes unsaved edits (autosave will write it). If the server moved on —
+   * or the draft was saved mid-conflict — keep the draft locally and flag a
+   * conflict for the user to resolve.
+   *
+   * In a conflict the baseline goes back to what the draft was based on
+   * (`draftBase` / `opts.baseHash`) and the fresh server copy becomes the
+   * remote side. Taking the fresh copy as baseline would make the next reload
+   * see "unsaved changes" and the next save PUT with the collaborator's hash as
+   * If-Match, silently overwriting their change.
    */
-  function restoreDraft(draftMarkdown: string, draftBase: string | null) {
-    if (draftMarkdown === markdown.value) return
-    markdown.value = draftMarkdown
-    if (draftBase !== null && serverMarkdown.value !== null && draftBase !== serverMarkdown.value) {
-      conflict.value = true
-      remoteMarkdown.value = serverMarkdown.value
-      remoteHash = contentHash
+  function restoreDraft(draftMarkdown: string, draftBase: string | null, opts: { baseHash?: string | null; conflict?: boolean } = {}) {
+    if (draftMarkdown === serverMarkdown.value) return
+    if (draftMarkdown !== markdown.value) {
+      // Draft-vs-server reconciliation on load: a remote write for the editor (#8).
+      markExternalChange(draftMarkdown, 'remote')
+      markdown.value = draftMarkdown
     }
+    const moved = draftBase !== null && serverMarkdown.value !== null && draftBase !== serverMarkdown.value
+    if (!moved && !opts.conflict) return
+    conflict.value = true
+    // Saved mid-conflict, but the base is unknown or equals the fresh copy: the
+    // fresh server copy stays the baseline and is also what "Use server
+    // version" adopts (remoteMarkdown null → serverMarkdown). A later poll that
+    // sees a newer copy records it as the remote side.
+    if (!moved) return
+    remoteMarkdown.value = serverMarkdown.value
+    remoteHash = contentHash
+    serverMarkdown.value = draftBase
+    contentHash = opts.baseHash ?? null
+    baseHash.value = contentHash
   }
 
   // ── Comment ops with an outbox ───────────────────────────────────────────
@@ -493,6 +521,8 @@ export function useSync(
   function adoptRemote() {
     const remote = remoteMarkdown.value ?? serverMarkdown.value
     if (remote === null) return
+    // Not undoable: the user chose to discard their edits (#8 decisions).
+    markExternalChange(remote, 'remote')
     markdown.value = remote
     serverMarkdown.value = remote
     if (remoteHash) setHash(remoteHash, 'remote')
@@ -532,7 +562,10 @@ export function useSync(
     expectingDraft = false
     if (firstLoad || !isDirty.value || remoteMd === markdown.value) {
       // Local is clean (or already equals the server) — adopt the server copy.
-      if (markdown.value !== remoteMd) markdown.value = remoteMd
+      if (markdown.value !== remoteMd) {
+        markExternalChange(remoteMd, 'remote')
+        markdown.value = remoteMd
+      }
       if (filenameRef && remoteName && !filenameDirty() && filenameRef.value !== remoteName) filenameRef.value = remoteName
       serverMarkdown.value = remoteMd
       serverFilename.value = remoteName
@@ -615,6 +648,8 @@ export function useSync(
 
   watch(pasteId, (id) => {
     if (id !== baselineId) {
+      // Another document: an editor kept across a view switch starts afresh.
+      historyBarrier()
       resetBaseline()
       baselineId = id
     }
@@ -635,6 +670,6 @@ export function useSync(
     resolveComment, unresolveComment,
     saveMarkdown, adoptRemote, overwriteRemote,
     setBaseline, expectDraft, restoreDraft, pollNow: poll,
-    syncStatus, saveState, isShared, isDirty, conflict, remoteMarkdown, serverMarkdown, serverHash, serverHashOrigin, pendingCount,
+    syncStatus, saveState, isShared, isDirty, conflict, remoteMarkdown, serverMarkdown, serverHash, serverHashOrigin, pendingCount, baseHash,
   }
 }

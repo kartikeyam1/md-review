@@ -4,6 +4,7 @@ import type { ContentType, DocMode } from '@/types'
 import { payloadMode } from '@/composables/docMeta'
 import { toast } from '@/composables/useToast'
 import { detectContentType } from '@/composables/useContentType'
+import { historyBarrier } from '@/composables/useExternalChange'
 import { resolveView, routeKey, type RouterLocation } from '@/composables/useRouter'
 import type { DocState, DocViewName } from '@/composables/useDocState'
 
@@ -97,7 +98,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
         doc.pasteId.value = shareId
         doc.screenKey.value = key
         if (draft.baseMarkdown !== null) {
-          sync.setBaseline({ markdown: draft.baseMarkdown, filename: draft.filename })
+          sync.setBaseline({ markdown: draft.baseMarkdown, filename: draft.filename, contentHash: draft.baseHash })
+          if (draft.conflict) sync.restoreDraft(draft.markdown, draft.baseMarkdown, { baseHash: draft.baseHash, conflict: true })
         } else {
           sync.expectDraft()
         }
@@ -132,7 +134,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (draft && !draft.clean && draft.markdown !== data.markdown && !doc.embed.value && doc.capability.value !== 'editor') {
       doc.setLocalCopy(draft.markdown, draft.filename || data.filename)
     } else if (draft && !draft.clean && draft.markdown !== data.markdown && !doc.embed.value) {
-      sync.restoreDraft(draft.markdown, draft.baseMarkdown)
+      sync.restoreDraft(draft.markdown, draft.baseMarkdown, { baseHash: draft.baseHash, conflict: draft.conflict })
       doc.notice.value = sync.conflict.value
         ? 'Restored your unsaved edits, but the server copy changed in the meantime — choose a version below.'
         : 'Restored your unsaved edits from this browser.'
@@ -265,6 +267,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
 
   /** Empty landing state (New, or navigating back to the landing route). */
   function resetToEmpty() {
+    historyBarrier()
     doc.clearComments()
     doc.dismissAll()
     doc.notice.value = null
@@ -325,6 +328,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     const local = await loadLocalDraft()
     if (isStale(token) || doc.screenKey.value === 'landing') return
     if (!local) { resetToEmpty(); return }
+    historyBarrier()
     doc.clearComments()
     doc.dismissAll()
     doc.notice.value = null
@@ -387,6 +391,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       doc.screenKey.value = 'landing'
       if (doc.route.value.kind !== 'landing') router.replace(router.base)
     }
+    historyBarrier() // another document: no undo into the previous one (#8 rule 5)
     // Whatever was on screen before (a pinned banner, a file's image) goes.
     doc.pinnedInfo.value = null
     doc.setFileView(null)

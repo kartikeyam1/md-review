@@ -147,6 +147,8 @@ export function createDocState(router: Router) {
     {
       pasteId,
       serverMarkdown: sync.serverMarkdown,
+      baseHash: sync.baseHash,
+      conflict: sync.conflict,
       mode,
       // Only what the current route shows is persisted: never a read-only view,
       // a doc being left, or a restored draft the landing route is not showing.
@@ -169,7 +171,7 @@ export function createDocState(router: Router) {
   const showShareModal = ref(false)
   const shareResult = ref<{ ui: string; api: string; comments: string; markdown: string } | null>(null)
 
-  const autosave = useAutosave({ sync, markdown, filename, paneMode, canWrite: () => capability.value === 'editor' })
+  const autosave = useAutosave({ sync, markdown, filename, paneMode, canWrite: () => capability.value === 'editor', flushDraft: persistence.flushDraft })
 
   const commentSelection = useCommentSelection({ reviewUI, readOnly })
 

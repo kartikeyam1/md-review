@@ -497,6 +497,40 @@ describe('useSync', () => {
     expect(sync.conflict.value).toBe(true)
   })
 
+  it('restoreDraft in a conflict keeps the draft\'s own base and hash, never the newer server copy (#8 scope add)', async () => {
+    const markdown = ref('server v2')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    // Reload: the fresh server copy (v2) is loaded, then the draft made on v1.
+    sync.setBaseline({ markdown: 'server v2', contentHash: 'h2' })
+    sync.restoreDraft('server v1 + draft', 'server v1', { baseHash: 'h1' })
+
+    expect(markdown.value).toBe('server v1 + draft')
+    expect(sync.conflict.value).toBe(true)
+    expect(sync.serverMarkdown.value).toBe('server v1')
+    expect(sync.baseHash.value).toBe('h1')
+    expect(sync.remoteMarkdown.value).toBe('server v2')
+    // A plain save is refused while conflicted.
+    expect(await sync.saveMarkdown()).toBe(false)
+    expect(mockPutMarkdown).not.toHaveBeenCalled()
+
+    // "Use server version" adopts v2 with its own hash.
+    sync.adoptRemote()
+    expect(markdown.value).toBe('server v2')
+    expect(sync.conflict.value).toBe(false)
+    expect(sync.baseHash.value).toBe('h2')
+  })
+
+  it('restoreDraft of a draft persisted mid-conflict stays in conflict even when the base looks current', async () => {
+    const markdown = ref('server v2')
+    const sync = useSync(ref('abc123'), ref([]), markdown, makeLocalOps(ref([])))
+    sync.setBaseline({ markdown: 'server v2', contentHash: 'h2' })
+    sync.restoreDraft('mine', 'server v2', { baseHash: 'h2', conflict: true })
+    expect(markdown.value).toBe('mine')
+    expect(sync.conflict.value).toBe(true)
+    expect(await sync.saveMarkdown()).toBe(false)
+    expect(mockPutMarkdown).not.toHaveBeenCalled()
+  })
+
   it('polling stops when pasteId is cleared', async () => {
     const pasteId = ref<string | null>('abc123')
     const ops = makeLocalOps(ref([]))
