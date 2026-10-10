@@ -4,6 +4,7 @@ import type { SaveState } from '@/composables/useSync'
 import { useDocState } from '@/composables/useDocState'
 
 // Where the document stands against the server, plus Save / Retry save.
+// Quiet when all is well (#2 rule 5): nothing shows while idle or saved.
 const { sync, flushAutosave } = useDocState()
 const saveState = computed(() => sync.saveState.value)
 
@@ -27,13 +28,12 @@ const SAVE_TITLE: Record<SaveState, string> = {
 
 <template>
   <span
-    v-if="saveState !== 'idle'"
+    v-if="saveState !== 'idle' && saveState !== 'saved'"
     class="save-state"
     :class="saveState"
     :title="SAVE_TITLE[saveState]"
     data-testid="save-state"
   >
-    <span v-if="saveState === 'saved'" class="save-check">✓</span>
     {{ SAVE_LABEL[saveState] }}
   </span>
   <button
@@ -64,11 +64,9 @@ const SAVE_TITLE: Record<SaveState, string> = {
   border-radius: 4px;
 }
 
-.save-state.saved { opacity: 0.8; }
 .save-state.dirty { color: var(--text-primary); }
 .save-state.saving { opacity: 0.8; }
 .save-state.error { color: #dc2626; font-weight: 500; }
 .save-state.conflict { color: #dc2626; font-weight: 600; background: rgba(220, 38, 38, 0.08); }
 
-.save-check { color: #16a34a; font-weight: 600; }
 </style>

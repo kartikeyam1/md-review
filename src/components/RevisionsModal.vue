@@ -11,6 +11,13 @@ const props = defineProps<{
   currentHash: string | null
   /** Hash to diff from when the modal opens (e.g. "since I last looked"). */
   initialFrom: string | null
+  /** Viewers (#2) can compare but not restore. */
+  allowRestore?: boolean
+  /**
+   * The doc's live hash when `currentHash` is not it (a pinned revision on
+   * screen compares against itself). Defaults to `currentHash`.
+   */
+  liveHash?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -42,7 +49,11 @@ function entryFor(hash: string | null): RevisionEntry | null {
 
 function defaultFrom(): string | null {
   if (props.initialFrom && props.initialFrom !== props.currentHash) return props.initialFrom
+  // The revision before the "now" side (the latest one before current).
   const revs = props.revisions
+  const at = revs.findIndex(r => r.hash === props.currentHash)
+  if (at > 0) return revs[at - 1].hash
+  if (at === 0) return null
   return revs.length >= 2 ? revs[revs.length - 2].hash : null
 }
 
@@ -55,7 +66,7 @@ async function load() {
   try {
     const [from, to] = await Promise.all([
       fromHash.value ? fetchRevision(props.pasteId, fromHash.value) : Promise.resolve({ data: null, status: 200 }),
-      fetchRevision(props.pasteId, toHash.value === props.currentHash ? 'current' : toHash.value),
+      fetchRevision(props.pasteId, toHash.value === (props.liveHash === undefined ? props.currentHash : props.liveHash) ? 'current' : toHash.value),
     ])
     if (!to.data) { error.value = 'Could not load the selected revision.'; return }
     if (fromHash.value && !from.data) {
@@ -125,7 +136,7 @@ const visibleRows = computed(() => {
   return out
 })
 
-const canRestore = computed(() => !!fromContent.value && fromHash.value !== props.currentHash)
+const canRestore = computed(() => props.allowRestore !== false && !!fromContent.value && fromHash.value !== props.currentHash)
 
 function restore() {
   if (!fromContent.value) return

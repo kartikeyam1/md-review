@@ -5,7 +5,7 @@ const { NEXT, readBody, clientOf } = require('../http-util.cjs');
 const {
   generateSlug, uniqueSlug, savePaste,
 } = require('../storage.cjs');
-const { validMode } = require('../session-rows.cjs');
+const { readMode, defaultMode } = require('../mode.cjs');
 const { handedOutUrl } = require('../links.cjs');
 
 module.exports = async function pasteCreate(req, res) {
@@ -56,8 +56,13 @@ module.exports = async function pasteCreate(req, res) {
     }
     if (slug) parsed.slug = slug;
 
-    // Doc mode (00 §1.4): the given one, else publish — review when a callback is set.
-    parsed.mode = validMode(parsed.mode) || (parsed.callback_url ? 'review' : 'publish');
+    // Doc mode (#2 rule 12, 00 §1.4): validated when given; else publish — review when a callback is set.
+    const m = readMode(parsed);
+    if (m.error) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(m.error));
+    }
+    parsed.mode = m.mode || defaultMode(parsed);
 
     // `author` names who created the document (first revision); not stored as metadata.
     const createdBy = typeof parsed.author === 'string' ? parsed.author : null;
@@ -66,6 +71,7 @@ module.exports = async function pasteCreate(req, res) {
     const result = { id };
     if (slug) result.slug = slug;
     result.url = handedOutUrl(slug || id); // #22 rule 1 / 00 §6
+    result.mode = parsed.mode;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(result));
   }

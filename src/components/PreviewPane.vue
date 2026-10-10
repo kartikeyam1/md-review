@@ -6,12 +6,17 @@ import { isGithub, isDark } from '@/composables/useTheme'
 import { findLineRange } from '@/composables/useHtmlSource'
 import { useRouter, scrollToAnchorElement, findAnchorIn } from '@/composables/useRouter'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   content: string
   comments: Comment[]
   theme?: ThemeMode
   contentType?: ContentType
-}>()
+  /**
+   * Selections raise the comment flow (#2: review mode only). When false a
+   * selection is plain browser selection: no events, no persisted highlight.
+   */
+  commenting?: boolean
+}>(), { theme: undefined, contentType: undefined, commenting: true })
 
 // Mermaid is loaded on demand — only documents that actually contain a
 // diagram pay for it (it and its plugins are the bulk of the bundle).
@@ -300,6 +305,7 @@ function onFrameMessage(e: MessageEvent) {
     return
   }
   if (data.type === 'selection' && data.text) {
+    if (!props.commenting) return
     const range = findLineRange(props.content, data.text)
     if (!range) {
       emit('selection-clear')
@@ -445,6 +451,7 @@ function clearSelectionHighlight() {
 }
 
 function onMouseUp() {
+  if (!props.commenting) return
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || !selection.rangeCount) {
     emit('selection-clear')

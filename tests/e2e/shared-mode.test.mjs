@@ -22,6 +22,8 @@ async function createSharedSession() {
       filename: 'test.md',
       comments: [],
       sharedAt: new Date().toISOString(),
+      // Comment UI is review-mode only (#2); the default is now publish.
+      mode: 'review',
     }),
   })
   const { id } = await res.json()
@@ -36,7 +38,8 @@ describe('shared mode', () => {
     await page.goto(`${BASE}/#shared=${id}`)
     await page.waitForTimeout(2000)
 
-    // Should be in review mode with filename displayed
+    // Filename and sync indicator live in the editor header (#2): switch to edit view.
+    await page.click('[data-testid="view-toggle-edit"]')
     const filename = await page.locator('.filename').textContent()
     assert.ok(filename.includes('test.md'))
 

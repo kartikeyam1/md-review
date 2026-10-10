@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { Comment, Reply, ApprovalInfo, ContentType } from '@/types'
+import type { Comment, Reply, ApprovalInfo, ContentType, DocMode } from '@/types'
 import type { TextDelta } from '@/composables/useDelta'
 import { docShareUrl, encodeFilePath } from '@/composables/useRouter'
 
@@ -25,6 +25,10 @@ export interface RevisionEntry {
 export interface RevisionContent extends RevisionEntry {
   markdown: string
   is_current: boolean
+  /** The doc's current mode and name (#2; additive, absent on older servers). */
+  mode?: DocMode
+  sessionName?: string | null
+  filename?: string | null
 }
 
 export interface SharedPayload {
@@ -34,6 +38,11 @@ export interface SharedPayload {
   sharedAt: string
   sessionName?: string
   contentType?: ContentType
+  slug?: string | null
+  /** Per-doc mode (#2); absent on sessions that predate it (reads as review). */
+  mode?: DocMode
+  /** Latest content revision (server summary). */
+  latest_revision?: { hash: string; at: string; by: string | null; client: string | null } | null
   /** Server-side hash of the stored markdown — the If-Match token for writes. */
   content_hash?: string
   /** ETag of the GET that produced this payload (attached client-side). */
@@ -80,7 +89,7 @@ export function useShare() {
   const shareError = ref<string | null>(null)
 
   /** Returns the new session's id and slug (null when the server assigned none). */
-  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string): Promise<{ id: string; slug: string | null } | null> {
+  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string, mode?: DocMode): Promise<{ id: string; slug: string | null } | null> {
     sharing.value = true
     shareError.value = null
 
@@ -93,6 +102,7 @@ export function useShare() {
     if (sessionName) payload.sessionName = sessionName
     if (contentType) payload.contentType = contentType
     if (author) payload.author = author
+    if (mode) payload.mode = mode
 
     try {
       const res = await fetch(`${PASTE_API}/paste`, {
@@ -302,6 +312,28 @@ export function useShare() {
     } catch { return { data: null, status: 0 } }
   }
 
+  /** PUT /paste/:id/meta — true on 2xx. */
+  async function putMeta(pasteId: string, updates: { mode?: DocMode; sessionName?: string }): Promise<boolean> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/meta`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      })
+      return res.ok
+    } catch { return false }
+  }
+
+  /** Comments of a session without loading the document (pinned revisions). */
+  async function getComments(pasteId: string): Promise<Comment[] | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/comments`)
+      if (!res.ok) return null
+      const data = await res.json() as { comments?: Comment[] }
+      return Array.isArray(data.comments) ? data.comments : []
+    } catch { return null }
+  }
+
   async function getApproval(pasteId: string): Promise<ApprovalInfo | null> {
     try {
       const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/approval`)
@@ -373,5 +405,6 @@ export function useShare() {
     putMarkdown, pollPaste,
     getRevisions, getRevision,
     getApproval, putApproval, resolveCommentApi, unresolveCommentApi,
+    putMeta, getComments,
   }
 }

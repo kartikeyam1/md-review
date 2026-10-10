@@ -1,15 +1,19 @@
-<script setup lang="ts">
-import { ref } from 'vue'
-import { useMenu } from '@/composables/useMenu'
-
+<script lang="ts">
 // A menu button (00 §3.2): the trigger is the `trigger` slot's content, the
 // items are declared as data so every menu shares one keyboard model.
 
 export type AppMenuEntry =
-  | { type: 'item'; id: string; label: string; testid?: string; title?: string; disabled?: boolean; onSelect: () => void }
+  | { type: 'item'; id: string; label: string; testid?: string; title?: string; disabled?: boolean; badge?: string; dot?: boolean; dotLabel?: string; onSelect: () => void }
   | { type: 'radio'; id: string; label: string; testid?: string; checked: boolean; disabled?: boolean; onSelect: () => void }
   | { type: 'group'; id: string; label: string; testid?: string; entries: AppMenuEntry[]; note?: { text: string; testid?: string } | null }
   | { type: 'separator'; id: string }
+
+let menuSeq = 0
+</script>
+
+<script setup lang="ts">
+import { ref } from 'vue'
+import { useMenu } from '@/composables/useMenu'
 
 withDefaults(defineProps<{
   entries: AppMenuEntry[]
@@ -27,6 +31,8 @@ withDefaults(defineProps<{
 })
 
 const triggerRef = ref<HTMLButtonElement>()
+/** Per-instance id prefix for aria-describedby targets. */
+const uid = `app-menu-${++menuSeq}`
 const listRef = ref<HTMLElement>()
 const menu = useMenu(triggerRef, listRef)
 
@@ -67,7 +73,14 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
     >
       <template v-for="entry in entries" :key="entry.id">
         <div v-if="entry.type === 'separator'" class="app-menu-sep" role="separator"></div>
-        <div v-else-if="entry.type === 'group'" class="app-menu-group" role="group" :aria-label="entry.label" :data-testid="entry.testid">
+        <div
+          v-else-if="entry.type === 'group'"
+          class="app-menu-group"
+          role="group"
+          :aria-label="entry.label"
+          :aria-describedby="entry.note ? `${uid}-${entry.id}-note` : undefined"
+          :data-testid="entry.testid"
+        >
           <div class="app-menu-group-label" aria-hidden="true">{{ entry.label }}</div>
           <template v-for="sub in entry.entries" :key="sub.id">
             <button
@@ -95,7 +108,7 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
               @click="select(sub)"
             >{{ sub.label }}</button>
           </template>
-          <div v-if="entry.note" class="app-menu-note" role="none" :data-testid="entry.note.testid">{{ entry.note.text }}</div>
+          <div v-if="entry.note" :id="`${uid}-${entry.id}-note`" class="app-menu-note" role="none" :data-testid="entry.note.testid">{{ entry.note.text }}</div>
         </div>
         <button
           v-else-if="entry.type === 'radio'"
@@ -120,7 +133,9 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
           :aria-disabled="entry.disabled ? 'true' : undefined"
           :data-testid="entry.testid"
           @click="select(entry)"
-        >{{ entry.label }}</button>
+        >
+          {{ entry.label }}<span v-if="entry.badge" class="app-menu-badge">{{ entry.badge }}</span><span v-if="entry.dot" class="app-menu-dot history-dot" role="img" :aria-label="entry.dotLabel || 'new'"></span>
+        </button>
       </template>
     </div>
   </div>
@@ -203,14 +218,31 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .app-menu-note {
   padding: 4px 10px 6px 28px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: normal;
+}
+
+.app-menu-badge {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.app-menu-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2563eb;
+  display: inline-block;
+  flex-shrink: 0;
 }
 
 .app-menu-sep {

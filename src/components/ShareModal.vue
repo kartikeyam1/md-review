@@ -6,6 +6,8 @@ const props = defineProps<{
   filename: string
   urls: { ui: string; api: string; comments: string; markdown: string } | null
   commentCount: number
+  /** The session id (moved here from the header, #2). */
+  pasteId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +54,13 @@ async function copyText(text: string, label: string) {
           <div class="url-value">
             <code>{{ urls?.ui }}</code>
             <button class="btn-copy" @click="copyText(urls?.ui ?? '', 'ui')">{{ copied === 'ui' ? 'Copied!' : 'Copy' }}</button>
+          </div>
+        </div>
+
+        <div v-if="pasteId" class="url-row">
+          <label class="url-label">Document id</label>
+          <div class="url-value">
+            <code class="doc-id-value">{{ pasteId }}</code>
           </div>
         </div>
 

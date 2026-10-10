@@ -37,7 +37,7 @@ describe('table row comment highlight', () => {
     await page.waitForTimeout(2000)
 
     // Switch to preview
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     // Find the table and its rows

@@ -6,6 +6,7 @@ const {
   revisionSummary, listSessionFiles,
 } = require('../storage.cjs');
 const { handedOutUrl } = require('../links.cjs');
+const { readMode, modeOf } = require('../mode.cjs');
 
 module.exports = async function session(req, res) {
   // DELETE /paste/:id — delete a session and all its data
@@ -30,7 +31,13 @@ module.exports = async function session(req, res) {
     if (parsed === undefined) return;
     const meta = loadMeta(pasteId);
     if (!meta) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    const m = readMode(parsed);
+    if (m.error) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(m.error));
+    }
 
+    if (m.mode) meta.mode = m.mode;
     if (parsed.sessionName !== undefined) meta.sessionName = parsed.sessionName;
     if (parsed.filename !== undefined) meta.filename = parsed.filename;
 
@@ -63,6 +70,7 @@ module.exports = async function session(req, res) {
       sessionName: meta.sessionName || null,
       slug: meta.slug || null,
       expires_at: meta.expires_at || null,
+      mode: modeOf(meta),
     }));
   }
 
@@ -111,7 +119,7 @@ module.exports = async function session(req, res) {
       result = {};
       if (wanted.has('meta')) {
         const { comments, content_hash, revisions, ...rest } = meta;
-        Object.assign(result, rest, revisionSummary(resolvedId), { url: handedOutUrl(meta.slug || resolvedId) });
+        Object.assign(result, rest, revisionSummary(resolvedId), { url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta) });
       }
       if (wanted.has('content')) {
         result.markdown = loadContent(resolvedId) || '';
@@ -126,7 +134,7 @@ module.exports = async function session(req, res) {
       // Full response (backward compatible) — includes file list if any
       const markdown = loadContent(resolvedId) || '';
       const { revisions, ...metaRest } = meta;
-      result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId) };
+      result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta) };
       const sessionFiles = listSessionFiles(resolvedId);
       if (sessionFiles.length > 0) result.files = sessionFiles;
     }

@@ -1,8 +1,10 @@
 import { watch, provide, inject, type InjectionKey } from 'vue'
-import type { ContentType } from '@/types'
+import type { ContentType, DocMode } from '@/types'
+import { payloadMode } from '@/composables/docMeta'
+import { toast } from '@/composables/useToast'
 import { detectContentType } from '@/composables/useContentType'
 import { resolveView, routeKey, type RouterLocation } from '@/composables/useRouter'
-import type { DocState } from '@/composables/useDocState'
+import type { DocState, DocViewName } from '@/composables/useDocState'
 
 // ── Doc loaders (spec #4 routes, #2 shell split) ─────────────────────────────
 // What happens when a route is entered: load the shared doc / pinned revision
@@ -30,11 +32,12 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
   const {
     takeRestoredDraft, restoredInfo, loadLocalDraft, forgetLocalDraft, clearPersisted, restored,
   } = doc.persistence
-  const { loadShareDetailed, fetchGithub, getShareUrls, getRevision, loadSessionFile, sessionFileUrl, createShare } = doc.share
+  const { loadShareDetailed, fetchGithub, getShareUrls, getRevision, loadSessionFile, sessionFileUrl, createShare, getComments, getApproval } = doc.share
 
   function detachFromShare() {
     doc.pasteId.value = null
     doc.approvalInfo.value = null
+    doc.docMeta.value = { sessionName: null, slug: null, sharedAt: null, latest: null }
   }
 
   /** Put on screen something that is not a live shared doc (pinned revision, file). */
@@ -48,7 +51,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     doc.markdown.value = content
     doc.filename.value = name
     doc.contentType.value = type
-    doc.appMode.value = 'review'
+    doc.appMode.value = 'doc'
   }
 
   let navToken = 0
@@ -74,6 +77,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
         }
         // Session gone, but this browser has a copy: keep it as a plain local document.
         handleFileLoaded(draft.markdown, draft.filename, undefined, { shared: true })
+        doc.mode.value = draft.mode
         doc.screenKey.value = 'landing'
         router.replace(router.base)
         doc.notice.value = status === 410
@@ -86,6 +90,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       // it comes back.
       if (draft) {
         handleFileLoaded(draft.markdown, draft.filename, undefined, { shared: true })
+        doc.mode.value = draft.mode
         doc.pasteId.value = shareId
         doc.screenKey.value = key
         if (draft.baseMarkdown !== null) {
@@ -107,6 +112,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     }
     doc.pasteId.value = shareId
     doc.screenKey.value = key
+    // Mode and header meta from the payload (absent/invalid mode → review).
+    doc.applyServerMeta(data, Date.now(), { initial: true })
     sync.setBaseline({
       markdown: data.markdown,
       filename: data.filename,
@@ -140,8 +147,22 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     showReadOnlyContent(data.markdown, id, detectContentType('', data.markdown))
     doc.fileView.value = null
     doc.pinnedInfo.value = { id, at: data.at }
+    doc.pinnedCurrent.value = null
+    // #2/#4 ruling: the doc's mode comes on the revision response; a review
+    // doc's comments and approval come from their own endpoints (never GET /paste/<id>).
+    doc.mode.value = payloadMode(data.mode)
+    doc.docMeta.value = {
+      sessionName: data.sessionName ?? null, slug: null, sharedAt: null, filename: data.filename ?? null,
+      latest: data.at ? { at: data.at, by: data.by ?? null } : null,
+    }
     doc.screenKey.value = key
     applyViewParam()
+    if (doc.mode.value === 'review') {
+      const [comments, approval] = await Promise.all([getComments(id), getApproval(id)])
+      if (isStale(token) || doc.screenKey.value !== key) return
+      if (comments) doc.loadComments(comments)
+      doc.approvalInfo.value = approval
+    }
   }
 
   /** Rule 8: one file of a multi-file session, read-only. */
@@ -168,6 +189,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
         ? { kind: 'image', url: URL.createObjectURL(res.blob), name }
         : { kind: 'download', url: sessionFileUrl(id, file), name })
     }
+    // A session file carries no comments of its own: a plain reading page.
+    doc.mode.value = 'publish'
     doc.screenKey.value = key
     applyViewParam()
   }
@@ -202,7 +225,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`)
       if (!res.ok) return
       const { content, filename: name } = await res.json()
-      handleFileLoaded(content, name)
+      // The dev fixture harness opens in review mode (00 §1.4).
+      handleFileLoaded(content, name, undefined, { mode: 'review' })
     } catch {
       // API not available (production build) — ignore
     }
@@ -223,6 +247,13 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (rewrite) router.setQueryParam('view', 'read')
   }
 
+  /** A UI view change (view toggle): replaceState to ?view=<view> (00 §1.3). */
+  function setView(view: DocViewName) {
+    if (view === 'edit' && doc.capability.value !== 'editor') return
+    doc.paneMode.value = view === 'edit' ? 'edit' : 'preview'
+    router.setQueryParam('view', view)
+  }
+
   /** Empty landing state (New, or navigating back to the landing route). */
   function resetToEmpty() {
     doc.clearComments()
@@ -231,8 +262,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     doc.markdown.value = ''
     doc.filename.value = ''
     doc.contentType.value = 'markdown'
-    doc.pasteId.value = null
-    doc.approvalInfo.value = null
+    doc.mode.value = 'publish'
+    detachFromShare()
     doc.pinnedInfo.value = null
     doc.setFileView(null)
     doc.appMode.value = 'upload'
@@ -293,8 +324,9 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     doc.markdown.value = local.markdown
     doc.filename.value = local.filename
     doc.contentType.value = local.contentType ?? 'markdown'
+    doc.mode.value = local.mode
     doc.loadComments(local.comments)
-    doc.appMode.value = 'review'
+    doc.appMode.value = 'doc'
     doc.screenKey.value = 'landing'
     applyViewParam()
   }
@@ -338,7 +370,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
    * share first — otherwise the old session's polling would keep writing over
    * the new document, and Save would push the new document into the old session.
    */
-  function handleFileLoaded(content: string, name: string, type?: ContentType, opts: { shared?: boolean } = {}) {
+  function handleFileLoaded(content: string, name: string, type?: ContentType, opts: { shared?: boolean; mode?: DocMode } = {}) {
     if (!opts.shared) {
       if (!doc.confirmDiscardIfDirty()) return
       detachFromShare()
@@ -355,7 +387,10 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     doc.markdown.value = content
     doc.filename.value = name
     doc.contentType.value = type ?? detectContentType(name, content)
-    doc.appMode.value = 'review'
+    // A local doc (picker, drop, paste, #github=) is a reading page (00 §1.4);
+    // a shared doc's mode is set by its loader.
+    if (!opts.shared) doc.mode.value = opts.mode ?? 'publish'
+    doc.appMode.value = 'doc'
   }
 
   function handleNewDoc() {
@@ -393,12 +428,15 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       doc.showShareModal.value = true
       return
     }
-    const created = await createShare(doc.markdown.value, doc.filename.value, doc.comments.value, undefined, doc.contentType.value, doc.reviewerName.value || undefined)
+    const created = await createShare(doc.markdown.value, doc.filename.value, doc.comments.value, undefined, doc.contentType.value, doc.reviewerName.value || undefined, doc.mode.value)
     if (created) {
       // Rule 11: the URL becomes d/<slug||id> (replaceState), preferring the slug.
       const key = created.slug || created.id
       doc.pasteId.value = key
       doc.screenKey.value = routeKey({ kind: 'doc', id: key })
+      doc.docMeta.value = { sessionName: null, slug: created.slug, sharedAt: new Date().toISOString(), latest: null }
+      // The POST carried the local mode: that is what the server now holds.
+      doc.setModeBaseline(doc.mode.value)
       router.replace(`${router.base}d/${key}`)
       // It is a shared doc now, no longer the never-shared local draft.
       forgetLocalDraft()
@@ -407,7 +445,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       doc.showShareModal.value = true
       doc.refreshApproval()
     } else {
-      alert(doc.share.shareError.value || 'Failed to create share link.')
+      toast.error(doc.share.shareError.value || 'Failed to create share link.')
     }
   }
 
@@ -441,7 +479,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
   }
 
   const loader = {
-    boot, applyViewParam, loadFromFilePath,
+    boot, applyViewParam, setView, loadFromFilePath,
     handleFileLoaded, handleNewDoc, handleOpenFile, handleShare,
   }
   provide(DOC_LOADER, loader)

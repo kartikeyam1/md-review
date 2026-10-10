@@ -1,6 +1,7 @@
 import { ref, watch } from 'vue'
 import type { Ref } from 'vue'
-import type { Comment, ThemeMode, ContentType } from '@/types'
+import type { Comment, ThemeMode, ContentType, DocMode } from '@/types'
+import { payloadMode } from '@/composables/docMeta'
 import { applyTheme, isValidTheme } from '@/composables/useTheme'
 import { detectContentType } from '@/composables/useContentType'
 import { openDraftStore, createMemoryStore, type DraftStore } from '@/composables/draftStore'
@@ -21,6 +22,8 @@ export interface PersistedState {
   filename: string
   comments: Comment[]
   contentType?: ContentType
+  /** Doc mode (#2). Drafts from before it have none and restore as review. */
+  mode?: DocMode
   /** Shared session this document belongs to, if any. */
   pasteId?: string | null
   /**
@@ -41,6 +44,7 @@ export interface RestoredDraft {
   baseMarkdown: string | null
   /** True when the persisted copy was already in sync with the server. */
   clean: boolean
+  mode: DocMode
 }
 
 export function usePersistence(
@@ -53,6 +57,8 @@ export function usePersistence(
   options: {
     pasteId?: Ref<string | null>
     serverMarkdown?: Ref<string | null>
+    /** Doc mode (#2), stored with the draft. */
+    mode?: Ref<DocMode>
     /** Injected in tests; defaults to IndexedDB with a localStorage fallback. */
     store?: DraftStore
     /** Slot for the never-shared local draft (tests); defaults like `store`, or memory when `store` is injected. */
@@ -80,6 +86,7 @@ export function usePersistence(
     // Back-compat: older persisted state has no contentType — re-derive it.
     contentType.value = state.contentType ?? detectContentType(state.filename, state.markdown)
     loadComments(state.comments || [])
+    if (options.mode) options.mode.value = payloadMode(state.mode)
     setAppMode('review')
     // The URL is App's business (spec #4 rule 9): it reads restoredInfo() and
     // decides whether the landing route should become d/<pasteId>.
@@ -143,6 +150,7 @@ export function usePersistence(
       filename: s.filename,
       baseMarkdown: clean ? s.markdown : (s.serverMarkdown ?? null),
       clean,
+      mode: payloadMode(s.mode),
     }
   }
 
@@ -156,6 +164,7 @@ export function usePersistence(
       filename: filename.value,
       comments: comments.value,
       contentType: contentType.value,
+      ...(options.mode ? { mode: options.mode.value } : {}),
       pasteId: options.pasteId?.value ?? null,
       savedAt: new Date().toISOString(),
     }
@@ -205,6 +214,7 @@ export function usePersistence(
   watch(() => comments.value, scheduleSave, { deep: true })
   if (options.pasteId) watch(() => options.pasteId!.value, scheduleSave)
   if (options.serverMarkdown) watch(() => options.serverMarkdown!.value, scheduleSave)
+  if (options.mode) watch(() => options.mode!.value, scheduleSave)
 
   // Flush the debounce when the page is going away so the last keystrokes are
   // not lost to the 500 ms window.
@@ -223,14 +233,14 @@ export function usePersistence(
   }
 
   /** The never-shared local draft, if one is stored. */
-  async function loadLocalDraft(): Promise<Pick<PersistedState, 'markdown' | 'filename' | 'comments' | 'contentType'> | null> {
+  async function loadLocalDraft(): Promise<(Pick<PersistedState, 'markdown' | 'filename' | 'comments' | 'contentType'> & { mode: DocMode }) | null> {
     await restored
     try {
       const raw = await localStore?.get()
       if (!raw) return null
       const s = JSON.parse(raw) as PersistedState
       if (!s.markdown || !s.filename || s.pasteId) return null
-      return { markdown: s.markdown, filename: s.filename, comments: s.comments || [], contentType: s.contentType ?? detectContentType(s.filename, s.markdown) }
+      return { markdown: s.markdown, filename: s.filename, comments: s.comments || [], contentType: s.contentType ?? detectContentType(s.filename, s.markdown), mode: payloadMode(s.mode) }
     } catch { return null }
   }
 

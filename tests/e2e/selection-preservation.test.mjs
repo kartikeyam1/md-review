@@ -70,7 +70,7 @@ describe('selection preservation when clicking comment textarea', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     // Triple-click to select a paragraph in preview
@@ -106,7 +106,7 @@ describe('selection preservation when clicking comment textarea', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const paragraph = page.locator('.preview-pane p').first()

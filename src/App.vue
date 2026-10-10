@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
-import { provideDocState } from '@/composables/useDocState'
+import { computed, onMounted } from 'vue'
+import { provideDocState } from '@/composables/docState'
 import { useDocLoader } from '@/composables/useDocLoader'
 import { useGlobalShortcuts } from '@/composables/useGlobalShortcuts'
 import { useRouter } from '@/composables/useRouter'
@@ -24,24 +24,8 @@ const { sync, flushAutosave, route, embed } = doc
 
 useGlobalShortcuts([
   // Mod+S saves a shared doc now (00 §3.5).
-  { key: 's', mod: true, when: () => doc.appMode.value === 'review', run: () => { if (sync.isShared.value) flushAutosave() } },
+  { key: 's', mod: true, when: () => doc.appMode.value === 'doc' && doc.capability.value === 'editor', run: () => { if (sync.isShared.value) flushAutosave() } },
 ])
-
-function onBeforeUnload(e: BeforeUnloadEvent) {
-  if (!sync.isShared.value) return
-  if (sync.isDirty.value || sync.conflict.value || sync.saveState.value === 'saving') {
-    e.preventDefault()
-    e.returnValue = ''
-  }
-}
-
-function onPageHide() {
-  if (sync.isShared.value && sync.isDirty.value && !sync.conflict.value) flushAutosave({ keepalive: true })
-}
-
-function onVisibilityChange() {
-  if (document.hidden) onPageHide()
-}
 
 const docArea = computed(() => embed.value || (route.value.kind !== 'library' && route.value.kind !== 'not-found'))
 
@@ -49,18 +33,8 @@ function goHome() {
   router.push(router.base)
 }
 
-onMounted(async () => {
-  await loader.boot()
-  window.addEventListener('beforeunload', onBeforeUnload)
-  window.addEventListener('pagehide', onPageHide)
-  document.addEventListener('visibilitychange', onVisibilityChange)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('beforeunload', onBeforeUnload)
-  window.removeEventListener('pagehide', onPageHide)
-  document.removeEventListener('visibilitychange', onVisibilityChange)
-})
+// Leave-page handling (beforeunload / pagehide) lives in useAutosave.
+onMounted(() => { loader.boot() })
 </script>
 
 <template>

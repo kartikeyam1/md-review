@@ -452,6 +452,10 @@ export function normalizeEntries(entries, known, literals = {}) {
 // them as always-present on full GETs).
 const ADDITIVE = new Set(['mode', 'id', 'access', 'upsert_key', 'note', 'editToken', 'editUrl', 'url', 'viewUrl', 'shareUrl', 'created_by', 'content_hash', 'comments']);
 const VALID_MODES = new Set(['publish', 'review']);
+// #2: a pinned revision never GETs /paste/<id>, so a revision body
+// (GET /paste/:id/revisions/:hash, recognised by `is_current`) also carries the
+// doc's name (and `mode`, above) for the reader header.
+const REVISION_ADDITIVE = new Set(['sessionName', 'filename']);
 
 function isPlain(v) { return v && typeof v === 'object' && !Array.isArray(v); }
 function sortKeys(v) {
@@ -484,7 +488,7 @@ function cmp(g, a, at, diffs, strict = false, depth = 0) {
     }
     for (const k of Object.keys(a)) {
       if (k in g) continue;
-      if (!ADDITIVE.has(k)) { diffs.push(`${at}.${k}: unexpected new key (value ${JSON.stringify(a[k])?.slice(0, 120)})`); continue; }
+      if (!ADDITIVE.has(k) && !(REVISION_ADDITIVE.has(k) && 'is_current' in g)) { diffs.push(`${at}.${k}: unexpected new key (value ${JSON.stringify(a[k])?.slice(0, 120)})`); continue; }
       if (k === 'mode' && !VALID_MODES.has(a.mode)) diffs.push(`${at}.mode: invalid value ${JSON.stringify(a.mode)}`);
       if (k === 'comments' && !(Array.isArray(a.comments) && a.comments.length === 0)) diffs.push(`${at}.comments: added key must be [] (got ${JSON.stringify(a.comments).slice(0, 120)})`);
       if (k === 'content_hash' && !/^[0-9a-f]{32}$/.test(String(a.content_hash))) diffs.push(`${at}.content_hash: added key must be an md5`);

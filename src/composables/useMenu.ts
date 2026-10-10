@@ -32,7 +32,8 @@ export function useMenu(trigger: Ref<HTMLElement | null | undefined>, list: Ref<
   function items(): HTMLElement[] {
     const el = list.value
     if (!el) return []
-    return [...el.querySelectorAll<HTMLElement>(ITEM_SELECTOR)].filter((x) => x.getAttribute('aria-disabled') !== 'true')
+    // Disabled items stay focusable (WAI-ARIA menu pattern); activating them is a no-op.
+    return [...el.querySelectorAll<HTMLElement>(ITEM_SELECTOR)]
   }
 
   function focusItem(index: number) {

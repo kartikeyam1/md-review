@@ -4,6 +4,7 @@ const { NEXT } = require('../http-util.cjs');
 const {
   isExpired, resolveId, loadContent, loadMeta, readRevisionBlob, listRevisions,
 } = require('../storage.cjs');
+const { modeOf } = require('../mode.cjs');
 
 module.exports = async function revisions(req, res) {
   // GET /paste/:id/revisions — content history (oldest first)
@@ -42,6 +43,11 @@ module.exports = async function revisions(req, res) {
       by: entry ? (entry.by ?? null) : null, client: entry ? (entry.client ?? null) : null,
       size: entry ? entry.size : markdown.length, parent: entry ? (entry.parent ?? null) : null,
       is_current: hash === meta.content_hash,
+      // #2/#4 ruling: a pinned revision never GETs /paste/<id>, so the doc's
+      // mode and name (for the reader header title) come with the revision.
+      mode: modeOf(meta),
+      sessionName: meta.sessionName || null,
+      filename: meta.filename || null,
     }));
   }
 

@@ -10,6 +10,8 @@ const props = defineProps<{
   pasteId: string | null
   /** Remembered reviewer name to prefill the "Your name" field. */
   defaultReviewer?: string
+  /** Status only, no actions (e.g. a pinned revision, #2): this text replaces them. */
+  readOnlyNote?: string
 }>()
 
 const emit = defineEmits<{
@@ -57,7 +59,8 @@ function handleRequestChanges() {
       ⚠ {{ unresolvedMustFixCount }} new must-fix comment{{ unresolvedMustFixCount > 1 ? 's' : '' }} added since approval
     </div>
 
-    <div v-if="approvalStatus !== 'approved' || unresolvedMustFixCount > 0" class="approval-actions">
+    <span v-if="readOnlyNote" class="approval-note">{{ readOnlyNote }}</span>
+    <div v-else-if="approvalStatus !== 'approved' || unresolvedMustFixCount > 0" class="approval-actions">
       <input
         v-model="reviewerName"
         type="text"
@@ -84,6 +87,12 @@ function handleRequestChanges() {
 </template>
 
 <style scoped>
+.approval-note {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .approval-banner {
   display: flex;
   align-items: center;

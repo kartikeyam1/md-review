@@ -30,3 +30,33 @@ describe('useToast (00 §3.1)', () => {
     expect(t.toasts.value).toEqual([])
   })
 })
+
+describe('useToast pause/resume (hover/focus)', () => {
+  beforeEach(() => { vi.useFakeTimers(); _resetToasts() })
+  afterEach(() => { _resetToasts(); vi.useRealTimers() })
+
+  it('a paused toast stays; resume gives it the time it had left', () => {
+    const t = useToast()
+    const id = t.info('hold me')
+    vi.advanceTimersByTime(3000)
+    t.pause(id)
+    vi.advanceTimersByTime(60_000)
+    expect(t.toasts.value.length).toBe(1)
+    t.resume(id)
+    vi.advanceTimersByTime(999)
+    expect(t.toasts.value.length).toBe(1)
+    vi.advanceTimersByTime(2)
+    expect(t.toasts.value).toEqual([])
+  })
+
+  it('the live-region texts follow the newest polite and assertive toasts', () => {
+    const t = useToast()
+    t.info('first')
+    const e = t.error('broke')
+    t.success('second')
+    expect(t.latestPolite.value).toBe('second')
+    expect(t.latestAssertive.value).toBe('broke')
+    t.dismiss(e)
+    expect(t.latestAssertive.value).toBe('')
+  })
+})

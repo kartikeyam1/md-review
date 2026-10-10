@@ -51,6 +51,9 @@ export interface ApprovalInfo {
 
 export type ContentType = 'markdown' | 'html'
 
-export type AppMode = 'upload' | 'review' | 'dashboard'
+/** Whether a document is open ('doc') — not to be confused with the per-doc mode (DocMode). */
+export type AppMode = 'upload' | 'doc' | 'dashboard'
+/** Per-doc mode (#2): a reading page, or comments + approval. */
+export type DocMode = 'publish' | 'review'
 export type PaneMode = 'edit' | 'preview'
 export type ThemeMode = 'light' | 'dark' | 'github-light' | 'github-dark'

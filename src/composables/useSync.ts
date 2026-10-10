@@ -56,6 +56,12 @@ export function useSync(
     /** Reviewer name recorded on the revisions this browser writes. */
     author?: Ref<string>
     pollIntervalMs?: number
+    /**
+     * Every full server payload this sync applies (first load and polls),
+     * with the time its request started — for meta that is not content
+     * (doc mode, latest revision, session name).
+     */
+    onServerState?: (data: SharedPayload, requestedAt: number) => void
   } = {},
 ) {
   const {
@@ -560,6 +566,7 @@ export function useSync(
     try {
       await drainPending()
       if (pasteId.value !== id) return
+      const requestedAt = Date.now()
       const result = await pollPaste(id, etag)
       if (pasteId.value !== id) return
       if (result.notModified) {
@@ -572,6 +579,7 @@ export function useSync(
       }
       etag = result.etag
       applyServerState(result.data)
+      options.onServerState?.(result.data, requestedAt)
       syncError.value = false
     } finally {
       polling = false

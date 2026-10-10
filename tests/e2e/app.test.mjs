@@ -46,7 +46,7 @@ describe('file loading via ?filePath=', () => {
     await page.waitForTimeout(2000)
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should be visible')
-    const filename = await page.locator('.filename').textContent()
+    const filename = await page.locator('[data-testid="doc-title"]').textContent()
     assert.ok(filename.includes('fixture.md'))
   })
 
@@ -127,7 +127,7 @@ describe('code block commenting in preview', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
     // Switch to preview
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     // Find the <pre> element
@@ -152,7 +152,7 @@ describe('code block commenting in preview', () => {
   it('shows popover when selecting text inside a code block', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const pre = page.locator('.preview-pane pre').first()
@@ -264,7 +264,8 @@ describe('comment categories', () => {
     await page.waitForTimeout(500)
 
     // Open prompt modal
-    await page.click('button:has-text("Generate Prompt")')
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-generate-prompt"]')
     await page.waitForTimeout(500)
 
     const promptText = await page.locator('.prompt-text').textContent()
@@ -368,7 +369,8 @@ describe('new document', () => {
     assert.ok(url.includes('filePath'), 'URL should have filePath param initially')
 
     // Click New
-    await page.click('button:has-text("New")')
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-new-doc"]')
     await page.waitForTimeout(500)
 
     url = page.url()
@@ -379,7 +381,8 @@ describe('new document', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("New")')
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-new-doc"]')
     await page.waitForTimeout(500)
 
     const uploadVisible = await page.locator('.upload-area').isVisible().catch(() => false)
@@ -399,7 +402,7 @@ describe('paste and blank document', () => {
 
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should appear after starting blank')
-    const filename = await page.locator('.filename').textContent()
+    const filename = await page.locator('[data-testid="doc-title"]').textContent()
     assert.ok(filename.includes('untitled.md'))
   })
 
@@ -419,7 +422,7 @@ describe('paste and blank document', () => {
 
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should appear after pasting')
-    const filename = await page.locator('.filename').textContent()
+    const filename = await page.locator('[data-testid="doc-title"]').textContent()
     assert.ok(filename.includes('pasted.md'))
   })
 })
@@ -431,7 +434,7 @@ describe('table rendering', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const table = page.locator('.preview-pane table').first()
@@ -453,7 +456,7 @@ describe('code block contrast', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const previewBg = await page.evaluate(() => {
@@ -473,7 +476,7 @@ describe('code block contrast', () => {
     await page.waitForTimeout(2000)
 
     await page.click('.btn-icon') // dark mode
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const previewBg = await page.evaluate(() => {
@@ -560,7 +563,7 @@ describe('popover viewport clamping', () => {
     await narrowPage.goto(FILE_URL)
     await narrowPage.waitForTimeout(2000)
 
-    await narrowPage.click('button:has-text("Preview")')
+    await narrowPage.click('[data-testid="view-toggle-read"]')
     await narrowPage.waitForTimeout(500)
 
     // Select text in the first paragraph
@@ -667,7 +670,8 @@ describe('export/import comments', () => {
     assert.ok(data.comments[0].category, 'Each comment should have a category')
 
     // Now clear and import — click "New" to reset, then re-open the file
-    await page.click('button:has-text("New")')
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-new-doc"]')
     await page.waitForTimeout(500)
 
     // Navigate back to the fixture
@@ -757,7 +761,7 @@ describe('syntax highlighting', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     // The fixture has ```python with "print" which hljs should highlight
@@ -769,7 +773,7 @@ describe('syntax highlighting', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     // Find a highlighted span and check it has a color set
@@ -783,7 +787,7 @@ describe('syntax highlighting', () => {
     await page.waitForTimeout(2000)
 
     await page.click('.btn-icon') // dark mode
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const hljsSpans = await page.locator('.preview-pane pre code span[class*="hljs-"]').count()
@@ -798,7 +802,7 @@ describe('task list checkboxes', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     // The fixture has - [x] and - [ ] items
@@ -810,7 +814,7 @@ describe('task list checkboxes', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const checked = page.locator('.preview-pane input[type="checkbox"][checked]').first()
@@ -822,7 +826,7 @@ describe('task list checkboxes', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const listStyle = await page.locator('.preview-pane .contains-task-list').first().evaluate(
@@ -839,7 +843,7 @@ describe('h4/h5/h6 styling', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const h4 = page.locator('.preview-pane h4').first()
@@ -851,7 +855,7 @@ describe('h4/h5/h6 styling', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const h6 = page.locator('.preview-pane h6').first()
@@ -863,7 +867,7 @@ describe('h4/h5/h6 styling', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const h4Size = await page.locator('.preview-pane h4').first().evaluate(
@@ -886,6 +890,8 @@ describe('word count', () => {
   it('shows word and character counts when document is loaded', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    // Counts live in the editor header (#2 rule 5): switch to the edit view.
+    await switchToEdit()
 
     const stats = page.locator('.doc-stats')
     assert.ok(await stats.isVisible(), 'Doc stats should be visible')
@@ -898,6 +904,7 @@ describe('word count', () => {
   it('word count is non-zero for loaded document', async () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
+    await switchToEdit()
 
     const text = await page.locator('.doc-stats').textContent()
     // Extract the number before "words"
@@ -964,7 +971,7 @@ describe('selection preserved when popover opens', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     // Triple-click on the first paragraph to select it
@@ -1053,7 +1060,7 @@ describe('selection preserved when popover opens', () => {
     await page.goto(FILE_URL)
     await page.waitForTimeout(2000)
 
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.waitForTimeout(500)
 
     const paragraph = page.locator('.preview-pane p').first()

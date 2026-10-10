@@ -17,7 +17,8 @@ async function createSharedSession(markdown = '# Title\n\nFirst paragraph here.\
   const res = await fetch(`${PASTE_API}/paste`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown, filename: 'doc.md', comments: [], sharedAt: new Date().toISOString() }),
+    // Comments, approval and the reviewer name are review-mode UI (#2); the default is now publish.
+    body: JSON.stringify({ markdown, filename: 'doc.md', comments: [], sharedAt: new Date().toISOString(), mode: 'review' }),
   })
   const { id } = await res.json()
   return id
@@ -26,6 +27,13 @@ async function createSharedSession(markdown = '# Title\n\nFirst paragraph here.\
 async function serverMarkdown(id) {
   const res = await fetch(`${PASTE_API}/paste/${id}/markdown`)
   return (await res.json()).markdown
+}
+
+/** Poll the server until its markdown contains `text` (a hidden save-state alone can be true too early). */
+async function waitForServer(id, text, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (!(await serverMarkdown(id)).includes(text) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250))
+  return (await serverMarkdown(id)).includes(text)
 }
 
 async function agentPutMarkdown(id, markdown) {
@@ -44,6 +52,8 @@ async function typeAtEnd(text) {
 }
 
 const saveState = () => page.locator('[data-testid="save-state"]')
+// #2 rule 5: save-state only shows while not idle/saved — "saved" means it is gone.
+const SAVED = () => !document.querySelector('[data-testid="save-state"]')
 
 before(async () => { browser = await chromium.launch({ headless: true }) })
 after(async () => { await browser?.close() })
@@ -68,7 +78,7 @@ describe('shared mode: edits survive Edit → Preview → comment', () => {
     await page.waitForTimeout(300)
 
     // Preview, then comment on the first paragraph (no explicit Save).
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page.locator('.preview-pane').waitFor()
     const edited = await page.locator('.preview-pane').textContent()
     assert.ok(edited.includes('EDITED LINE XYZ'), 'preview should show the edit before commenting')
@@ -97,19 +107,18 @@ describe('shared mode: save state and conflicts', () => {
     const id = await createSharedSession()
     await page.goto(`${BASE}/#shared=${id}`)
     await page.locator('.preview-pane').waitFor({ timeout: 5000 })
-    await saveState().waitFor()
-    assert.equal((await saveState().textContent()).trim(), '✓ Saved')
+    assert.equal(await saveState().count(), 0, 'nothing to report while saved')
 
     await typeAtEnd('\n\nIDLE AUTOSAVE')
     assert.match(await saveState().textContent(), /Unsaved changes|Saving/)
     // Idle autosave fires ~2 s after the last keystroke — no pane switch, no Save click.
-    await page.waitForFunction(() => document.querySelector('[data-testid="save-state"]')?.textContent.includes('Saved'), null, { timeout: 8000 })
+    await page.waitForFunction(SAVED, null, { timeout: 8000 })
     assert.ok((await serverMarkdown(id)).includes('IDLE AUTOSAVE'))
 
-    // Save state stays visible after switching to preview.
-    await page.click('button:has-text("Preview")')
+    // Still saved (nothing shown) after switching to the read view.
+    await page.click('[data-testid="view-toggle-read"]')
     await page.locator('.preview-pane').waitFor()
-    assert.equal((await saveState().textContent()).trim(), '✓ Saved')
+    assert.equal(await saveState().count(), 0)
   })
 
   it('a server-side change while editing becomes a conflict; "Use server version" adopts it', async () => {
@@ -133,7 +142,7 @@ describe('shared mode: save state and conflicts', () => {
     await page.waitForFunction(() => !document.querySelector('[data-testid="conflict-bar"]'), null, { timeout: 3000 })
     const after = await page.locator('.cm-content').textContent()
     assert.ok(after.includes('THEIRS') && !after.includes('MINE'))
-    assert.equal((await saveState().textContent()).trim(), '✓ Saved')
+    assert.equal(await saveState().count(), 0, 'saved: no save-state')
   })
 
   it('"Keep my version" overwrites the server with the local edits', async () => {
@@ -149,7 +158,7 @@ describe('shared mode: save state and conflicts', () => {
     await bar.locator('button:has-text("Keep my version")').click()
     await page.waitForFunction(() => !document.querySelector('[data-testid="conflict-bar"]'), null, { timeout: 5000 })
     assert.equal(await serverMarkdown(id), '# Doc\n\nbody MINE')
-    assert.equal((await saveState().textContent()).trim(), '✓ Saved')
+    await page.waitForFunction(SAVED, null, { timeout: 3000 })
   })
 
   it('a reload before autosave restores the unsaved draft and then saves it', async () => {
@@ -162,13 +171,14 @@ describe('shared mode: save state and conflicts', () => {
     // 500 ms localStorage persist has.
     await page.waitForTimeout(700)
     assert.ok(!(await serverMarkdown(id)).includes('DRAFT'), 'precondition: not yet autosaved')
+    // The edit view is in the URL (?view=edit, #2), so the reload reopens the editor.
     await page.reload()
-    await page.locator('.preview-pane').waitFor({ timeout: 5000 })
+    await page.locator('.cm-content').waitFor({ timeout: 15000 })
 
-    const text = await page.locator('.preview-pane').textContent()
+    const text = await page.locator('.cm-content').textContent()
     assert.ok(text.includes('DRAFT'), 'unsaved draft must be restored after reload')
-    await page.waitForFunction(() => document.querySelector('[data-testid="save-state"]')?.textContent.includes('Saved'), null, { timeout: 8000 })
-    assert.ok((await serverMarkdown(id)).includes('DRAFT'), 'restored draft must autosave')
+    assert.ok(await waitForServer(id, 'DRAFT', 8000), 'restored draft must autosave')
+    await page.waitForFunction(SAVED, null, { timeout: 3000 })
   })
 
   it('editing in one tab shows up in another tab that is not editing', async () => {
@@ -182,7 +192,7 @@ describe('shared mode: save state and conflicts', () => {
     await page2.locator('.preview-pane').waitFor({ timeout: 5000 })
 
     await typeAtEnd(' FROM TAB ONE')
-    await page.click('button:has-text("Preview")')
+    await page.click('[data-testid="view-toggle-read"]')
     await page2.waitForFunction(() => document.querySelector('.preview-pane')?.textContent.includes('FROM TAB ONE'), null, { timeout: 12000 })
     await other.close()
   })
@@ -195,7 +205,6 @@ describe('shared mode: large drafts and signed comments', () => {
     const id = await createSharedSession(`# Big\n\n${bigBody}`)
     await page.goto(`${BASE}/#shared=${id}`)
     await page.locator('.preview-pane').waitFor({ timeout: 15000 })
-    await saveState().waitFor()
 
     await page.click('button:has-text("Edit")')
     await page.locator('.cm-content').waitFor()
@@ -209,12 +218,13 @@ describe('shared mode: large drafts and signed comments', () => {
     const persistErr = await page.locator('[data-testid="persist-error"]').count()
     assert.equal(persistErr, 0, 'local draft persistence must not report an error for a large document')
 
+    // The edit view is in the URL (?view=edit, #2), so the reload reopens the editor.
     await page.reload()
-    await page.locator('.preview-pane').waitFor({ timeout: 15000 })
-    const text = await page.locator('.preview-pane h1').first().textContent()
+    await page.locator('.cm-content').waitFor({ timeout: 15000 })
+    const text = await page.locator('.cm-line').first().textContent()
     assert.ok(text.includes('BIGDRAFT'), `large draft must be restored after reload, got heading: ${text}`)
-    await page.waitForFunction(() => document.querySelector('[data-testid="save-state"]')?.textContent.includes('Saved'), null, { timeout: 20000 })
-    assert.ok((await serverMarkdown(id)).includes('BIGDRAFT'))
+    assert.ok(await waitForServer(id, 'BIGDRAFT', 20000), 'restored large draft must autosave')
+    await page.waitForFunction(SAVED, null, { timeout: 3000 })
   })
 
   it('a reviewer name set in the header signs comments and replies', async () => {
@@ -299,7 +309,8 @@ describe('revision history: what changed since I last looked', () => {
     await agentPut(id, '# V2 title\n\nrewritten body', 'agent')
     await page.locator('[data-testid="changes-banner"]').waitFor({ state: 'visible', timeout: 12000 })
 
-    await page.locator('[data-testid="history-button"]').click()
+    await page.locator('[data-testid="header-overflow-btn"]').click()
+    await page.locator('[data-testid="menu-history"]').click()
     await page.locator('[data-testid="revisions-modal"]').waitFor({ timeout: 5000 })
     // The default comparison is from the acknowledged (V1) revision to current (V2); restore V1.
     await page.locator('[data-testid="restore-revision"]').click()
@@ -307,25 +318,30 @@ describe('revision history: what changed since I last looked', () => {
 
     const preview = await page.locator('.preview-pane').textContent()
     assert.ok(preview.includes('V1 title') && preview.includes('original body'), 'restored content should be on screen')
-    // Restore is an unsaved edit that then autosaves back to the server.
-    await page.waitForFunction(() => document.querySelector('[data-testid="save-state"]')?.textContent.includes('Saved'), null, { timeout: 8000 })
-    assert.ok((await serverMarkdown(id)).includes('original body'))
+    // Restore is an unsaved edit that then autosaves back to the server. (The
+    // read view shows no save-state — it is editor-header chrome, 00 §2.2 — so
+    // watch the server instead.)
+    assert.ok(await waitForServer(id, 'original body', 8000), 'restored revision must autosave')
     // History now has create, agent rewrite, and the restore.
     const list = await (await fetch(`${PASTE_API}/paste/${id}/revisions`)).json()
     assert.ok(list.revisions.length >= 3)
   })
 
-  it('the History button shows the revision count and an unseen-changes dot', async () => {
+  it('the History menu item shows the revision count and an unseen-changes dot', async () => {
     const id = await createSharedSession('# Doc\n\nbody')
     await page.goto(`${BASE}/#shared=${id}`)
     await page.locator('.preview-pane').waitFor({ timeout: 5000 })
-    const btn = page.locator('[data-testid="history-button"]')
+    // history-button is retired: History lives in the overflow menu (#2, 00 §10.1).
+    await page.locator('[data-testid="header-overflow-btn"]').click()
+    const btn = page.locator('[data-testid="menu-history"]')
     await btn.waitFor()
-    assert.ok((await btn.textContent()).includes('1'), 'shows the initial revision count')
+    await page.waitForFunction(() => document.querySelector('[data-testid="menu-history"]')?.textContent.includes('1'), null, { timeout: 5000 })
     assert.equal(await btn.locator('.history-dot').count(), 0)
+    await page.keyboard.press('Escape')
 
     await agentPut(id, '# Doc\n\nbody + more')
     await page.locator('[data-testid="changes-banner"]').waitFor({ state: 'visible', timeout: 12000 })
-    assert.equal(await btn.locator('.history-dot').count(), 1, 'unseen dot appears on the History button')
+    await page.locator('[data-testid="header-overflow-btn"]').click()
+    assert.equal(await btn.locator('.history-dot').count(), 1, 'unseen dot appears on the History menu item')
   })
 })

@@ -5,6 +5,7 @@
 // AND, paging is an opaque offset cursor bound to the query's filters.
 // Returns NEXT when the request is not one of its own.
 const crypto = require('crypto');
+const { isDocMode } = require('../mode.cjs');
 const { NEXT } = require('../http-util.cjs');
 const { db } = require('../storage.cjs');
 const { snippetText } = require('../doc-text.cjs');
@@ -67,7 +68,7 @@ function libraryDocs(req, res) {
   const sortParam = get('sort');
   if (sortParam && !SORTS.has(sortParam)) return send(res, 400, { error: 'invalid sort' });
   const mode = get('mode');
-  if (mode && mode !== 'publish' && mode !== 'review') return send(res, 400, { error: 'invalid mode' });
+  if (mode && !isDocMode(mode)) return send(res, 400, { error: 'invalid mode' });
   const type = get('type');
   if (type && type !== 'md' && type !== 'html') return send(res, 400, { error: 'invalid type' });
   const updatedAfter = get('updated_after');

@@ -62,6 +62,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // FE + server pure modules (00 §4.8).
+      '@shared': fileURLToPath(new URL('./shared', import.meta.url)),
     },
   },
   test: {

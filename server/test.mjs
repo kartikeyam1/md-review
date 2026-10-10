@@ -360,6 +360,47 @@ test('ETag — returns 200 with new ETag after data changes', async () => {
   assert.notEqual(etag1, etag2, 'ETag should change after data changes');
 });
 
+// ── Doc mode (#2) ─────────────────────────────────────────────────────────────
+
+test('mode — a mode change moves the ETag, so pollers see it (old If-None-Match → 200)', async () => {
+  const pasteId = await createPaste({ markdown: '# Mode etag\n', filename: 'm.md', mode: 'publish' });
+  const first = await fetch(`${BASE}/paste/${pasteId}`);
+  const etag1 = first.headers.get('etag');
+  assert.ok(etag1);
+  assert.equal((await json(first)).mode, 'publish');
+
+  const put = await fetch(`${BASE}/paste/${pasteId}/meta`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'review' }),
+  });
+  assert.equal(put.status, 200);
+
+  const again = await fetch(`${BASE}/paste/${pasteId}`, { headers: { 'If-None-Match': etag1 } });
+  assert.equal(again.status, 200, 'the old ETag no longer matches');
+  assert.notEqual(again.headers.get('etag'), etag1);
+  assert.equal((await json(again)).mode, 'review');
+});
+
+test('mode — GET /paste/:id/revisions/:hash carries the doc mode and name (pinned revisions never GET /paste/:id)', async () => {
+  // Different authors, so the two writes are two revisions (same-author writes fold).
+  const pasteId = await createPaste({ markdown: '# Rev one\n', filename: 'rev.md', sessionName: 'Pinned name', mode: 'review', author: 'alice' });
+  await fetch(`${BASE}/paste/${pasteId}/markdown`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markdown: '# Rev two\n', author: 'bob' }),
+  });
+  const list = await json(await fetch(`${BASE}/paste/${pasteId}/revisions`));
+  const old = list.revisions.find((r) => r.hash !== list.current);
+  assert.ok(old, 'an older revision exists');
+  const rev = await json(await fetch(`${BASE}/paste/${pasteId}/revisions/${old.hash}`));
+  assert.equal(rev.markdown, '# Rev one\n');
+  assert.equal(rev.mode, 'review');
+  assert.equal(rev.sessionName, 'Pinned name');
+  assert.equal(rev.filename, 'rev.md');
+
+  await fetch(`${BASE}/paste/${pasteId}/meta`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'publish' }),
+  });
+  assert.equal((await json(await fetch(`${BASE}/paste/${pasteId}/revisions/${old.hash}`))).mode, 'publish', 'it is the doc\'s current mode');
+});
+
 // ── CORS ──────────────────────────────────────────────────────────────────────
 
 test('CORS — allows PUT and DELETE methods', async () => {

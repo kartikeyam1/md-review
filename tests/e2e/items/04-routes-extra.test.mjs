@@ -259,7 +259,9 @@ describe('#4 routes — landing, share and New (rules 9, 11)', () => {
       await page.locator('.modal-close').click()
 
       await page.evaluate(() => { window.__probe = 'p' })
-      await page.locator('header button:has-text("New")').click()
+      // #2 moved New into the overflow menu (00 §11).
+      await page.locator('[data-testid="header-overflow-btn"]').click()
+      await page.locator('[data-testid="menu-new-doc"]').click()
       await waitForPath(page, '/')
       await page.locator('.upload-area').waitFor({ state: 'visible' })
       assert.equal(await historyLength(page), before + 1, 'New pushes the landing route')
@@ -312,7 +314,7 @@ async function typeInEditor(page, text) {
   await editor.click()
   await page.keyboard.press('Control+End')
   await page.keyboard.type(text)
-  await page.locator('header button:has-text("Preview")').click()
+  await page.locator('[data-testid="view-toggle-read"]').click()
 }
 
 const stallWrites = (page) => page.route((u) => u.href.startsWith(API) && /\/paste\/[^/]+\/markdown$/.test(u.pathname), (route) => {
@@ -463,16 +465,17 @@ describe('#4 routes — stale views, anchors, view param (review fixes)', () => 
     } finally { await context.close() }
   })
 
-  it('a UI view toggle drops ?view= so a reload cannot reopen the old view', T, async () => {
+  // #2 (00 §1.3, AC-02.15): UI view toggles now write ?view= with replaceState (DECISIONS #4 handed this to #2).
+  it('a UI view toggle writes ?view= with replaceState', T, async () => {
     const doc = await createDoc({ markdown: '# Toggle\n\nToggle body.', filename: 't.md' })
     const { context, page } = await open()
     try {
       await page.goto(`${BASE}/d/${doc.id}?view=edit`)
       await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout: 15000 })
       const before = await historyLength(page)
-      await page.locator('header button:has-text("Preview")').click()
+      await page.locator('[data-testid="view-toggle-read"]').click()
       await waitForDoc(page, 'Toggle body.')
-      await waitForPath(page, `/d/${doc.id}`, { search: '' })
+      await waitForPath(page, `/d/${doc.id}`, { search: '?view=read' })
       assert.equal(await historyLength(page), before, 'replaceState')
 
       await page.goto(`${BASE}/d/${doc.id}?view=`)

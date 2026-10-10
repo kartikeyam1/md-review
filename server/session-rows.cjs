@@ -11,7 +11,7 @@
 const crypto = require('crypto');
 const { docTitle, searchContent } = require('./doc-text.cjs');
 
-const VALID_MODES = new Set(['publish', 'review']);
+const { VALID_MODES, validMode } = require('./mode.cjs');
 
 /** meta key → sessions column (string-valued). `slug` is special-cased. */
 const META_COLUMNS = [
@@ -70,7 +70,6 @@ function decodeMeta(row, contentRow) {
   return meta;
 }
 
-const validMode = (m) => (VALID_MODES.has(m) ? m : null);
 
 // ── comments ────────────────────────────────────────────────────────────────
 

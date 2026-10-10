@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { useDocState } from '@/composables/useDocState'
 
 // The self-declared reviewer name that signs comments, replies and approvals.
+// `autoEdit`: opened from the overflow menu — start in the input, emit `done` when it closes.
+const props = defineProps<{ autoEdit?: boolean }>()
+const emit = defineEmits<{ done: [] }>()
 const { reviewerName, setReviewerName } = useDocState()
 
 const editingReviewer = ref(false)
@@ -20,12 +23,15 @@ function commitReviewer() {
   const val = (reviewerInput.value?.value ?? '').trim()
   if (val !== (reviewerName.value ?? '')) setReviewerName(val)
   editingReviewer.value = false
+  emit('done')
 }
 
 function onReviewerKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter') commitReviewer()
-  if (e.key === 'Escape') editingReviewer.value = false
+  if (e.key === 'Escape') { editingReviewer.value = false; emit('done') }
 }
+
+onMounted(() => { if (props.autoEdit) startEditReviewer() })
 </script>
 
 <template>

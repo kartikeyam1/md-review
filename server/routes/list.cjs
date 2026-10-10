@@ -4,6 +4,7 @@ const { NEXT } = require('../http-util.cjs');
 const {
   isExpired, listSessionsForList,
 } = require('../storage.cjs');
+const { modeOf } = require('../mode.cjs');
 
 module.exports = async function list(req, res) {
   // GET /paste/list — list sessions (filter by status, name pattern, limit)
@@ -39,6 +40,7 @@ module.exports = async function list(req, res) {
         expires_at: data.expires_at || null,
         updated_at: s.updated_at || data.sharedAt || null,
         revision_count: s.revision_count,
+        mode: modeOf(data),
       });
     }
     results.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));

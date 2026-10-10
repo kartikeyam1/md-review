@@ -1,15 +1,26 @@
 <script setup lang="ts">
 import { useToast, type ToastItem } from '@/composables/useToast'
 
-const { toasts, dismiss } = useToast()
+// The toast stack (00 §3.1). Each toast carries its role (status | alert) as
+// the contract says, but screen readers hear it through two live regions that
+// are always in the DOM — a region inserted together with its text is often
+// not announced. Hovering or focusing a toast pauses its auto-dismiss.
+const { toasts, dismiss, pause, resume, latestPolite, latestAssertive } = useToast()
 
 function runAction(t: ToastItem) {
   t.action?.onClick?.()
   dismiss(t.id)
 }
+
+function onFocusOut(e: FocusEvent, id: number) {
+  const el = e.currentTarget as HTMLElement
+  if (!el.contains(e.relatedTarget as Node | null)) resume(id)
+}
 </script>
 
 <template>
+  <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ latestPolite }}</div>
+  <div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true">{{ latestAssertive }}</div>
   <div class="app-toasts">
     <div
       v-for="t in toasts"
@@ -20,6 +31,11 @@ function runAction(t: ToastItem) {
       :data-kind="t.kind"
       :data-toast="t.key"
       :role="t.kind === 'error' ? 'alert' : 'status'"
+      aria-live="off"
+      @mouseenter="pause(t.id)"
+      @mouseleave="resume(t.id)"
+      @focusin="pause(t.id)"
+      @focusout="onFocusOut($event, t.id)"
     >
       <span class="app-toast-text">{{ t.text }}</span>
       <template v-if="t.action">
@@ -32,6 +48,18 @@ function runAction(t: ToastItem) {
 </template>
 
 <style scoped>
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .app-toasts {
   position: fixed;
   left: 50%;

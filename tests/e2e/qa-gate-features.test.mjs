@@ -14,6 +14,8 @@ async function createTestSession() {
       markdown: '# QA Gate Test\n\n## Section 1\nThis needs review.\n\n## Section 2\nLooks good.',
       filename: 'qa-gate-test.md',
       sessionName: 'QA Gate Feature Test',
+      // Approval, summary and the reviewer name are review-mode UI (#2); the default is now publish.
+      mode: 'review',
     }),
   })
   const data = await res.json()
@@ -195,6 +197,7 @@ describe('Gate + Speed features', () => {
           markdown: '# Dashboard Test',
           filename: 'dashboard.md',
           sessionName: 'Dashboard Pending Session',
+          mode: 'review',
         }),
       })
 

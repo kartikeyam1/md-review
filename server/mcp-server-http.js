@@ -35,6 +35,7 @@ function registerTools(server, handlers) {
       callbackUrl: z.string().optional().describe('Webhook URL to POST approval status changes to'),
       slug: z.string().optional().describe('Custom URL-safe slug (auto-generated from sessionName if omitted)'),
       expiryDays: z.number().nullable().optional().describe('Session expiry in days (7, 30, or null for infinite). Default: 30'),
+      mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans (default); review = comments and approval.'),
     }).refine(data => data.markdown || data.filePath, {
       message: 'Either markdown or filePath must be provided',
     }),
@@ -45,7 +46,7 @@ function registerTools(server, handlers) {
 
   server.registerTool('get_session', {
     title: 'Get Review Session',
-    description: "Get a session's full state. Use 'fields' to load only specific parts for large sessions.",
+    description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions.",
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
       fields: z.string().optional().describe('Comma-separated fields to load: meta,content,comments,files. Omit for full response.'),
@@ -232,7 +233,7 @@ function registerTools(server, handlers) {
 
   server.registerTool('list_sessions', {
     title: 'List Sessions',
-    description: 'List all review sessions. Filter by approval status, session/file name pattern, or limit results.',
+    description: 'List all sessions; each item carries its doc `mode` (publish|review). Filter by approval status, session/file name pattern, or limit results.',
     inputSchema: z.object({
       status: z.enum(['pending', 'approved', 'changes_requested']).optional().describe('Filter by approval status'),
       namePattern: z.string().optional().describe('Regex to match against sessionName or filename (case-insensitive)'),
@@ -256,12 +257,13 @@ function registerTools(server, handlers) {
 
   server.registerTool('update_session_meta', {
     title: 'Update Session Metadata',
-    description: 'Update session name, slug, or expiry.',
+    description: 'Update session name, slug, expiry or doc mode (publish|review).',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID or slug'),
       sessionName: z.string().optional().describe('New session name'),
       slug: z.string().optional().describe('New URL slug'),
       expiryDays: z.number().nullable().optional().describe('New expiry in days (7, 30, 90, or null for infinite)'),
+      mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans; review = comments and approval.'),
     }),
   }, async (args) => {
     const result = await handlers.update_session_meta(args);
@@ -346,6 +348,7 @@ function registerTools(server, handlers) {
       expiryDays: z.number().nullable().optional().describe('Expiry in days (7, 30, or null for infinite)'),
       callbackUrl: z.string().optional().describe('Webhook URL for approval changes'),
       contentType: z.enum(['markdown', 'html']).optional().describe('Force document type. Omit to auto-detect from the file extension.'),
+      mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans (default); review = comments and approval.'),
     }),
   }, async (args) => {
     const result = await handlers.create_via_shell(args);

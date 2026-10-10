@@ -100,7 +100,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
   }
 
   return {
-    async create_session({ markdown, filePath, filename, comments, sessionName, callbackUrl, slug, expiryDays, contentType, author }) {
+    async create_session({ markdown, filePath, filename, comments, sessionName, callbackUrl, slug, expiryDays, contentType, author, mode }) {
       const resolved = await resolveFile(markdown, filePath, filename);
       const resolvedFilename = filename ?? resolved.name;
       const payload = {
@@ -114,6 +114,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       if (callbackUrl !== undefined) payload.callback_url = callbackUrl;
       if (slug !== undefined) payload.slug = slug;
       if (expiryDays !== undefined) payload.expiry_days = expiryDays;
+      if (mode !== undefined) payload.mode = mode;
       // Content type ('markdown' | 'html'). When omitted, the frontend infers it
       // from the filename extension / body, so passing it is optional but makes
       // HTML sessions render correctly regardless of filename.
@@ -124,7 +125,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       });
       if (result.error) return result;
       const shareId = result.slug || result.id;
-      return { id: result.id, slug: result.slug || null, shareUrl: result.url || docUrl(shareBase, shareId) };
+      return { id: result.id, slug: result.slug || null, mode: result.mode ?? null, shareUrl: result.url || docUrl(shareBase, shareId) };
     },
 
     async get_session({ sessionId, fields }) {
@@ -263,8 +264,9 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       return { ok: true };
     },
 
-    async update_session_meta({ sessionId, sessionName, expiryDays, slug }) {
+    async update_session_meta({ sessionId, sessionName, expiryDays, slug, mode }) {
       const payload = {};
+      if (mode !== undefined) payload.mode = mode;
       if (sessionName !== undefined) payload.sessionName = sessionName;
       if (expiryDays !== undefined) payload.expiry_days = expiryDays;
       if (slug !== undefined) payload.slug = slug;
@@ -341,7 +343,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
 
     // ── Shell command generators (curl — runs on any client machine) ──────────
 
-    async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl, contentType }) {
+    async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl, contentType, mode }) {
       // Build a JSON payload using jq to read the file, so the content never enters the conversation
       const fname = basename(filePath);
       const ctype = contentType || (/\.html?$/i.test(fname) ? 'html' : 'markdown');
@@ -349,6 +351,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       if (sessionName) jqParts.push(`.sessionName = ${JSON.stringify(sessionName)}`);
       if (slug) jqParts.push(`.slug = ${JSON.stringify(slug)}`);
       if (callbackUrl) jqParts.push(`.callback_url = ${JSON.stringify(callbackUrl)}`);
+      if (mode !== undefined) jqParts.push(`.mode = ${JSON.stringify(mode)}`);
       if (expiryDays !== undefined) jqParts.push(`.expiry_days = ${expiryDays === null ? 'null' : expiryDays}`);
       const jqExpr = `{} | ${jqParts.join(' | ')}`;
 
@@ -407,6 +410,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       callbackUrl: z.string().optional().describe('Webhook URL to POST approval status changes to'),
       slug: z.string().optional().describe('Custom URL-safe slug (auto-generated from sessionName if omitted)'),
       expiryDays: z.number().nullable().optional().describe('Session expiry in days (7, 30, or null for infinite). Default: 30'),
+      mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans (default); review = comments and approval.'),
     }).refine(data => data.markdown || data.filePath, {
       message: 'Either markdown or filePath must be provided',
     }),
@@ -417,7 +421,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('get_session', {
     title: 'Get Review Session',
-    description: "Get a session's full state. Use 'fields' to load only specific parts for large sessions.",
+    description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions.",
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
       fields: z.string().optional().describe('Comma-separated fields to load: meta,content,comments,files. Omit for full response.'),
@@ -604,7 +608,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('list_sessions', {
     title: 'List Sessions',
-    description: 'List all review sessions. Filter by approval status, session/file name pattern, or limit results. Use this to find sessions created earlier.',
+    description: 'List all sessions; each item carries its doc `mode` (publish|review). Filter by approval status, session/file name pattern, or limit results. Use this to find sessions created earlier.',
     inputSchema: z.object({
       status: z.enum(['pending', 'approved', 'changes_requested']).optional().describe('Filter by approval status'),
       namePattern: z.string().optional().describe('Regex to match against sessionName or filename (case-insensitive)'),
@@ -628,12 +632,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('update_session_meta', {
     title: 'Update Session Metadata',
-    description: 'Update session name, slug, or expiry. Use this to rename sessions or extend their lifetime.',
+    description: 'Update session name, slug, expiry or doc mode (publish|review). Use this to rename sessions, extend their lifetime or switch a doc between a reading page and a review.',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID or slug'),
       sessionName: z.string().optional().describe('New session name'),
       slug: z.string().optional().describe('New URL slug (set to "" to remove)'),
       expiryDays: z.number().nullable().optional().describe('New expiry in days (7, 30, 90, or null for infinite)'),
+      mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans; review = comments and approval.'),
     }),
   }, async (args) => {
     const result = await handlers.update_session_meta(args);
@@ -721,6 +726,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       expiryDays: z.number().nullable().optional().describe('Expiry in days (7, 30, or null for infinite)'),
       callbackUrl: z.string().optional().describe('Webhook URL for approval changes'),
       contentType: z.enum(['markdown', 'html']).optional().describe('Force document type. Omit to auto-detect from the file extension.'),
+      mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans (default); review = comments and approval.'),
     }),
   }, async (args) => {
     const result = await handlers.create_via_shell(args);
