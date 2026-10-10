@@ -129,7 +129,9 @@ function bestMs(fn) {
   return best;
 }
 
-test('indexing + snippet text of 1 MB pathological docs stay under 100 ms each (were quadratic or worse)', () => {
+// A quadratic-behaviour detector, not a benchmark: the quadratic versions took
+// seconds to minutes, so 400 ms leaves room for a loaded test box.
+test('indexing + snippet text of 1 MB pathological docs stay under 400 ms each (were quadratic or worse)', () => {
   const MB = 1024 * 1024;
   const fill = (u) => u.repeat(Math.ceil(MB / u.length)).slice(0, MB);
   const html = ['<script', '<!--', '<meta name="description" ', '<title>', '<h1>', '<p>', '<a', '</', '<style>', '<SCRIPT', '<!x', '&a'];
@@ -139,7 +141,7 @@ test('indexing + snippet text of 1 MB pathological docs stay under 100 ms each (
   const check = (label, fn) => {
     const ms = bestMs(fn);
     if (process.env.MDREVIEW_PERF_LOG) console.log(`${ms.toFixed(1)} ms  ${label}`);
-    if (ms >= 100) slow.push(`${label}: ${ms.toFixed(1)} ms`);
+    if (ms >= 400) slow.push(`${label}: ${ms.toFixed(1)} ms`);
   };
   for (const u of html) {
     const s = fill(u);
