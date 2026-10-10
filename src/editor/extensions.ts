@@ -4,6 +4,7 @@ import { defaultKeymap } from '@codemirror/commands'
 import { search, searchKeymap } from '@codemirror/search'
 import { historyExtension } from '@/editor/history'
 import { svgPaste } from '@/editor/svgPaste'
+import { markdownCommands } from '@/editor/markdownCommands'
 
 /**
  * The editor's feature extensions, in one list (00 §4.7). Feature items add
@@ -20,6 +21,7 @@ export function editorExtensions(opts: { restoredHistory?: Extension | null } = 
     lineNumbers(),
     drawSelection(),
     search(),
+    markdownCommands,
     keymap.of([...defaultKeymap, ...searchKeymap]),
     svgPaste,
   ]

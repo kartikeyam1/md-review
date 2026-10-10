@@ -1,7 +1,13 @@
 <script setup lang="ts">
 // The editor's toolbar row (00 §3.3). Left → right: Undo, Redo (#8) |
 // shortcuts (#9) | spacer | focus mode (#13). Buttons never take focus away
-// from the editor: the pane runs the command and refocuses the editor.
+// from the editor: the pane runs the command and refocuses the editor. The
+// shortcuts button is the exception: its overlay returns focus to it (AC-09.16).
+import { ref } from 'vue'
+import ShortcutsOverlay from '@/components/ShortcutsOverlay.vue'
+import { formatCombo } from '@/editor/shortcutList'
+import { closeShortcutsOverlay, openShortcutsOverlay, useShortcutsOverlayHost } from '@/composables/useShortcutsOverlay'
+
 defineProps<{
   canUndo: boolean
   canRedo: boolean
@@ -12,13 +18,20 @@ const emit = defineEmits<{
   redo: []
 }>()
 
-const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || '')
-const undoTitle = isMac ? 'Undo (⌘Z)' : 'Undo (Ctrl+Z)'
-const redoTitle = isMac ? 'Redo (⇧⌘Z or ⌘Y)' : 'Redo (Ctrl+Y or Ctrl+Shift+Z)'
+// Same labels and order as the shortcuts overlay rows (shortcutList.ts).
+const undoTitle = `Undo (${formatCombo('Mod-z')})`
+const redoTitle = `Redo (${formatCombo('Mod-Shift-z')} or ${formatCombo('Mod-y')})`
+
+const bar = ref<HTMLElement | null>(null)
+const shortcutsOpen = useShortcutsOverlayHost(bar)
+
+function openShortcuts(e: MouseEvent) {
+  openShortcutsOverlay(e.currentTarget as HTMLElement)
+}
 </script>
 
 <template>
-  <div class="editor-toolbar" role="toolbar" aria-label="Editor" data-testid="editor-toolbar">
+  <div ref="bar" class="editor-toolbar" role="toolbar" aria-label="Editor" data-testid="editor-toolbar">
     <button
       type="button"
       class="tb-btn"
@@ -43,7 +56,21 @@ const redoTitle = isMac ? 'Redo (⇧⌘Z or ⌘Y)' : 'Redo (Ctrl+Y or Ctrl+Shift
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></svg>
     </button>
+    <span class="tb-sep" aria-hidden="true" />
+    <button
+      type="button"
+      class="tb-btn"
+      aria-label="Keyboard shortcuts"
+      title="Keyboard shortcuts (?)"
+      aria-haspopup="dialog"
+      :aria-expanded="shortcutsOpen"
+      data-testid="editor-shortcuts-btn"
+      @click="openShortcuts"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" /></svg>
+    </button>
     <span class="tb-spacer" />
+    <ShortcutsOverlay v-if="shortcutsOpen" @close="closeShortcutsOverlay" />
   </div>
 </template>
 
@@ -85,6 +112,13 @@ const redoTitle = isMac ? 'Redo (⇧⌘Z or ⌘Y)' : 'Redo (Ctrl+Y or Ctrl+Shift
 .tb-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+.tb-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
 }
 
 .tb-spacer {

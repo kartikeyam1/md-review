@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 import { provideDocState } from '@/composables/docState'
 import { useDocLoader } from '@/composables/useDocLoader'
 import { useGlobalShortcuts } from '@/composables/useGlobalShortcuts'
+import { shortcutsHelpShortcut } from '@/composables/useShortcutsOverlay'
 import { useRouter } from '@/composables/useRouter'
 import { installEditTokenHook } from '@/composables/useEditToken'
 import DocView from '@/components/DocView.vue'
@@ -28,6 +29,7 @@ const { sync, flushAutosave, route, embed } = doc
 useGlobalShortcuts([
   // Mod+S saves a shared doc now (00 §3.5).
   { key: 's', mod: true, when: () => doc.appMode.value === 'doc' && doc.capability.value === 'editor', run: () => { if (sync.isShared.value) flushAutosave() } },
+  shortcutsHelpShortcut, // `?` opens the shortcuts overlay in edit/split views (#9)
 ])
 
 const docArea = computed(() => embed.value || (route.value.kind !== 'library' && route.value.kind !== 'not-found'))

@@ -174,7 +174,15 @@ const selectionListener = ViewPlugin.fromClass(
 
       // coordsAtPos cannot be called during an update — defer to next frame
       requestAnimationFrame(() => {
-        const coords = editorView.coordsAtPos(selTo)
+        // By the next frame the doc may have shrunk (or the view gone): measure a
+        // position that still exists, and never let a stale one throw.
+        if (!editorView.dom.isConnected) return
+        let coords: { left: number; bottom: number } | null = null
+        try {
+          coords = editorView.coordsAtPos(Math.min(selTo, editorView.state.doc.length))
+        } catch {
+          coords = null
+        }
         const x = coords ? coords.left : 0
         const y = coords ? coords.bottom : 0
         emit('selection', { startLine, endLine, selectedText, coords: { x, y } })
