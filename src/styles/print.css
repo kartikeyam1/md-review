@@ -168,6 +168,11 @@
     overflow-wrap: anywhere;
   }
 
+  /* #14: the toolbar does not print, so its reserved strip goes too. */
+  :root .preview-pane .code-block > pre {
+    padding-top: var(--code-pad, 12px);
+  }
+
   /* ── Rule 14: page breaks ── */
   .preview-pane :is(pre, tr, img, .mermaid, blockquote),
   .preview-pane .table-scroll thead {

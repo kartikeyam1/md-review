@@ -2,8 +2,6 @@ import type { HeadingInfo } from '@/markdown/headingIds'
 import type { DocState } from '@/composables/docState'
 import type { Router } from '@/composables/useRouter'
 import type { toast } from '@/composables/useToast'
-import { headingAnchors } from './headingAnchors'
-import { sectionReactions } from './sectionReactions'
 
 // Preview enhancers (00 §4.5): DOM behaviour layered on the rendered markdown.
 // Each is `(container, ctx) => cleanup`, run by PreviewPane after every render
@@ -26,13 +24,29 @@ export interface EnhancerContext {
 
 export type Enhancer = (container: HTMLElement, ctx: EnhancerContext) => (() => void) | void
 
-const ENHANCERS: Enhancer[] = [
-  headingAnchors, // #3
-  sectionReactions, // #24 (after headingAnchors: its chips go before the heading-anchor)
-]
+const ENHANCERS: Enhancer[] = []
+
+// All of them (#3 heading anchors, #24 section reactions, #14 code copy, #17
+// folding, #15 zoom) live in one lazy chunk (lazyEnhancers.ts) so the entry stays within #6's AC-06.8 budget.
+// It is requested when this module loads, so it is normally in before the first
+// doc renders; a render that beats it runs them as soon as it arrives.
+let lazy: Enhancer[] | null = null
+const lazyReady: Promise<Enhancer[]> = import('./lazyEnhancers')
+  .then((m) => (lazy = m.LAZY_ENHANCERS))
+  .catch(() => (lazy = []))
 
 /** Run every enhancer on `container`; returns one cleanup for all of them. */
 export function runEnhancers(container: HTMLElement, ctx: EnhancerContext): () => void {
-  const cleanups = ENHANCERS.map((enhance) => enhance(container, ctx)).filter((c): c is () => void => typeof c === 'function')
-  return () => { for (const c of cleanups) c() }
+  const cleanups: (() => void)[] = []
+  let cancelled = false
+  const run = (list: Enhancer[]) => {
+    for (const enhance of list) {
+      const c = enhance(container, ctx)
+      if (typeof c === 'function') cleanups.push(c)
+    }
+  }
+  run(ENHANCERS)
+  if (lazy) run(lazy)
+  else lazyReady.then((list) => { if (!cancelled && container.isConnected) run(list) })
+  return () => { cancelled = true; for (const c of cleanups) c() }
 }

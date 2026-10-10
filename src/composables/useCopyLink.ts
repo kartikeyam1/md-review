@@ -8,8 +8,11 @@ export async function copyText(text: string): Promise<boolean> {
       return true
     }
   } catch { /* fall back */ }
+  // The fallback focuses a hidden textarea; focus goes back where it was (#14 AC-14.6).
+  const prev = document.activeElement as HTMLElement | null
+  let ta: HTMLTextAreaElement | null = null
   try {
-    const ta = document.createElement('textarea')
+    ta = document.createElement('textarea')
     ta.value = text
     ta.setAttribute('readonly', '')
     ta.style.position = 'fixed'
@@ -17,11 +20,12 @@ export async function copyText(text: string): Promise<boolean> {
     document.body.appendChild(ta)
     ta.focus()
     ta.select()
-    const ok = document.execCommand('copy')
-    ta.remove()
-    return ok
+    return document.execCommand('copy')
   } catch {
     return false
+  } finally {
+    ta?.remove()
+    if (prev && prev !== document.activeElement && prev.isConnected) prev.focus({ preventScroll: true })
   }
 }
 
