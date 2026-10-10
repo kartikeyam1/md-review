@@ -8,10 +8,11 @@
 #   unit       vitest run
 #   build      vite build (into .verify/dist, the repo's dist/ is left alone)
 #   e2e        throwaway backend + vite dev on free ports, then every
-#              tests/e2e/*.test.mjs serially, one node --test run per file,
-#              under the shared browser lock
+#              tests/e2e/*.test.mjs and tests/e2e/items/*.test.mjs serially,
+#              one node --test run per file, under the shared browser lock
 #   server     a second throwaway backend (REVISIONS_MAX=5, so the retention
-#              test runs), then server/test*.mjs against it
+#              test runs), then server/test*.mjs and
+#              server/test-items/*.test.mjs against it
 #
 # Env:
 #   VERIFY_ONLY=unit,e2e     same as --only
@@ -20,6 +21,13 @@
 #                            or a path; comma or space separated)
 #   VERIFY_E2E_FILE_TIMEOUT  seconds per e2e file before it is killed (900)
 #   VERIFY_BROWSER_LOCK      lock file (/tmp/md-review-viewshare-browser.lock)
+#   VERIFY_ITEMS=04,02       backlog items whose acceptance tests run in addition
+#                            to the landed ones listed in docs/build/LANDED.
+#                            Item tests are files named NN-*.test.* under
+#                            tests/items, tests/e2e/items, server/test-items;
+#                            tests of items not yet built are written ahead of
+#                            time and stay out of the gate until enabled here.
+#                            An explicit E2E_FILES list is never filtered.
 #
 # Output: per-step logs in .verify/logs/, summary table on stdout and in
 # .verify/last-summary.txt. Exit status is non-zero if any step failed.
@@ -67,6 +75,18 @@ selected() { [[ " ${SELECTED[*]} " == *" $1 "* ]]; }
 rm -rf "$LOG_DIR"; mkdir -p "$LOG_DIR"
 export NO_COLOR=1 FORCE_COLOR=0 CI="${CI:-1}"
 
+# ── backlog item gating ─────────────────────────────────────────────────────
+ENABLED_ITEMS=" "
+if [[ -f "$ROOT/docs/build/LANDED" ]]; then
+  while read -r n _; do [[ "$n" =~ ^[0-9]+$ ]] && ENABLED_ITEMS+="$(printf '%02d' "$((10#$n))") "; done < "$ROOT/docs/build/LANDED"
+fi
+VERIFY_ITEMS="${VERIFY_ITEMS:-}"; for n in ${VERIFY_ITEMS//,/ }; do n="${n//,/}"; [[ -z "$n" ]] && continue; [[ "$n" =~ ^[0-9]+$ ]] && ENABLED_ITEMS+="$(printf '%02d' "$((10#$n))") "; done
+item_enabled() { # path -> 0 if not an item test, or its item is enabled
+  local b; b="$(basename "$1")"
+  [[ "$b" =~ ^([0-9][0-9])- ]] || return 0
+  [[ "$ENABLED_ITEMS" == *" ${BASH_REMATCH[1]} "* ]]
+}
+
 # ── result bookkeeping ──────────────────────────────────────────────────────
 R_NAME=(); R_STATUS=(); R_COUNTS=(); R_DUR=()
 ANY_FAIL=0
@@ -112,7 +132,9 @@ step_typecheck() {
 step_unit() {
   local t0 log="$LOG_DIR/unit.log" rc line counts
   t0=$(now)
-  node_modules/.bin/vitest run >"$log" 2>&1; rc=$?
+  local excl=() f
+  for f in tests/items/*.test.ts; do [[ -f "$f" ]] && ! item_enabled "$f" && excl+=(--exclude "$f"); done
+  node_modules/.bin/vitest run "${excl[@]}" >"$log" 2>&1; rc=$?
   line=$(grep -aE '^ +Tests +' "$log" | tail -1 | sed -E 's/^ +Tests +//')
   counts="${line:-no summary}"
   record unit "$([[ $rc == 0 ]] && echo PASS || echo FAIL)" "$counts" "$(elapsed "$t0")"
@@ -129,13 +151,16 @@ step_build() {
 resolve_e2e_files() {
   E2E_LIST=()
   if [[ -z "${E2E_FILES:-}" ]]; then
-    E2E_LIST=(tests/e2e/*.test.mjs); return 0
+    E2E_LIST=(tests/e2e/*.test.mjs)
+    local item; for item in tests/e2e/items/*.test.mjs; do [[ -f "$item" ]] && item_enabled "$item" && E2E_LIST+=("$item"); done
+    return 0
   fi
   local x
   for x in ${E2E_FILES//,/ }; do
     if [[ -f "$x" ]]; then E2E_LIST+=("$x")
     elif [[ -f "tests/e2e/$x" ]]; then E2E_LIST+=("tests/e2e/$x")
     elif [[ -f "tests/e2e/$x.test.mjs" ]]; then E2E_LIST+=("tests/e2e/$x.test.mjs")
+    elif [[ -f "tests/e2e/items/$x.test.mjs" ]]; then E2E_LIST+=("tests/e2e/items/$x.test.mjs")
     else echo "unknown e2e file: $x" >&2; return 1
     fi
   done
@@ -190,11 +215,13 @@ step_server() {
   if ! stack_start_backend server REVISIONS_MAX=5 2>>"$LOG_DIR/stack.log"; then
     record server FAIL "backend startup failed" "$(elapsed "$t0")"; stack_stop_all; return
   fi
-  for f in server/test*.mjs; do
+  for f in server/test*.mjs server/test-items/*.test.mjs; do
+    [[ -f "$f" ]] || continue
+    item_enabled "$f" || continue
     name="$(basename "$f" .mjs)"
     log="$LOG_DIR/server-$name.log"
     t1=$(now)
-    PASTE_API="$STACK_API_URL" DATA_DIR="$STACK_DATA_DIR" REVISIONS_MAX=5 \
+    PASTE_API="$STACK_API_URL" E2E_API_URL="$STACK_API_URL" DATA_DIR="$STACK_DATA_DIR" REVISIONS_MAX=5 \
       timeout --kill-after=10 600 \
       node --test --test-concurrency=1 --test-reporter=spec "$f" >"$log" 2>&1; rc=$?
     node_counts "$log"
