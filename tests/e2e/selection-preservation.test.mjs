@@ -38,9 +38,11 @@ describe('selection preservation when clicking comment textarea', () => {
 
     // Switch to edit mode (app defaults to preview)
     await page.click('button:has-text("Edit")')
+    // #6: the editor is lazy-loaded — wait for it to mount.
+    await page.locator('.cm-editor:visible .cm-content').first().waitFor({ state: 'visible', timeout: 20000 })
     await page.waitForTimeout(500)
 
-    const editor = page.locator('.cm-editor')
+    const editor = page.locator('.cm-editor:visible')
     assert.ok(await editor.count() > 0, 'Editor should be visible')
 
     // Triple-click to select a line in the editor

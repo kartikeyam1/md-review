@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, onMounted } from 'vue'
+import { ref, computed, defineAsyncComponent, onMounted, watch } from 'vue'
 import type { RevisionEntry } from '@/composables/useShare'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
@@ -7,7 +7,7 @@ import DocHeader from '@/components/DocHeader.vue'
 import DocBanners from '@/components/DocBanners.vue'
 import CommentsLayer from '@/components/CommentsLayer.vue'
 import FileUpload from '@/components/FileUpload.vue'
-import EditorPane from '@/components/EditorPane.vue'
+import LazyEditor from '@/components/LazyEditor.vue'
 import PreviewPane from '@/components/PreviewPane.vue'
 import PromptModal from '@/components/PromptModal.vue'
 import ShareModal from '@/components/ShareModal.vue'
@@ -27,7 +27,7 @@ const RevisionsModal = defineAsyncComponent(() => import('@/components/Revisions
 const doc = useDocState()
 const actions = useDocActions()
 const {
-  router, route, embed, readOnly, docMissing, fileView, onScreen, booted,
+  router, route, embed, readOnly, docMissing, fileView, onScreen, booted, screenKey,
   view, mode, capability, reviewUI, historyId, historyCurrent, historyLive,
   paneMode, markdown, filename, contentType, pasteId, NO_COMMENTS,
   showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
@@ -36,9 +36,20 @@ const {
 } = doc
 
 // The panes belong to the layout; the selection flow only needs to clear the preview's highlight.
-const editorRef = ref<InstanceType<typeof EditorPane>>()
+const editorRef = ref<InstanceType<typeof LazyEditor>>()
 const previewRef = ref<InstanceType<typeof PreviewPane>>()
 onMounted(() => setHighlightClearer(() => previewRef.value?.clearSelectionHighlight()))
+
+// #6: the editor is lazy. Its slot mounts the first time the doc is shown in
+// edit view (which fetches the chunk) and then stays mounted, hidden with
+// v-show, so read ↔ edit keeps the same editor instance (rule 5) — for the
+// lifetime of the open document only: `docKey` changes with the doc on screen,
+// which drops the slot (and with it any per-doc editor state, e.g. #8 history).
+const editorShown = computed(() => paneMode.value === 'edit' && !readOnly.value && !fileView.value)
+const docKey = computed(() => `${screenKey.value ?? ''}|${pasteId.value ?? ''}`)
+const editorMounted = ref(false)
+watch(editorShown, (shown) => { if (shown) editorMounted.value = true }, { immediate: true })
+watch(docKey, () => { editorMounted.value = editorShown.value })
 
 function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null) {
   if (!confirmDiscardIfDirty()) return
@@ -98,17 +109,20 @@ const embedOpenHref = computed(() => {
           <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
           <a v-else class="btn btn-primary" :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
         </div>
-        <EditorPane
-          v-else-if="paneMode === 'edit' && !readOnly"
+        <LazyEditor
+          v-if="editorMounted && !fileView"
+          v-show="editorShown"
+          :key="docKey"
           ref="editorRef"
           v-model="markdown"
+          :active="editorShown"
           :comments="reviewUI ? comments : NO_COMMENTS"
           :content-type="contentType"
           @selection="handleSelection"
           @selection-clear="handleSelectionClear"
         />
         <PreviewPane
-          v-else
+          v-if="!fileView && !editorShown"
           ref="previewRef"
           :content="markdown"
           :comments="reviewUI ? comments : NO_COMMENTS"

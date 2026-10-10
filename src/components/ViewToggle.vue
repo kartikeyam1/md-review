@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useDocState, type DocViewName } from '@/composables/useDocState'
+import { prefetchEditor } from '@/composables/useEditorLoader'
 
 // The view toggle (00 §2.2, editors only). Text labels; `compact` (phone)
 // shows icons with aria-labels instead. One entry per view — #7 adds
@@ -13,6 +14,12 @@ const VIEWS: ViewEntry[] = [
 defineProps<{ compact?: boolean }>()
 const { view } = useDocState()
 const emit = defineEmits<{ change: [view: DocViewName] }>()
+
+/** Intent prefetch (#6 rule 2b): hovering or focusing a view that shows the editor fetches its chunk. */
+const EDITOR_VIEWS: readonly string[] = ['edit', 'split']
+function prefetchFor(id: DocViewName) {
+  if (EDITOR_VIEWS.includes(id)) prefetchEditor()
+}
 </script>
 
 <template>
@@ -27,6 +34,8 @@ const emit = defineEmits<{ change: [view: DocViewName] }>()
       :aria-label="compact ? v.label : undefined"
       :title="v.label"
       :data-testid="`view-toggle-${v.id}`"
+      @pointerenter="prefetchFor(v.id)"
+      @focus="prefetchFor(v.id)"
       @click="emit('change', v.id)"
     >
       <svg v-if="compact" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path v-for="d in v.icon" :key="d" :d="d" /></svg>

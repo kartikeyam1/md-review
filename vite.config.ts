@@ -49,6 +49,39 @@ function spaFallback404(): Plugin {
   }
 }
 
+// #6: CodeMirror (everything EditorPane statically needs from node_modules and
+// the entry doesn't) gets a vendor chunk of its own. The EditorPane chunk is
+// then a plain facade with a `default` export, and the language-data chunks
+// import CodeMirror from the vendor chunk — so a cache-busted retry of a failed
+// EditorPane load (useEditorLoader) never duplicates CodeMirror.
+const EDITOR_PANE = fileURLToPath(new URL('./src/components/EditorPane.vue', import.meta.url))
+const MAIN = fileURLToPath(new URL('./src/main.ts', import.meta.url))
+type ModuleInfoGetter = (id: string) => { importedIds: readonly string[] } | null
+function staticClosure(start: string, getModuleInfo: ModuleInfoGetter): Set<string> {
+  const seen = new Set<string>()
+  const queue = [start]
+  while (queue.length) {
+    const id = queue.pop()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    for (const dep of getModuleInfo(id)?.importedIds ?? []) queue.push(dep)
+  }
+  return seen
+}
+let editorVendor: Set<string> | null = null
+function editorVendorChunk(id: string, { getModuleInfo }: { getModuleInfo: ModuleInfoGetter }): string | undefined {
+  // Vite's preload helper is used by the entry and by language-data's dynamic
+  // imports; left alone, Rollup drags it into the vendor chunk and the entry
+  // would then import (and preload) CodeMirror. Keep it out.
+  if (id.includes('vite/preload-helper')) return 'preload-helper'
+  if (!id.includes('/node_modules/')) return undefined
+  if (!editorVendor) {
+    const eager = staticClosure(MAIN, getModuleInfo)
+    editorVendor = new Set([...staticClosure(EDITOR_PANE, getModuleInfo)].filter((m) => m.includes('/node_modules/') && !eager.has(m)))
+  }
+  return editorVendor.has(id) ? 'codemirror' : undefined
+}
+
 export default defineConfig({
   base: process.env.GITHUB_PAGES === 'true' ? '/md-review/' : '/',
   plugins: [vue(), localFileApi(), spaFallback404()],
@@ -58,6 +91,11 @@ export default defineConfig({
     // with no file watcher: tests don't need HMR, and the watcher dies with
     // EMFILE on hosts whose inotify instances are exhausted.
     watch: process.env.VITE_NO_WATCH === '1' ? null : undefined,
+  },
+  build: {
+    rollupOptions: {
+      output: { manualChunks: editorVendorChunk },
+    },
   },
   resolve: {
     alias: {

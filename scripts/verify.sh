@@ -6,7 +6,8 @@
 # Steps (default: all, run-all-and-report):
 #   typecheck  vue-tsc -b --noEmit
 #   unit       vitest run
-#   build      vite build (into .verify/dist, the repo's dist/ is left alone)
+#   build      vite build (into .verify/dist, the repo's dist/ is left alone),
+#              then check:lazy-editor on it (#6)
 #   e2e        throwaway backend + vite dev on free ports, then every
 #              tests/e2e/*.test.mjs and tests/e2e/items/*.test.mjs serially,
 #              one node --test run per file, under the shared browser lock
@@ -56,7 +57,7 @@ ONLY="${VERIFY_ONLY:-}"
 LOCK="${VERIFY_BROWSER_LOCK:-/tmp/md-review-viewshare-browser.lock}"
 E2E_FILE_TIMEOUT="${VERIFY_E2E_FILE_TIMEOUT:-900}"
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
 while (( $# )); do
   case "$1" in
     --fail-fast) FAIL_FAST=1 ;;
@@ -151,6 +152,10 @@ step_build() {
   local t0 log="$LOG_DIR/build.log" rc
   t0=$(now)
   node_modules/.bin/vite build --outDir "$VERIFY_DIR/dist" --emptyOutDir >"$log" 2>&1; rc=$?
+  # #6: CodeMirror must stay out of the entry graph (npm run check:lazy-editor).
+  if [[ $rc == 0 ]]; then
+    node scripts/check-lazy-editor.mjs --dist "$VERIFY_DIR/dist" >>"$log" 2>&1; rc=$?
+  fi
   local n; n=$(find "$VERIFY_DIR/dist/assets" -name '*.js' 2>/dev/null | wc -l)
   record build "$([[ $rc == 0 ]] && echo PASS || echo FAIL)" "$n js chunks" "$(elapsed "$t0")"
 }

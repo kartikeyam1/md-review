@@ -22,6 +22,8 @@ async function clickCommentAction(p = page) {
 /** Switch from default preview mode to edit mode */
 async function switchToEdit(p = page) {
   await p.click('button:has-text("Edit")')
+  // #6: the editor is lazy-loaded — wait for it to mount before typing.
+  await p.locator('.cm-editor:visible .cm-content').first().waitFor({ state: 'visible', timeout: 20000 })
   await p.waitForTimeout(500)
 }
 

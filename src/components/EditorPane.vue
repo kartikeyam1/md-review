@@ -293,7 +293,12 @@ function scrollToLine(line: number) {
   })
 }
 
-defineExpose({ scrollToLine })
+/** Move keyboard focus into the editor (used by the lazy slot once it mounts, #6). */
+function focus() {
+  view.value?.focus()
+}
+
+defineExpose({ scrollToLine, focus })
 </script>
 
 <template>

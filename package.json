@@ -27,6 +27,7 @@
     "test:watch": "vitest",
     "test:e2e": "node --test tests/e2e/app.test.mjs",
     "verify": "bash scripts/verify.sh",
+    "check:lazy-editor": "node scripts/check-lazy-editor.mjs",
     "screens": "node scripts/screens.mjs",
     "start": "npx serve dist -s"
   },
@@ -43,8 +44,7 @@
     "markdown-it": "^14.0.0",
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.13.0",
-    "vue": "^3.5.0",
-    "vue-codemirror": "^6.1.0"
+    "vue": "^3.5.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

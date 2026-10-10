@@ -72,11 +72,14 @@ describe('harness helpers', () => {
     try {
       const rec = recordScripts(page)
       await page.goto(FILE_URL, { waitUntil: 'networkidle' })
-      rec.stop()
       assert.ok(rec.urls().length > 0)
       assert.ok(rec.loaded('/src/main.ts') || rec.loaded(/\/assets\/index-/), rec.summary())
-      // The local editor view mounts CodeMirror today; a later phase will
-      // assert the opposite for reading mode.
+      // #6: the editor is lazy — the read view of a local doc loads no CodeMirror…
+      assert.ok(!rec.loaded(/codemirror/i), rec.summary())
+      // …and switching to Edit loads it.
+      await page.locator('[data-testid="view-toggle-edit"]').click()
+      await page.locator('.cm-editor:visible .cm-content').first().waitFor({ state: 'visible', timeout: 20000 })
+      rec.stop()
       assert.ok(rec.loaded(/codemirror/i), rec.summary())
       assert.ok(rec.chunks().every((c) => !c.includes('/')))
     } finally { await context.close() }
