@@ -3,6 +3,7 @@ import type { DocState } from '@/composables/docState'
 import type { Router } from '@/composables/useRouter'
 import type { toast } from '@/composables/useToast'
 import { headingAnchors } from './headingAnchors'
+import { sectionReactions } from './sectionReactions'
 
 // Preview enhancers (00 §4.5): DOM behaviour layered on the rendered markdown.
 // Each is `(container, ctx) => cleanup`, run by PreviewPane after every render
@@ -27,6 +28,7 @@ export type Enhancer = (container: HTMLElement, ctx: EnhancerContext) => (() => 
 
 const ENHANCERS: Enhancer[] = [
   headingAnchors, // #3
+  sectionReactions, // #24 (after headingAnchors: its chips go before the heading-anchor)
 ]
 
 /** Run every enhancer on `container`; returns one cleanup for all of them. */

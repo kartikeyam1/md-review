@@ -21,6 +21,19 @@ export const editTokenArg = () => z.string().optional().describe(
   'Edit token for an edit-protected document (returned as editToken when it was created, or the ?edit= part of its edit link). '
   + 'Optional: tokens of docs created or edited through this MCP server are remembered.');
 
+/**
+ * #24 rule 10: GET /reactions → {total, doc: {"👍": {count, names}}, sections: [{section, reactions}]}
+ * (sections sorted by their total, most reacted first).
+ */
+export function reactionsForAgent(summary) {
+  const byEmoji = (groups) => Object.fromEntries((groups || []).map((g) => [g.emoji, { count: g.count, names: g.names }]));
+  const sections = Object.entries(summary.sections || {})
+    .map(([section, groups]) => ({ section, total: groups.reduce((n, g) => n + g.count, 0), reactions: byEmoji(groups) }))
+    .sort((a, b) => b.total - a.total || a.section.localeCompare(b.section))
+    .map(({ section, reactions }) => ({ section, reactions }));
+  return { total: summary.total ?? 0, doc: byEmoji(summary.doc), sections };
+}
+
 // ── Handler factory (exported for testing) ──────────────────────────────────
 
 /** Handed-out doc link (spec #4 rule 17, 00 §6): `<frontendUrl>/d/<slug||id>`, exactly one slash between. */
@@ -451,6 +464,13 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       return { ...result, shareUrl: result.url };
     },
 
+    // ── Reactions (#24): an agent-friendly summary keyed by emoji ────────────
+    async get_reactions({ sessionId }) {
+      const r = await apiCall(`/paste/${sessionId}/reactions`);
+      if (r.error) return r;
+      return reactionsForAgent(r);
+    },
+
     // ── Shell command generators (curl — runs on any client machine) ──────────
 
     async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl, contentType, mode }) {
@@ -525,6 +545,15 @@ export function registerSharedTools(server, handlers) {
       editToken: editTokenArg(),
     }),
   }, async (args) => toolResult(await handlers.upsert_session(args)));
+
+  server.registerTool('get_reactions', {
+    title: 'Get Reactions',
+    description: 'Who reacted to a doc and to which sections: emoji counts with reader names for the whole doc, '
+      + 'and per section (heading id), most reacted section first. Read-only.',
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+    }),
+  }, async (args) => toolResult(await handlers.get_reactions(args)));
 }
 
 // ── MCP Server Setup (only when run directly) ───────────────────────────────

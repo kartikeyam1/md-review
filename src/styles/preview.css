@@ -559,3 +559,80 @@ html.locus-theme .preview-pane .mermaid .slice {
   font-size: 13px;
   color: var(--text-secondary);
 }
+
+/* #24 section reactions (heading anatomy 00 §2.5): chips + trigger after the heading text.
+   user-select: none — they never join a selection, copied text or the heading's text. */
+.preview-pane .section-reactions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.preview-pane .section-reaction-chip,
+.preview-pane .section-reaction-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--text-secondary);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.preview-pane .section-reaction-chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+}
+
+.preview-pane .section-reaction-chip .chip-count { font-variant-numeric: tabular-nums; }
+
+.preview-pane .section-reaction-trigger {
+  padding: 2px 5px;
+  color: var(--text-secondary); /* ≥ 3:1 icon contrast in every theme (--text-muted is 2.9:1 in dark) */
+  border-color: transparent;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+/* Hover devices: shown while the heading is hovered or focused (or the picker is open). */
+.preview-pane h2:hover .section-reaction-trigger,
+.preview-pane h3:hover .section-reaction-trigger,
+.preview-pane h2:focus-within .section-reaction-trigger,
+.preview-pane h3:focus-within .section-reaction-trigger,
+.preview-pane .section-reaction-trigger[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.preview-pane .section-reaction-trigger:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+.preview-pane .section-reaction-chip:focus-visible,
+.preview-pane .section-reaction-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+/* Touch devices and narrow viewports: always visible (00 §12). */
+@media (hover: none), (max-width: 1099px) {
+  .preview-pane .section-reaction-trigger { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-pane .section-reaction-trigger { transition: none; }
+}

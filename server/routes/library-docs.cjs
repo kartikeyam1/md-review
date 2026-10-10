@@ -144,6 +144,7 @@ function libraryDocs(req, res) {
     page = db.prepare(`
       SELECT s.id, s.slug, s.title, s.filename, s.content_type, s.mode, s.created_by, s.created_at, s.updated_at,
              (SELECT count(*) FROM files f WHERE f.session_id = s.id) AS file_count,
+             (SELECT count(*) FROM reactions rx WHERE rx.session_id = s.id) AS reaction_count,
              (SELECT COALESCE(sum(must_fix_open), 0) FROM comments c WHERE c.session_id = s.id) AS must_fix_unresolved,
              (SELECT json_object('id', co.id, 'name', co.name) FROM collection_items ci JOIN collections co ON co.id = ci.collection_id
                WHERE ci.session_id = s.id) AS collection_json,
@@ -169,7 +170,7 @@ function libraryDocs(req, res) {
     collection: r.collection_json ? JSON.parse(r.collection_json) : null,
     tags: r.tags_json ? JSON.parse(r.tags_json).sort((a, b) => a.localeCompare(b)) : [],
     file_count: r.file_count,
-    reaction_count: null, // #24
+    reaction_count: r.reaction_count, // #24
     view_count: null, // #25
     must_fix_unresolved: r.must_fix_unresolved,
     pinned: false, // #26

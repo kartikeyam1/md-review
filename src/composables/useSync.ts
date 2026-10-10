@@ -64,6 +64,11 @@ export function useSync(
      * (doc mode, latest revision, session name).
      */
     onServerState?: (data: SharedPayload, requestedAt: number) => void
+    /**
+     * Every poll of the attached doc (also when it answered 304): things that
+     * change without the doc's ETag (#24 reactions) refresh on this cadence.
+     */
+    onPoll?: (id: string) => void
   } = {},
 ) {
   const {
@@ -601,6 +606,7 @@ export function useSync(
     const id = pasteId.value
     if (!id || polling) return
     polling = true
+    options.onPoll?.(id)
     try {
       await drainPending()
       if (pasteId.value !== id) return

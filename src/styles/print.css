@@ -63,6 +63,7 @@
   [role='menu'],
   [data-testid='header-overflow-menu'],
   [data-testid='heading-anchor'],
+  [data-testid='reaction-bar'],
   [data-testid='code-toolbar'],
   .lazy-editor,
   .editor-pane,

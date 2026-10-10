@@ -229,7 +229,7 @@ describe('GET /library/docs search (00 §8)', () => {
     assert.equal(it.collection, null);
     assert.deepEqual(it.tags, []);
     assert.equal(it.file_count, 0);
-    assert.equal(it.reaction_count, null);
+    assert.equal(it.reaction_count, 0); // 00 §8: null until #24, then the doc's reaction total
     assert.equal(it.view_count, null);
     assert.equal(it.must_fix_unresolved, 0);
     assert.equal(it.pinned, false);

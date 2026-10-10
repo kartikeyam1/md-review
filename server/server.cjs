@@ -37,6 +37,7 @@ const ROUTES = [
   require('./routes/approval.cjs'),
   require('./routes/markdown.cjs'),
   require('./routes/revisions.cjs'),
+  require('./routes/reactions.cjs'), // #24
   require('./routes/list.cjs'),
   require('./routes/library-docs.cjs'),
   require('./routes/session.cjs'),

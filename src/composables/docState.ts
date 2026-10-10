@@ -14,6 +14,7 @@ import { useDocModeSync } from '@/composables/useDocModeSync'
 import { onTokenRejected, sameDoc, docIdOf, type DocAccess } from '@/composables/useEditToken'
 import { saveLocalCopy, clearLocalCopy, type LocalCopy } from '@/composables/localCopy'
 import { toast } from '@/composables/useToast'
+import { createReactions } from '@/composables/useReactions'
 import type { SharedPayload } from '@/composables/useShare'
 import { docTitle as computeDocTitle } from '@/composables/useDocTitle'
 
@@ -129,11 +130,14 @@ export function createDocState(router: Router) {
   const commentsApi = useComments()
   const { comments, addComment, editComment, deleteComment, loadComments, addReply, editReply, deleteReply, resolveComment, unresolveComment } = commentsApi
 
+  /** #24: reactions on a shared doc's own route (not embeds, pinned revisions or file routes). */
+  const reactions = createReactions({ docId: pasteId, active: computed(() => !!pasteId.value && !embed.value && route.value.kind === 'doc') })
+
   const sync = useSync(pasteId, comments, markdown, {
     addComment, editComment, deleteComment, loadComments,
     addReply, editReply, deleteReply,
     resolveComment, unresolveComment,
-  }, { filename, author: reviewer.reviewerName, onServerState: (data, at) => applyServerMeta(data, at) })
+  }, { filename, author: reviewer.reviewerName, onServerState: (data, at) => applyServerMeta(data, at), onPoll: () => reactions.refresh() })
 
   const revisions = useRevisionTracking({
     pasteId, serverHash: sync.serverHash, serverHashOrigin: sync.serverHashOrigin, pinnedInfo, route,
@@ -242,8 +246,8 @@ export function createDocState(router: Router) {
     appMode, paneMode, markdown, filename, contentType, pasteId, wordCount, charCount, NO_COMMENTS,
     // UI state
     showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
-    // reviewer + comments + sync
-    ...reviewer, ...commentsApi, sync,
+    // reviewer + comments + sync + reactions (#24)
+    ...reviewer, ...commentsApi, sync, reactions,
     // revisions
     ...revisions,
     // theme, persistence, share, approval

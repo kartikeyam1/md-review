@@ -20,6 +20,8 @@ import { provideToc } from '@/composables/useToc'
 import { useActiveHeading } from '@/composables/useActiveHeading'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import ShareRequiredDialog from '@/components/ShareRequiredDialog.vue'
+import ReactionBar from '@/components/ReactionBar.vue'
+import ReactionOverlays from '@/components/ReactionOverlays.vue'
 
 // The doc layout (00 §4.2): header, the below-header stack (DocBanners), the
 // body, and the modals. App.vue is the router shell; this renders the
@@ -40,7 +42,7 @@ const {
   paneMode, markdown, filename, contentType, pasteId, NO_COMMENTS,
   showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
   comments, revisionList, showHistory, historyFrom, acknowledge,
-  theme, confirmDiscardIfDirty, handleSelection, handleSelectionClear, setHighlightClearer,
+  theme, confirmDiscardIfDirty, handleSelection, handleSelectionClear, setHighlightClearer, reactions,
 } = doc
 
 // The panes belong to the layout; the selection flow only needs to clear the preview's highlight.
@@ -185,7 +187,7 @@ const embedOpenHref = computed(() => {
           @selection="handleSelection"
           @selection-clear="handleSelectionClear"
         />
-        <!-- #24 reaction-bar -->
+        <ReactionBar v-if="reactions.active.value && !fileView && !editorShown" />
       </main>
       <aside class="doc-aside" :class="{ collapsed: sidebarHidden }"><CommentsLayer v-if="reviewUI" @scroll-to="scrollToLine" /></aside>
     </div>
@@ -214,6 +216,7 @@ const embedOpenHref = computed(() => {
     />
 
     <ShareRequiredDialog v-if="shareAsk" @confirm="shareAsk?.(true)" @cancel="shareAsk?.(false)" />
+    <ReactionOverlays v-if="reactions.active.value" />
 
     <ShareModal
       :visible="showShareModal"
@@ -322,6 +325,23 @@ const embedOpenHref = computed(() => {
   flex: 7;
   min-width: 0;
   overflow: hidden;
+  /* The doc pane fills the column; #24's reaction bar sits under it. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Only the doc panes share out the height; anything else in the column (#24's
+   reaction bar, later #28's notice) takes its natural height. */
+.doc-content > * {
+  flex: none;
+}
+
+.doc-content > .file-view,
+.doc-content > .lazy-editor,
+.doc-content > :deep(.preview-pane),
+.doc-content > :deep(.html-frame) {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .doc-scroll .doc-body {
@@ -329,7 +349,11 @@ const embedOpenHref = computed(() => {
   overflow: visible;
 }
 
+/* Document scroll: plain block flow — the preview takes its natural height and
+   #24's reaction bar follows the end of the document. (A flex column here would
+   size a centred preview to its min-content width, widening the page on phones.) */
 .doc-scroll .doc-content {
+  display: block;
   overflow: visible;
   background: var(--bg-surface);
 }
