@@ -1,0 +1,287 @@
+/* Preview styles (00 §4.6): every rule lives under .preview-pane. Not scoped,
+   so later items can reuse this sheet (#18 em units, #19 inlines it into
+   HTML exports). Extracted verbatim from PreviewPane.vue's scoped block. */
+
+:root .preview-pane {
+  padding: 24px 32px;
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  overflow-y: auto;
+  height: 100%;
+}
+
+.preview-pane:not(.github-mode) h1 {
+  font-family: var(--font-heading);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 24px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.preview-pane:not(.github-mode) h2 {
+  font-family: var(--font-heading);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 20px 0 10px;
+}
+
+.preview-pane:not(.github-mode) h3 {
+  font-family: var(--font-heading);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 16px 0 8px;
+}
+
+.preview-pane:not(.github-mode) p {
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+}
+
+.preview-pane:not(.github-mode) ul,
+.preview-pane:not(.github-mode) ol {
+  color: var(--text-secondary);
+  padding-left: 24px;
+  margin: 0 0 12px;
+}
+
+.preview-pane:not(.github-mode) li {
+  margin: 4px 0;
+}
+
+.preview-pane:not(.github-mode) code {
+  font-family: var(--font-mono);
+  background: var(--bg-code, var(--bg-page));
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.preview-pane:not(.github-mode) pre {
+  background: var(--bg-code, var(--bg-page));
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 6px;
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+
+.preview-pane:not(.github-mode) pre code {
+  background: none;
+  padding: 0;
+}
+
+.preview-pane:not(.github-mode) strong {
+  color: var(--text-primary);
+}
+
+.preview-pane:not(.github-mode) blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 16px;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+
+.preview-pane:not(.github-mode) hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 24px 0;
+}
+
+.preview-pane:not(.github-mode) a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.preview-pane:not(.github-mode) a:hover {
+  text-decoration: underline;
+}
+
+.preview-pane:not(.github-mode) table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.preview-pane:not(.github-mode) th,
+.preview-pane:not(.github-mode) td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.preview-pane:not(.github-mode) th {
+  background: var(--bg-page);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-pane:not(.github-mode) tbody tr:nth-child(even) {
+  background: var(--bg-page);
+}
+
+.preview-pane:not(.github-mode) tbody tr:hover {
+  background: var(--comment-bg);
+}
+
+.preview-pane .comment-highlight {
+  background: var(--comment-bg);
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+  margin-left: -10px;
+}
+
+/* YAML frontmatter table */
+.preview-pane .frontmatter {
+  font-size: 13px;
+  margin-bottom: 20px;
+  opacity: 0.85;
+}
+
+.preview-pane .frontmatter td:first-child {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* Mermaid diagrams */
+.preview-pane .mermaid {
+  text-align: center;
+  margin: 12px 0;
+}
+
+.preview-pane .mermaid svg {
+  max-width: 100%;
+}
+
+/* highlight.js token colours — mapped to theme CSS custom properties */
+.preview-pane:not(.github-mode) .hljs-keyword,
+.preview-pane:not(.github-mode) .hljs-selector-tag,
+.preview-pane:not(.github-mode) .hljs-tag {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.preview-pane:not(.github-mode) .hljs-string,
+.preview-pane:not(.github-mode) .hljs-attr,
+.preview-pane:not(.github-mode) .hljs-selector-attr {
+  color: var(--text-secondary);
+}
+
+.preview-pane:not(.github-mode) .hljs-comment,
+.preview-pane:not(.github-mode) .hljs-quote {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.preview-pane:not(.github-mode) .hljs-number,
+.preview-pane:not(.github-mode) .hljs-literal {
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.preview-pane:not(.github-mode) .hljs-function,
+.preview-pane:not(.github-mode) .hljs-title,
+.preview-pane:not(.github-mode) .hljs-title\.function_ {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.preview-pane:not(.github-mode) .hljs-built_in,
+.preview-pane:not(.github-mode) .hljs-class {
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+.preview-pane:not(.github-mode) .hljs-type,
+.preview-pane:not(.github-mode) .hljs-selector-class {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.preview-pane:not(.github-mode) .hljs-variable,
+.preview-pane:not(.github-mode) .hljs-template-variable {
+  color: var(--text-secondary);
+}
+
+.preview-pane:not(.github-mode) .hljs-meta,
+.preview-pane:not(.github-mode) .hljs-meta-keyword {
+  color: var(--text-muted);
+}
+
+.preview-pane:not(.github-mode) .hljs-punctuation,
+.preview-pane:not(.github-mode) .hljs-operator {
+  color: var(--text-muted);
+}
+
+/* h4 / h5 / h6 */
+.preview-pane:not(.github-mode) h4 {
+  font-family: var(--font-heading);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 14px 0 6px;
+}
+
+.preview-pane:not(.github-mode) h5 {
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 12px 0 6px;
+}
+
+.preview-pane:not(.github-mode) h6 {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 10px 0 6px;
+}
+
+/* Images */
+.preview-pane:not(.github-mode) img {
+  max-width: 100%;
+  border-radius: 6px;
+  display: block;
+  margin: 12px auto;
+}
+
+/* Task list checkboxes */
+.preview-pane:not(.github-mode) .contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.preview-pane:not(.github-mode) .task-list-item {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.preview-pane:not(.github-mode) .task-list-item input[type='checkbox'] {
+  appearance: auto;
+  margin: 0;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: default;
+}
+
+.preview-pane:not(.github-mode) .task-list-item input[type='checkbox']:checked + span,
+.preview-pane:not(.github-mode) .task-list-item input[type='checkbox']:checked ~ * {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+}
