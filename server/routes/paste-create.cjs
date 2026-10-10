@@ -3,8 +3,9 @@
 const crypto = require('crypto');
 const { NEXT, readBody, clientOf } = require('../http-util.cjs');
 const {
-  slugIndex, saveSlugIndex, generateSlug, uniqueSlug, savePaste,
+  generateSlug, uniqueSlug, savePaste,
 } = require('../storage.cjs');
+const { validMode } = require('../session-rows.cjs');
 
 module.exports = async function pasteCreate(req, res) {
   // POST /paste — create
@@ -52,16 +53,15 @@ module.exports = async function pasteCreate(req, res) {
     } else if (parsed.sessionName) {
       slug = uniqueSlug(generateSlug(parsed.sessionName));
     }
-    if (slug) {
-      parsed.slug = slug;
-      slugIndex[slug] = id;
-      saveSlugIndex();
-    }
+    if (slug) parsed.slug = slug;
+
+    // Doc mode (00 §1.4): the given one, else publish — review when a callback is set.
+    parsed.mode = validMode(parsed.mode) || (parsed.callback_url ? 'review' : 'publish');
 
     // `author` names who created the document (first revision); not stored as metadata.
     const createdBy = typeof parsed.author === 'string' ? parsed.author : null;
     delete parsed.author;
-    savePaste(id, parsed, { by: createdBy, client: clientOf(req) });
+    savePaste(id, parsed, { by: createdBy, client: clientOf(req) }, { claimSlugs: slug ? [slug] : [], createdBy });
     const result = { id };
     if (slug) result.slug = slug;
     res.writeHead(200, { 'Content-Type': 'application/json' });

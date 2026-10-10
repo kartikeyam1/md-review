@@ -1,10 +1,9 @@
 'use strict';
 // Route: DELETE /paste/:id, PUT /paste/:id/meta, GET /paste/:id[/comments|/markdown]. Returns NEXT when the request is not one of its own.
-const fs = require('fs');
-const crypto = require('crypto');
 const { NEXT, readJsonBody } = require('../http-util.cjs');
 const {
-  slugIndex, writeFileAtomic, saveSlugIndex, generateSlug, uniqueSlug, isExpired, resolveId, contentPath, metaPath, filesDir, loadContent, loadMeta, revisionsDir, revisionSummary, listSessionFiles,
+  generateSlug, uniqueSlug, isExpired, resolveId, loadContent, loadMeta, savePaste, deleteSession, sessionEtag,
+  revisionSummary, listSessionFiles,
 } = require('../storage.cjs');
 
 module.exports = async function session(req, res) {
@@ -15,17 +14,8 @@ module.exports = async function session(req, res) {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const meta = loadMeta(pasteId);
     if (!meta) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
-    // Remove slug from index
-    if (meta.slug && slugIndex[meta.slug]) {
-      delete slugIndex[meta.slug];
-      saveSlugIndex();
-    }
-    // Remove files
-    try { fs.unlinkSync(metaPath(pasteId)); } catch {}
-    try { fs.unlinkSync(contentPath(pasteId)); } catch {}
-    try { fs.rmSync(revisionsDir(pasteId), { recursive: true, force: true }); } catch {}
-    const fdir = filesDir(pasteId);
-    if (fs.existsSync(fdir)) { try { fs.rmSync(fdir, { recursive: true, force: true }); } catch {} }
+    // Rows (content, history, comments, file metadata), search row, slug, then files/<id>/
+    deleteSession(pasteId, meta);
     res.writeHead(204);
     return res.end();
   }
@@ -53,23 +43,20 @@ module.exports = async function session(req, res) {
       }
     }
 
-    // Update slug
+    // Update slug (the old one is released first, so it may be chosen again)
+    const slugs = { releaseSlugs: [], claimSlugs: [] };
     if (parsed.slug !== undefined) {
-      // Remove old slug
-      if (meta.slug && slugIndex[meta.slug]) {
-        delete slugIndex[meta.slug];
-      }
+      if (meta.slug) slugs.releaseSlugs.push(meta.slug);
       if (parsed.slug) {
-        const newSlug = uniqueSlug(generateSlug(parsed.slug));
+        const newSlug = uniqueSlug(generateSlug(parsed.slug), { releasing: meta.slug, selfId: pasteId });
         meta.slug = newSlug;
-        slugIndex[newSlug] = pasteId;
+        slugs.claimSlugs.push(newSlug);
       } else {
         delete meta.slug;
       }
-      saveSlugIndex();
     }
 
-    writeFileAtomic(metaPath(pasteId), JSON.stringify(meta));
+    savePaste(pasteId, meta, {}, slugs);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       sessionName: meta.sessionName || null,
@@ -86,12 +73,6 @@ module.exports = async function session(req, res) {
     const resolvedId = resolveId(match[1]);
     if (!resolvedId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
 
-    const mp = metaPath(resolvedId);
-    if (!fs.existsSync(mp)) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'not found' }));
-    }
-
     // Load metadata (lightweight — no content read yet)
     const meta = loadMeta(resolvedId);
     if (!meta) {
@@ -104,13 +85,8 @@ module.exports = async function session(req, res) {
       return res.end(JSON.stringify({ error: 'Session expired' }));
     }
 
-    // ETag from stored content_hash + meta hash
-    const metaBytes = fs.readFileSync(mp);
-    const combinedHash = crypto.createHash('md5')
-      .update(meta.content_hash || '')
-      .update(metaBytes)
-      .digest('hex');
-    const etag = `"${combinedHash}"`;
+    // ETag from the session's write version + content hash
+    const etag = sessionEtag(resolvedId);
 
     const ifNoneMatch = req.headers['if-none-match'];
     if (ifNoneMatch && ifNoneMatch === etag) {
@@ -134,7 +110,7 @@ module.exports = async function session(req, res) {
       result = {};
       if (wanted.has('meta')) {
         const { comments, content_hash, revisions, ...rest } = meta;
-        Object.assign(result, rest, revisionSummary(meta));
+        Object.assign(result, rest, revisionSummary(resolvedId));
       }
       if (wanted.has('content')) {
         result.markdown = loadContent(resolvedId) || '';
@@ -149,7 +125,7 @@ module.exports = async function session(req, res) {
       // Full response (backward compatible) — includes file list if any
       const markdown = loadContent(resolvedId) || '';
       const { revisions, ...metaRest } = meta;
-      result = { ...metaRest, markdown, ...revisionSummary(meta) };
+      result = { ...metaRest, markdown, ...revisionSummary(resolvedId) };
       const sessionFiles = listSessionFiles(resolvedId);
       if (sessionFiles.length > 0) result.files = sessionFiles;
     }

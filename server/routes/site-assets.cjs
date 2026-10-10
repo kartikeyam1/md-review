@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { NEXT, getMime } = require('../http-util.cjs');
 const {
-  SITES_DIR, siteIndex, resolveSiteId,
+  SITES_DIR, resolveSiteId, listSites,
 } = require('../storage.cjs');
 
 module.exports = async function siteAssets(req, res) {
@@ -36,7 +36,7 @@ module.exports = async function siteAssets(req, res) {
     }
 
     // Fallback: scan all sites for the file
-    for (const [id, meta] of Object.entries(siteIndex)) {
+    for (const { id, meta } of listSites()) {
       if (meta.expires_at && new Date(meta.expires_at) < new Date()) continue;
       const candidate = path.resolve(path.join(SITES_DIR, id), '.' + reqPath);
       if (candidate.startsWith(path.join(SITES_DIR, id)) && fs.existsSync(candidate) && !fs.statSync(candidate).isDirectory()) {

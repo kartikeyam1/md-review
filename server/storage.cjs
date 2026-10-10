@@ -1,45 +1,48 @@
 'use strict';
-// Session / slug / site / file storage (JSON + gzip files under DATA_DIR).
+// Session / slug / site / file storage on SQLite (server/db.cjs). Session file
+// blobs and hosted-site files stay on disk under DATA_DIR; everything else —
+// meta, content, revisions, comments, file metadata, slugs, the site index and
+// the search index — lives in the database.
+//
+// Every write is one BEGIN IMMEDIATE … COMMIT transaction, and the handlers
+// keep the "no await between load and save" rule (see readJsonBody).
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const {
-  DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, REVISIONS_DIR, REVISIONS_MAX, REVISION_COALESCE_MS,
+  DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, DB_PATH, REVISIONS_MAX, REVISION_COALESCE_MS,
 } = require('./config.cjs');
 const { HttpError, getMime } = require('./http-util.cjs');
+const { openDb, tx } = require('./db.cjs');
+const rows = require('./session-rows.cjs');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(SITES_DIR, { recursive: true });
 fs.mkdirSync(FILES_DIR, { recursive: true });
 fs.mkdirSync(CHUNKS_DIR, { recursive: true });
-fs.mkdirSync(REVISIONS_DIR, { recursive: true });
 
-// ── Slug index ───────────────────────────────────────────────────────────────
-const SLUG_INDEX_PATH = path.join(DATA_DIR, '_slug-index.json');
-let slugIndex = {};
-if (fs.existsSync(SLUG_INDEX_PATH)) {
-  try { slugIndex = JSON.parse(fs.readFileSync(SLUG_INDEX_PATH, 'utf-8')); } catch { slugIndex = {}; }
-}
-// Write via temp file + rename so a crash mid-write can never leave a
-// truncated/corrupt JSON or gzip on disk (rename is atomic on POSIX).
-function writeFileAtomic(filePath, data) {
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, data);
-  fs.renameSync(tmp, filePath);
-}
+const db = openDb(DB_PATH);
 
-function saveSlugIndex() {
-  writeFileAtomic(SLUG_INDEX_PATH, JSON.stringify(slugIndex));
-}
+// ── Slugs ────────────────────────────────────────────────────────────────────
+
 function generateSlug(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 }
-function uniqueSlug(base) {
-  if (!slugIndex[base]) return base;
+// One namespace for sessions and sites (the slugs table), as the old index was.
+// `releasing` is a slug the caller (`selfId`) is about to free: it counts as
+// available only when it belongs to that caller. `selfId`'s own stored slug
+// never blocks it either.
+function slugTaken(slug, { releasing = null, selfId = null } = {}) {
+  const row = db.prepare('SELECT target_id FROM slugs WHERE slug = ?').get(slug);
+  if (row && !(slug === releasing && row.target_id === selfId)) return true;
+  return !!db.prepare('SELECT 1 FROM sessions WHERE slug = ? AND id IS NOT ?').get(slug, selfId);
+}
+function uniqueSlug(base, opts = {}) {
+  if (!slugTaken(base, opts)) return base;
   for (let i = 2; ; i++) {
     const candidate = `${base}-${i}`;
-    if (!slugIndex[candidate]) return candidate;
+    if (!slugTaken(candidate, opts)) return candidate;
   }
 }
 function isExpired(data) {
@@ -47,50 +50,65 @@ function isExpired(data) {
   return new Date(data.expires_at) < new Date();
 }
 
+function sessionExists(id) {
+  return !!db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(id);
+}
+
 function resolveId(idOrSlug) {
   const looksLikeId = /^[a-f0-9]+$/.test(idOrSlug);
-  // A slug can itself be all-hex ("cafe", "bad", "1234"); prefer a real id
-  // file, then the slug index, and only then treat it as an (unknown) id.
-  if (looksLikeId && fs.existsSync(metaPath(idOrSlug))) return idOrSlug;
-  if (slugIndex[idOrSlug]) return slugIndex[idOrSlug];
+  // A slug can itself be all-hex ("cafe", "bad", "1234"); prefer a real id,
+  // then the slug table, and only then treat it as an (unknown) id.
+  if (looksLikeId && sessionExists(idOrSlug)) return idOrSlug;
+  const row = db.prepare('SELECT target_id FROM slugs WHERE slug = ?').get(idOrSlug);
+  if (row) return row.target_id;
   return looksLikeId ? idOrSlug : null;
 }
 
-// ── Site index ───────────────────────────────────────────────────────────────
-const SITE_INDEX_PATH = path.join(DATA_DIR, '_site-index.json');
-let siteIndex = {};
-if (fs.existsSync(SITE_INDEX_PATH)) {
-  try { siteIndex = JSON.parse(fs.readFileSync(SITE_INDEX_PATH, 'utf-8')); } catch { siteIndex = {}; }
-}
-function saveSiteIndex() {
-  writeFileAtomic(SITE_INDEX_PATH, JSON.stringify(siteIndex));
-}
+// ── Sites (files stay in sites/<id>/; the index is the sites table) ─────────
 
+function siteFromRow(r) { return JSON.parse(r.meta_json); }
+
+function getSite(id) {
+  const r = db.prepare('SELECT meta_json FROM sites WHERE id = ?').get(id);
+  return r ? siteFromRow(r) : undefined;
+}
+/** All indexed sites, oldest registration first: [{ id, meta }]. */
+function listSites() {
+  return db.prepare('SELECT id, meta_json FROM sites ORDER BY rowid').all().map((r) => ({ id: r.id, meta: siteFromRow(r) }));
+}
 function resolveSiteId(idOrSlug) {
   // Check if it's a direct site ID (directory exists)
   if (/^[a-f0-9]+$/.test(idOrSlug) && fs.existsSync(path.join(SITES_DIR, idOrSlug))) return idOrSlug;
-  // Check slug index
-  for (const [id, meta] of Object.entries(siteIndex)) {
-    if (meta.slug === idOrSlug) return id;
-  }
-  return null;
+  const r = db.prepare('SELECT id FROM sites WHERE slug = ? ORDER BY rowid LIMIT 1').get(idOrSlug);
+  return r ? r.id : null;
+}
+function siteColumns(meta) {
+  const str = (v) => (typeof v === 'string' ? v : null);
+  return [str(meta.slug), str(meta.name), str(meta.created_at), str(meta.expires_at),
+    Number.isInteger(meta.file_count) ? meta.file_count : null, meta.spa === undefined ? null : (meta.spa ? 1 : 0)];
+}
+function createSite(id, meta) {
+  tx(db, () => {
+    db.prepare('INSERT INTO sites (id, slug, name, created_at, expires_at, file_count, spa, meta_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, ...siteColumns(meta), JSON.stringify(meta));
+    if (meta.slug) db.prepare("INSERT OR REPLACE INTO slugs (slug, kind, target_id) VALUES (?, 'site', ?)").run(meta.slug, id);
+  });
+}
+function deleteSite(id, meta) {
+  tx(db, () => {
+    // Only the site's own slug row: a site-index slug that the slug table gives
+    // to a session (legacy data) keeps resolving to that session.
+    if (meta && meta.slug) db.prepare('DELETE FROM slugs WHERE slug = ? AND target_id = ?').run(meta.slug, id);
+    db.prepare('DELETE FROM sites WHERE id = ?').run(id);
+  });
 }
 
-// ── Content storage (separate .content.gz files) ────────────────────────────
+// ── Content ─────────────────────────────────────────────────────────────────
 
-function contentPath(id) { return path.join(DATA_DIR, `${id}.content.gz`); }
-function metaPath(id)    { return path.join(DATA_DIR, `${id}.json`); }
-function filesDir(id)    { return path.join(FILES_DIR, id); }
+function filesDir(id) { return path.join(FILES_DIR, id); }
 
 function hashContent(buf) {
   return crypto.createHash('md5').update(buf).digest('hex');
-}
-
-function saveContent(id, markdown) {
-  const buf = Buffer.from(markdown, 'utf-8');
-  const gz = zlib.gzipSync(buf);
-  writeFileAtomic(contentPath(id), gz);
-  return hashContent(buf);
 }
 
 // Hash of the stored content — what If-Match / content_hash compare against.
@@ -110,93 +128,46 @@ function contentHashMismatch(expected, meta, markdown) {
   return normalized === current ? null : current;
 }
 
+/** The session's current content, or null when it has none stored. */
 function loadContent(id) {
-  const cp = contentPath(id);
-  if (!fs.existsSync(cp)) return null;
-  const gz = fs.readFileSync(cp);
-  try {
-    return zlib.gunzipSync(gz).toString('utf-8');
-  } catch (e) {
-    console.error(`[md-review] corrupt content file for ${id}: ${e.message}`);
-    // Never hand back '' for a document that exists — a client would treat
-    // that as the real content and could save it back.
-    throw new HttpError(500, 'Session content is unreadable (corrupt content file)');
-  }
+  const r = db.prepare('SELECT markdown FROM contents WHERE session_id = ?').get(id);
+  return r ? r.markdown : null;
 }
 
-// Parse a session's meta JSON. A corrupt or non-object file is treated as
-// "no such session" (404) rather than taking the whole process down.
-function readMetaFile(id) {
-  const mp = metaPath(id);
-  if (!fs.existsSync(mp)) return null;
-  let meta;
-  try { meta = JSON.parse(fs.readFileSync(mp, 'utf-8')); }
-  catch (e) {
-    console.error(`[md-review] corrupt session meta ${id}: ${e.message}`);
-    return null;
-  }
-  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
-    console.error(`[md-review] session meta ${id} is not an object`);
-    return null;
-  }
+/** Session meta (every stored key except `revisions`; `comments` always an array). */
+function loadMeta(id) {
+  const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
+  if (!row) return null;
+  const content = db.prepare('SELECT content_hash, hashless FROM contents WHERE session_id = ?').get(id);
+  const meta = rows.decodeMeta(row, content);
+  if (!Object.hasOwn(meta, 'comments')) meta.comments = rows.readComments(db, id);
   return meta;
 }
 
 function loadPaste(id) {
-  const mp = metaPath(id);
-  const meta = readMetaFile(id);
+  const meta = loadMeta(id);
   if (!meta) return null;
-
-  // Auto-migrate: if markdown is still inline in JSON, split it out
-  if (meta.markdown !== undefined) {
-    const hash = saveContent(id, meta.markdown);
-    delete meta.markdown;
-    meta.content_hash = hash;
-    writeFileAtomic(mp, JSON.stringify(meta));
-  }
-
-  // Load content from separate file
-  const markdown = loadContent(id);
-  return { ...meta, markdown: markdown || '' };
+  return { ...meta, markdown: loadContent(id) || '' };
 }
 
-function loadMeta(id) {
-  const mp = metaPath(id);
-  const meta = readMetaFile(id);
-  if (!meta) return null;
-  // Auto-migrate if needed
-  if (meta.markdown !== undefined) {
-    const hash = saveContent(id, meta.markdown);
-    delete meta.markdown;
-    meta.content_hash = hash;
-    writeFileAtomic(mp, JSON.stringify(meta));
-  }
-  return meta;
+/** ETag of the full session (changes on every write: version + content hash). */
+function sessionEtag(id) {
+  const r = db.prepare('SELECT s.version, c.content_hash FROM sessions s LEFT JOIN contents c ON c.session_id = s.id WHERE s.id = ?').get(id);
+  return `"${crypto.createHash('md5').update(`${id}:${r ? r.version : 0}:${r ? r.content_hash || '' : ''}`).digest('hex')}"`;
 }
 
 // ── Revision history ─────────────────────────────────────────────────────────
 
-function revisionsDir(id) { return path.join(REVISIONS_DIR, id); }
-function revisionPath(id, hash) { return path.join(revisionsDir(id), `${hash}.gz`); }
-
-function writeRevisionBlob(id, hash, gz) {
-  const p = revisionPath(id, hash);
-  if (fs.existsSync(p)) return;
-  fs.mkdirSync(revisionsDir(id), { recursive: true });
-  writeFileAtomic(p, gz);
+/** The revision list (oldest first), as the JSON-file server kept it in meta.revisions. */
+function listRevisions(id) {
+  return db.prepare(`SELECT ${rows.REVISION_META_COLUMNS} FROM revisions WHERE session_id = ? ORDER BY seq`).all(id).map(rows.decodeRevision);
 }
 
-function dropRevisionBlobIfUnreferenced(id, meta, hash) {
-  if (!hash) return;
-  if ((meta.revisions || []).some(r => r.hash === hash)) return;
-  if (meta.content_hash === hash) return;
-  try { fs.unlinkSync(revisionPath(id, hash)); } catch { /* already gone */ }
-}
-
+/** Content of a stored revision (by hash), or null when no revision blob has it. */
 function readRevisionBlob(id, hash) {
-  const p = revisionPath(id, hash);
-  if (!fs.existsSync(p)) return null;
-  try { return zlib.gunzipSync(fs.readFileSync(p)).toString('utf-8'); }
+  const r = db.prepare('SELECT blob FROM revisions WHERE session_id = ? AND hash = ? AND blob IS NOT NULL ORDER BY seq LIMIT 1').get(id, hash);
+  if (!r) return null;
+  try { return zlib.gunzipSync(Buffer.from(r.blob)).toString('utf-8'); }
   catch (e) {
     console.error(`[md-review] corrupt revision blob ${id}/${hash}: ${e.message}`);
     throw new HttpError(500, 'Revision content is unreadable');
@@ -204,33 +175,26 @@ function readRevisionBlob(id, hash) {
 }
 
 /**
- * Record that `id`'s content is about to change from prevHash to newHash.
- * Must run BEFORE the new content file is written (it may need the old one to
- * seed the history of a session created before revisions existed).
+ * Record that `id`'s content changes from prevHash to newHash (inside the
+ * write transaction). Same rules as the JSON-file server: a session with no
+ * history is first seeded with the content this write replaces; consecutive
+ * writes by the same author/client within REVISION_COALESCE_MS fold into one
+ * revision; at most REVISIONS_MAX are kept (older rows are deleted).
  */
-function recordRevision(id, meta, { prevHash, newHash, gz, size, ctx }) {
+function recordRevision(id, { prevHash, prevMarkdown, sharedAt, newHash, gz, size, ctx }) {
   const now = new Date().toISOString();
   const by = ctx.by ?? null;
   const client = ctx.client ?? 'api';
 
-  if (!Array.isArray(meta.revisions)) {
-    meta.revisions = [];
+  const count = db.prepare('SELECT count(*) AS c FROM revisions WHERE session_id = ?').get(id).c;
+  if (count === 0 && prevHash && prevMarkdown !== null) {
     // Seed with the content this write replaces so the first diff has a "before".
-    if (prevHash && fs.existsSync(contentPath(id))) {
-      try {
-        const oldGz = fs.readFileSync(contentPath(id));
-        const oldSize = zlib.gunzipSync(oldGz).length;
-        writeRevisionBlob(id, prevHash, oldGz);
-        meta.revisions.push({ hash: prevHash, at: meta.sharedAt || now, by: null, client: null, size: oldSize, parent: null, seeded: true });
-      } catch (e) {
-        console.error(`[md-review] could not seed revision history for ${id}: ${e.message}`);
-      }
-    }
+    const oldBuf = Buffer.from(prevMarkdown, 'utf-8');
+    rows.insertRevision(db, id, 1, { hash: prevHash, at: sharedAt || now, by: null, client: null, size: oldBuf.length, parent: null, seeded: true }, zlib.gzipSync(oldBuf));
   }
 
-  writeRevisionBlob(id, newHash, gz);
-
-  const last = meta.revisions[meta.revisions.length - 1];
+  const lastRow = db.prepare(`SELECT ${rows.REVISION_META_COLUMNS} FROM revisions WHERE session_id = ? ORDER BY seq DESC LIMIT 1`).get(id);
+  const last = lastRow ? rows.decodeRevision(lastRow) : null;
   const lastAt = last ? Date.parse(last.at_end || last.at) : NaN;
   const coalesce = last
     && !last.seeded
@@ -239,55 +203,121 @@ function recordRevision(id, meta, { prevHash, newHash, gz, size, ctx }) {
     && Number.isFinite(lastAt) && (Date.now() - lastAt) < REVISION_COALESCE_MS;
 
   if (coalesce) {
-    const superseded = last.hash;
-    last.hash = newHash;
-    last.at_end = now;
-    last.size = size;
-    last.writes = (last.writes || 1) + 1;
-    dropRevisionBlobIfUnreferenced(id, { ...meta, content_hash: newHash }, superseded);
+    db.prepare('UPDATE revisions SET hash = ?, at_end = ?, size = ?, writes = ?, blob = ? WHERE session_id = ? AND seq = ?')
+      .run(newHash, now, size, (last.writes || 1) + 1, gz, id, lastRow.seq);
   } else {
-    meta.revisions.push({ hash: newHash, at: now, by, client, size, parent: prevHash || null });
+    rows.insertRevision(db, id, (lastRow ? lastRow.seq : 0) + 1, { hash: newHash, at: now, by, client, size, parent: prevHash || null }, gz);
   }
 
-  while (meta.revisions.length > REVISIONS_MAX) {
-    const dropped = meta.revisions.shift();
-    dropRevisionBlobIfUnreferenced(id, { ...meta, content_hash: newHash }, dropped.hash);
-  }
+  db.prepare(`DELETE FROM revisions WHERE session_id = ? AND seq IN (
+                SELECT seq FROM revisions WHERE session_id = ? ORDER BY seq
+                LIMIT max(0, (SELECT count(*) FROM revisions WHERE session_id = ?) - ?))`)
+    .run(id, id, id, REVISIONS_MAX);
 }
 
 /** Light summary for list/GET responses (the full list lives behind /revisions). */
-function revisionSummary(meta) {
-  const revs = meta.revisions || [];
-  const last = revs[revs.length - 1];
+function revisionSummary(id) {
+  const n = db.prepare('SELECT count(*) AS c FROM revisions WHERE session_id = ?').get(id).c;
+  const lastRow = n ? db.prepare(`SELECT ${rows.REVISION_META_COLUMNS} FROM revisions WHERE session_id = ? ORDER BY seq DESC LIMIT 1`).get(id) : null;
+  const last = lastRow ? rows.decodeRevision(lastRow) : null;
   return {
-    revision_count: revs.length,
+    revision_count: n,
     latest_revision: last ? { hash: last.hash, at: last.at_end || last.at, by: last.by ?? null, client: last.client ?? null } : null,
   };
 }
 
+const strOrNull = (v) => (typeof v === 'string' ? v : null);
+
 /**
- * Persist a session. `ctx` = { by, client } describes who is writing (used for
- * the revision entry). The content file is only rewritten when the content
- * actually changed — comment edits no longer re-gzip the whole document.
+ * Persist a session (insert or update) in one transaction. `data` is the full
+ * meta object as loaded and mutated by the handler, optionally with
+ * `markdown`. `ctx` = { by, client } describes who is writing (for the
+ * revision entry). Content (and history) is only rewritten when it changed.
+ * `opts`: { releaseSlugs, claimSlugs, createdBy }.
  */
-function savePaste(id, data, ctx = {}) {
-  const { markdown, ...meta } = data;
-  if (markdown !== undefined) {
-    const buf = Buffer.from(markdown, 'utf-8');
-    const newHash = hashContent(buf);
-    const prevHash = meta.content_hash || null;
-    if (newHash !== prevHash || !fs.existsSync(contentPath(id))) {
-      const gz = zlib.gzipSync(buf);
-      recordRevision(id, meta, { prevHash, newHash, gz, size: buf.length, ctx });
-      writeFileAtomic(contentPath(id), gz);
-      meta.content_hash = newHash;
+function savePaste(id, data, ctx = {}, opts = {}) {
+  const { markdown, revisions: _legacyRevisions, ...meta } = data;
+  return tx(db, () => {
+    for (const s of opts.releaseSlugs || []) db.prepare('DELETE FROM slugs WHERE slug = ? AND target_id = ?').run(s, id);
+    for (const s of opts.claimSlugs || []) db.prepare("INSERT OR REPLACE INTO slugs (slug, kind, target_id) VALUES (?, 'session', ?)").run(s, id);
+    const slugOwned = (s) => !!db.prepare("SELECT 1 FROM slugs WHERE slug = ? AND kind = 'session' AND target_id = ?").get(s, id)
+      && !db.prepare('SELECT 1 FROM sessions WHERE slug = ? AND id <> ?').get(s, id);
+
+    const prevRow = db.prepare('SELECT session_name, filename, content_type, fts_rowid FROM sessions WHERE id = ?').get(id);
+    const prevContent = db.prepare('SELECT markdown, content_hash, hashless FROM contents WHERE session_id = ?').get(id);
+    const prevHash = prevContent && !prevContent.hashless ? prevContent.content_hash : null;
+
+    rows.upsertSessionRow(db, id, meta, { mode: meta.mode, slugOwned, createdBy: opts.createdBy ?? null });
+    delete meta.content_hash;
+    if (prevHash) meta.content_hash = prevHash;
+
+    let contentChanged = false;
+    if (markdown !== undefined) {
+      const buf = Buffer.from(markdown, 'utf-8');
+      const newHash = hashContent(buf);
+      if (newHash !== prevHash || !prevContent) {
+        const gz = zlib.gzipSync(buf);
+        recordRevision(id, {
+          prevHash, prevMarkdown: prevContent ? prevContent.markdown : null, sharedAt: meta.sharedAt,
+          newHash, gz, size: buf.length, ctx,
+        });
+        db.prepare(`INSERT INTO contents (session_id, markdown, content_hash, hashless) VALUES (?, ?, ?, 0)
+                    ON CONFLICT(session_id) DO UPDATE SET markdown = excluded.markdown, content_hash = excluded.content_hash, hashless = 0`)
+          .run(id, markdown, newHash);
+        meta.content_hash = newHash;
+        contentChanged = true;
+      }
     }
-  }
-  writeFileAtomic(metaPath(id), JSON.stringify(meta));
-  return meta;
+
+    rows.syncComments(db, id, meta.comments);
+
+    const titleInputsChanged = !prevRow || prevRow.fts_rowid === null
+      || prevRow.session_name !== strOrNull(meta.sessionName)
+      || prevRow.filename !== strOrNull(meta.filename)
+      || prevRow.content_type !== strOrNull(meta.contentType);
+    if (contentChanged || titleInputsChanged) {
+      rows.syncSearchRow(db, id, meta, markdown !== undefined ? markdown : (prevContent ? prevContent.markdown : ''));
+    }
+    rows.refreshUpdatedAt(db, id);
+    return meta;
+  });
 }
 
-// ── File collections ────────────────────────────────────────────────────────
+/** Delete a session: rows (cascade), search row, its slug, then its files on disk. */
+function deleteSession(id, meta) {
+  tx(db, () => {
+    rows.deleteSearchRow(db, id);
+    db.prepare('DELETE FROM slugs WHERE target_id = ? AND kind = ?').run(id, 'session');
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  });
+  const fdir = filesDir(id);
+  if (fs.existsSync(fdir)) { try { fs.rmSync(fdir, { recursive: true, force: true }); } catch {} }
+}
+
+/** Every session with the per-session counts /paste/list reports. */
+function listSessionsForList() {
+  return db.prepare(`
+    SELECT s.*, c.content_hash AS _content_hash, c.hashless AS _hashless,
+           COALESCE(cm.n, 0) AS comment_count, COALESCE(cm.mf, 0) AS must_fix_unresolved,
+           COALESCE(fl.n, 0) AS file_count, COALESCE(rv.n, 0) AS revision_count
+    FROM sessions s
+    LEFT JOIN contents c ON c.session_id = s.id
+    LEFT JOIN (SELECT session_id, count(*) AS n, sum(must_fix_open) AS mf FROM comments GROUP BY session_id) cm ON cm.session_id = s.id
+    LEFT JOIN (SELECT session_id, count(*) AS n FROM files GROUP BY session_id) fl ON fl.session_id = s.id
+    LEFT JOIN (SELECT session_id, count(*) AS n FROM revisions GROUP BY session_id) rv ON rv.session_id = s.id
+  `).all().map((r) => {
+    const meta = rows.decodeMeta(r, r._content_hash ? { content_hash: r._content_hash, hashless: r._hashless } : null);
+    const extraComments = Object.hasOwn(meta, 'comments') && !Array.isArray(meta.comments);
+    return {
+      id: r.id, meta,
+      comment_count: extraComments ? (meta.comments || []).length : r.comment_count,
+      must_fix_unresolved: extraComments ? 0 : r.must_fix_unresolved,
+      file_count: r.file_count, revision_count: r.revision_count, updated_at: r.updated_at,
+    };
+  });
+}
+
+// ── File collections (blobs on disk, metadata rows in `files`) ──────────────
 
 function ensureFilesDir(id) {
   const dir = filesDir(id);
@@ -296,30 +326,34 @@ function ensureFilesDir(id) {
 }
 
 function listSessionFiles(id) {
-  const dir = filesDir(id);
-  if (!fs.existsSync(dir)) return [];
-  const results = [];
-  const walk = (d, prefix) => {
-    for (const ent of fs.readdirSync(d, { withFileTypes: true })) {
-      const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
-      if (ent.isDirectory()) { walk(path.join(d, ent.name), rel); }
-      else {
-        const stat = fs.statSync(path.join(d, ent.name));
-        results.push({ name: rel, size: stat.size, type: getMime(ent.name) });
-      }
-    }
-  };
-  walk(dir, '');
-  return results;
+  return db.prepare('SELECT name, size, type FROM files WHERE session_id = ? ORDER BY name').all(id)
+    .map((r) => ({ name: r.name, size: r.size, type: r.type }));
 }
 
+/** A file write is a session write: its metadata row and the session version change together. */
+function touchFileRow(id, rel, stat) {
+  tx(db, () => {
+    if (stat) {
+      db.prepare(`INSERT INTO files (session_id, name, size, type, updated_at) VALUES (?, ?, ?, ?, ?)
+                  ON CONFLICT(session_id, name) DO UPDATE SET size = excluded.size, type = excluded.type, updated_at = excluded.updated_at`)
+        .run(id, rel, stat.size, getMime(rel), new Date(stat.mtimeMs).toISOString());
+    } else {
+      db.prepare('DELETE FROM files WHERE session_id = ? AND name = ?').run(id, rel);
+    }
+    db.prepare('UPDATE sessions SET version = version + 1 WHERE id = ?').run(id);
+  });
+}
+
+const relName = (dir, target) => path.relative(dir, target).split(path.sep).join('/');
+
 function saveSessionFile(id, filename, content, encoding) {
-  const dir = ensureFilesDir(id);
+  const dir = filesDir(id);
   const dest = path.resolve(dir, filename);
   // Prevent directory traversal
   if (!dest.startsWith(dir + path.sep) && dest !== dir) {
     throw new Error(`Invalid file path: ${filename}`);
   }
+  ensureFilesDir(id);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   if (encoding === 'base64') {
     fs.writeFileSync(dest, Buffer.from(content, 'base64'));
@@ -327,6 +361,7 @@ function saveSessionFile(id, filename, content, encoding) {
     fs.writeFileSync(dest, content);
   }
   const stat = fs.statSync(dest);
+  touchFileRow(id, relName(dir, dest), stat);
   return { name: filename, size: stat.size, type: getMime(filename) };
 }
 
@@ -336,6 +371,7 @@ function deleteSessionFile(id, filename) {
   if (!target.startsWith(dir + path.sep) && target !== dir) return false;
   if (!fs.existsSync(target)) return false;
   fs.unlinkSync(target);
+  touchFileRow(id, relName(dir, target), null);
   return true;
 }
 
@@ -369,5 +405,11 @@ function assembleChunks(uploadId) {
 }
 
 module.exports = {
-  DATA_DIR, SITES_DIR, slugIndex, siteIndex, writeFileAtomic, saveSlugIndex, generateSlug, uniqueSlug, isExpired, resolveId, saveSiteIndex, resolveSiteId, contentPath, metaPath, filesDir, hashContent, saveContent, currentContentHash, contentHashMismatch, loadContent, readMetaFile, loadPaste, loadMeta, revisionsDir, revisionPath, readRevisionBlob, revisionSummary, savePaste, listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile, chunkDir, saveChunk, assembleChunks,
+  db, DATA_DIR, SITES_DIR,
+  generateSlug, uniqueSlug, isExpired, resolveId, sessionExists,
+  getSite, listSites, resolveSiteId, createSite, deleteSite,
+  filesDir, hashContent, currentContentHash, contentHashMismatch, loadContent, loadMeta, loadPaste, sessionEtag,
+  listRevisions, readRevisionBlob, revisionSummary, savePaste, deleteSession, listSessionsForList,
+  listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile,
+  chunkDir, saveChunk, assembleChunks,
 };

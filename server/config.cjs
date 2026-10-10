@@ -8,7 +8,11 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 const SITES_DIR = path.join(DATA_DIR, 'sites');
 const FILES_DIR = path.join(DATA_DIR, 'files');  // per-session file collections
 const CHUNKS_DIR = path.join(DATA_DIR, 'chunks'); // temp chunked upload staging
-const REVISIONS_DIR = path.join(DATA_DIR, 'revisions'); // per-session content history (content-addressed)
+// The SQLite database (sessions, content, revisions, comments, slugs, sites,
+// search index). Session files and hosted-site files stay on disk above.
+const DB_PATH = process.env.DB_PATH ? path.resolve(process.env.DB_PATH) : path.join(DATA_DIR, 'md-review.sqlite');
+// Boot with an empty DB even though DATA_DIR still holds legacy JSON sessions.
+const ALLOW_EMPTY_DB = process.env.ALLOW_EMPTY_DB === '1';
 // Revision history: every content change is kept, except that consecutive
 // writes by the same author/client within REVISION_COALESCE_MS fold into one
 // revision (an "editing session"), and at most REVISIONS_MAX are retained.
@@ -17,4 +21,4 @@ const REVISION_COALESCE_MS = parseInt(process.env.REVISION_COALESCE_MS || String
 const MAX_BODY_BYTES = 50 * 1024 * 1024; // 50 MB (raised from 10 MB)
 const MAX_SITE_BYTES = 50 * 1024 * 1024; // 50 MB for site uploads
 
-module.exports = { PORT, DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, REVISIONS_DIR, REVISIONS_MAX, REVISION_COALESCE_MS, MAX_BODY_BYTES, MAX_SITE_BYTES };
+module.exports = { PORT, DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, DB_PATH, ALLOW_EMPTY_DB, REVISIONS_MAX, REVISION_COALESCE_MS, MAX_BODY_BYTES, MAX_SITE_BYTES };

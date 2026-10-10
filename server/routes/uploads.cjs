@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { NEXT, readBody, clientOf } = require('../http-util.cjs');
 const {
-  resolveId, metaPath, loadPaste, savePaste, saveSessionFile, chunkDir, saveChunk, assembleChunks,
+  resolveId, sessionExists, loadPaste, savePaste, saveSessionFile, chunkDir, saveChunk, assembleChunks,
 } = require('../storage.cjs');
 
 module.exports = async function uploads(req, res) {
@@ -15,7 +15,7 @@ module.exports = async function uploads(req, res) {
   if (req.method === 'POST' && uploadStartMatch) {
     const pasteId = resolveId(uploadStartMatch[1]);
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
-    if (!fs.existsSync(metaPath(pasteId))) {
+    if (!sessionExists(pasteId)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not found' }));
     }

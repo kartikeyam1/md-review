@@ -2,7 +2,7 @@
 // Route: GET|PUT /paste/:id/approval. Returns NEXT when the request is not one of its own.
 const { NEXT, readJsonBody, fireWebhook } = require('../http-util.cjs');
 const {
-  resolveId, loadPaste, savePaste,
+  resolveId, loadMeta, savePaste,
 } = require('../storage.cjs');
 
 module.exports = async function approval(req, res) {
@@ -14,7 +14,7 @@ module.exports = async function approval(req, res) {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const parsed = req.method === 'PUT' ? await readJsonBody(req, res) : null;
     if (parsed === undefined) return;
-    const data = loadPaste(pasteId);
+    const data = loadMeta(pasteId);
     if (!data) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not found' }));

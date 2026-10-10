@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const { NEXT, readJsonBody } = require('../http-util.cjs');
 const {
-  resolveId, loadPaste, savePaste,
+  resolveId, loadMeta, savePaste,
 } = require('../storage.cjs');
 
 module.exports = async function comments(req, res) {
@@ -18,7 +18,7 @@ module.exports = async function comments(req, res) {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const parsed = req.method === 'DELETE' ? null : await readJsonBody(req, res);
     if (parsed === undefined) return;
-    const data = loadPaste(pasteId);
+    const data = loadMeta(pasteId);
     if (!data) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not found' }));
@@ -90,7 +90,7 @@ module.exports = async function comments(req, res) {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const parsed = await readJsonBody(req, res, { optional: true, lenient: true });
     if (parsed === undefined) return;
-    const data = loadPaste(pasteId);
+    const data = loadMeta(pasteId);
     if (!data) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not found' }));
@@ -127,7 +127,7 @@ module.exports = async function comments(req, res) {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const parsed = req.method === 'DELETE' ? null : await readJsonBody(req, res);
     if (parsed === undefined) return;
-    const data = loadPaste(pasteId);
+    const data = loadMeta(pasteId);
     if (!data) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not found' }));

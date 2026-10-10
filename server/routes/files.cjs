@@ -4,7 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { NEXT, readBody } = require('../http-util.cjs');
 const {
-  resolveId, metaPath, listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile,
+  resolveId, sessionExists, listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile,
 } = require('../storage.cjs');
 
 module.exports = async function files(req, res) {
@@ -17,7 +17,7 @@ module.exports = async function files(req, res) {
   if (filesMatch) {
     const pasteId = resolveId(filesMatch[1]);
     const fileName = filesMatch[2] ? decodeURIComponent(filesMatch[2]) : null;
-    if (!pasteId || !fs.existsSync(metaPath(pasteId))) {
+    if (!pasteId || !sessionExists(pasteId)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'not found' }));
     }

@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { MAX_SITE_BYTES } = require('../config.cjs');
 const { NEXT, getMime, readBodyRaw } = require('../http-util.cjs');
 const {
-  SITES_DIR, slugIndex, siteIndex, saveSlugIndex, generateSlug, uniqueSlug, saveSiteIndex, resolveSiteId,
+  SITES_DIR, generateSlug, uniqueSlug, resolveSiteId, getSite, listSites, createSite, deleteSite,
 } = require('../storage.cjs');
 
 module.exports = async function sites(req, res) {
@@ -125,19 +125,14 @@ module.exports = async function sites(req, res) {
     };
     countFiles(siteDir);
 
-    siteIndex[id] = {
+    createSite(id, {
       slug,
       name: parsed.name,
       created_at: new Date().toISOString(),
       expires_at,
       file_count: fileCount,
       spa: parsed.spa !== false, // default true — SPA fallback to index.html
-    };
-    if (slug) {
-      slugIndex[slug] = id;
-      saveSlugIndex();
-    }
-    saveSiteIndex();
+    });
 
     const result = { id, url: `/site/${slug || id}/` };
     if (slug) result.slug = slug;
@@ -148,7 +143,7 @@ module.exports = async function sites(req, res) {
   // GET /site/list — list all hosted sites
   if (req.method === 'GET' && req.url === '/site/list') {
     const results = [];
-    for (const [id, meta] of Object.entries(siteIndex)) {
+    for (const { id, meta } of listSites()) {
       if (meta.expires_at && new Date(meta.expires_at) < new Date()) continue;
       results.push({ id, ...meta, url: `/site/${meta.slug || id}/` });
     }
@@ -165,17 +160,11 @@ module.exports = async function sites(req, res) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'site not found' }));
     }
-    const meta = siteIndex[siteId];
-    // Remove slug from slugIndex
-    if (meta && meta.slug && slugIndex[meta.slug]) {
-      delete slugIndex[meta.slug];
-      saveSlugIndex();
-    }
-    // Remove files
+    const meta = getSite(siteId);
+    // Remove files, then the index row and the site's slug
     const siteDir = path.join(SITES_DIR, siteId);
     try { fs.rmSync(siteDir, { recursive: true, force: true }); } catch {}
-    delete siteIndex[siteId];
-    saveSiteIndex();
+    deleteSite(siteId, meta);
 
     res.writeHead(204);
     return res.end();
@@ -189,7 +178,7 @@ module.exports = async function sites(req, res) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       return res.end('Site not found');
     }
-    const meta = siteIndex[siteId];
+    const meta = getSite(siteId);
     if (meta && meta.expires_at && new Date(meta.expires_at) < new Date()) {
       res.writeHead(410, { 'Content-Type': 'text/plain' });
       return res.end('Site expired');

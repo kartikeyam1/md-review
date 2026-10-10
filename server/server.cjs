@@ -13,9 +13,17 @@ if (!process.env.GITHUB_TOKEN) {
   }
 }
 
-const { PORT } = require('./config.cjs');
+const { PORT, DATA_DIR, DB_PATH, ALLOW_EMPTY_DB } = require('./config.cjs');
 const { NEXT, HttpError } = require('./http-util.cjs');
-require('./storage.cjs'); // creates DATA_DIR and its subdirectories at boot
+
+// Boot safety: never serve an empty DB over an un-migrated JSON data dir (that
+// would 404 every shared link). Checked before anything is created on disk.
+const bootError = require('./db.cjs').bootCheck({ dataDir: DATA_DIR, dbPath: DB_PATH, allowEmpty: ALLOW_EMPTY_DB });
+if (bootError) {
+  console.error(bootError);
+  process.exit(1);
+}
+require('./storage.cjs'); // opens the DB; creates DATA_DIR and its subdirectories
 
 // ── Route table ──────────────────────────────────────────────────────────────
 // Tried in order; a handler returns NEXT when the request is not its own. The
@@ -28,6 +36,7 @@ const ROUTES = [
   require('./routes/markdown.cjs'),
   require('./routes/revisions.cjs'),
   require('./routes/list.cjs'),
+  require('./routes/library-docs.cjs'),
   require('./routes/session.cjs'),
   require('./routes/uploads.cjs'),
   require('./routes/files.cjs'),
@@ -39,9 +48,10 @@ const ROUTES = [
 
 async function handleRequest(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, If-Match, X-MdReview-Client');
-  res.setHeader('Access-Control-Expose-Headers', 'ETag');
+  // 00 §9: the full shared header list (PATCH is for #26/#27).
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, If-Match, X-MdReview-Client, Authorization, X-Edit-Token, X-MdReview-Reader');
+  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Agent-Sections');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);

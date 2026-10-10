@@ -103,6 +103,22 @@ PASTE_API=http://localhost:3111 node --test tests/e2e/durable-sync.test.mjs
 PASTE_API=http://localhost:3111 node --test server/test.mjs          # backend API tests
 ```
 
+### Backend storage
+
+The backend keeps sessions in one SQLite database (`DATA_DIR/md-review.sqlite`, or `DB_PATH`); session files and
+hosted sites stay on disk under `DATA_DIR`. A data dir from before the database (`<id>.json` + `.content.gz`) must be
+migrated once — the server refuses to start on it otherwise (`ALLOW_EMPTY_DB=1` overrides):
+
+```bash
+node server/scripts/migrate-json-to-sqlite.mjs --data-dir server/data --dry-run   # verify only, writes nothing
+node server/scripts/migrate-json-to-sqlite.mjs --data-dir server/data --report /tmp/migration.json
+```
+
+The script never modifies the JSON files, verifies every session against its source and is safe to re-run before
+cutover. It is a pre-cutover tool: stop the JSON server, run it a last time until it reports `migration complete`, then
+start the SQLite server (which refuses a DB whose migration did not complete). Do not run it after cutover — sessions the
+server has changed are left alone (`diverged`), but sessions deleted since would be re-imported.
+
 ## Shared sessions: autosave and conflicts
 
 When a document is shared (`#shared=<id>`), the browser keeps it in sync with the

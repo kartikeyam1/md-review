@@ -2,7 +2,7 @@
 // Route: GET /paste/:id/revisions[/:hash|current]. Returns NEXT when the request is not one of its own.
 const { NEXT } = require('../http-util.cjs');
 const {
-  isExpired, resolveId, loadContent, loadMeta, readRevisionBlob,
+  isExpired, resolveId, loadContent, loadMeta, readRevisionBlob, listRevisions,
 } = require('../storage.cjs');
 
 module.exports = async function revisions(req, res) {
@@ -15,7 +15,7 @@ module.exports = async function revisions(req, res) {
     const meta = loadMeta(pasteId);
     if (!meta) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     if (isExpired(meta)) { res.writeHead(410, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'Session expired' })); }
-    const revisions = meta.revisions || [];
+    const revisions = listRevisions(pasteId);
     const which = revisionsMatch[2];
 
     if (!which) {

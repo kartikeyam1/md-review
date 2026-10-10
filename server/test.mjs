@@ -530,41 +530,10 @@ test('concurrency — a slow PUT /markdown does not drop a comment posted while 
   assert.ok(final.markdown.startsWith('# replaced'), 'markdown write must also land');
 });
 
-// ── Robustness: corrupt files, delta writes, count-based patches ────────────
-
-test('a corrupt session file yields 404 and the server keeps serving', async (t) => {
-  const dataDir = process.env.DATA_DIR;
-  if (!dataDir) { t.skip('set DATA_DIR to the test server\'s data dir to run'); return; }
-  const fs = await import('node:fs');
-  const path = await import('node:path');
-  const id = 'c0ffeec0ffee';
-  fs.writeFileSync(path.join(dataDir, `${id}.json`), '{ definitely not json');
-  const res = await fetch(`${BASE}/paste/${id}`);
-  assert.equal(res.status, 404);
-  const res2 = await fetch(`${BASE}/paste/${id}/comments`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ startLine: 0, endLine: 1, selectedText: 'x', body: 'y', category: 'nit' }),
-  });
-  assert.equal(res2.status, 404);
-  // Still alive.
-  const health = await fetch(`${BASE}/`);
-  assert.equal(health.status, 200);
-  fs.unlinkSync(path.join(dataDir, `${id}.json`));
-});
-
-test('a corrupt content file yields 500 (never empty content) and the server keeps serving', async (t) => {
-  const dataDir = process.env.DATA_DIR;
-  if (!dataDir) { t.skip('set DATA_DIR to run'); return; }
-  const fs = await import('node:fs');
-  const path = await import('node:path');
-  const pasteId = await createPaste({ markdown: 'real content', filename: 'r.md' });
-  fs.writeFileSync(path.join(dataDir, `${pasteId}.content.gz`), Buffer.from('not gzip'));
-  const res = await fetch(`${BASE}/paste/${pasteId}`);
-  assert.equal(res.status, 500);
-  assert.match((await json(res)).error, /unreadable/);
-  assert.equal((await fetch(`${BASE}/`)).status, 200);
-  await fetch(`${BASE}/paste/${pasteId}`, { method: 'DELETE' });
-});
+// ── Robustness: delta writes, count-based patches ───────────────────────────
+// (Corrupt-source handling moved to the migration script with item #20 — the
+// server no longer reads JSON session files: server/test-items/20-migration.test.mjs
+// "AC-20.6 corrupt sources" and "R-20.3 a corrupt content blob in the DB".)
 
 test('PUT /paste/:id/markdown — delta splice applies against the exact base and returns content_hash', async () => {
   const base = 'Hello world.\nSecond line.\n';
@@ -728,26 +697,9 @@ test('revisions — delta and patch writes are attributed like full writes', asy
   assert.equal((await json(await fetch(`${BASE}/paste/${id}/revisions/current`))).markdown, 'Hello patched.');
 });
 
-test('revisions — a session created before history existed is seeded with its previous content on first change', async (t) => {
-  const dataDir = process.env.DATA_DIR;
-  if (!dataDir) { t.skip('set DATA_DIR to run'); return; }
-  const fs = await import('node:fs');
-  const path = await import('node:path');
-  const id = await createPaste({ markdown: 'legacy content', filename: 'l.md' });
-  // Simulate a pre-history session: strip the list and its blobs.
-  const mp = path.join(dataDir, `${id}.json`);
-  const meta = JSON.parse(fs.readFileSync(mp, 'utf-8'));
-  delete meta.revisions;
-  fs.writeFileSync(mp, JSON.stringify(meta));
-  fs.rmSync(path.join(dataDir, 'revisions', id), { recursive: true, force: true });
-  assert.equal((await revisions(id)).revisions.length, 0);
-
-  await putMd(id, { markdown: 'legacy content + agent edit', author: 'agent' }, { 'X-MdReview-Client': 'mcp' });
-  const list = await revisions(id);
-  assert.equal(list.revisions.length, 2);
-  assert.equal(list.revisions[0].seeded, true);
-  assert.equal((await json(await fetch(`${BASE}/paste/${id}/revisions/${list.revisions[0].hash}`))).markdown, 'legacy content');
-});
+// Seeding a pre-history session is tested by migrating a session without
+// `revisions` and then writing to it (item #20): server/test-items/20-migration.test.mjs
+// "R-20.4 seeding".
 
 test('revisions — retention cap drops the oldest revisions and their blobs', async (t) => {
   const cap = parseInt(process.env.REVISIONS_MAX || '', 10);
