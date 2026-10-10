@@ -384,6 +384,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
    * the new document, and Save would push the new document into the old session.
    */
   function handleFileLoaded(content: string, name: string, type?: ContentType, opts: { shared?: boolean; mode?: DocMode } = {}) {
+    name ??= '' // a shared doc may have no filename (e.g. an API/MCP upsert, #21)
     if (!opts.shared) {
       if (!doc.confirmDiscardIfDirty()) return
       detachFromShare()

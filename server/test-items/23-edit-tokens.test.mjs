@@ -464,13 +464,12 @@ describe('#23 rule 8 — expiry', () => {
   });
 });
 
-// ── #21 upsert by key (only when that route exists) ────────────────────────
+// ── #21 upsert by key ───────────────────────────────────────────────────────
 
 describe('#23 rule 1/3 — PUT /paste/by-key (#21) issues and requires the token', () => {
-  test('AC-23.1/23.2 (rule 1, 3) upsert-create returns editToken; update without it → 401', async (t) => {
+  test('AC-23.1/23.2 (rule 1, 3) upsert-create returns editToken; update without it → 401', async () => {
     const key = `t23:${uniq()}`;
     const c = await http(B.url, 'PUT', `/paste/by-key/${encodeURIComponent(key)}`, { body: { markdown: 'v1' } });
-    if (c.status === 404 || c.status === 405) { t.skip('#21 (PUT /paste/by-key) has not landed'); return; }
     assert.equal(c.status, 201, brief(c));
     assert.match(String(c.json.editToken), TOKEN_RE);
     assert401(await http(B.url, 'PUT', `/paste/by-key/${encodeURIComponent(key)}`, { body: { markdown: 'v2' } }), 'upsert update without token');

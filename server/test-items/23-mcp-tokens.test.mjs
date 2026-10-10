@@ -195,11 +195,10 @@ describe('#23 rule 11 — docs not in the store', () => {
     assert.equal((await serverMarkdown(B.url, created.id)).length, big.length);
   });
 
-  test('AC-23.12 (rule 11) upsert_session (#21) saves and reuses the token across connections', async (t) => {
+  test('AC-23.12 (rule 11) upsert_session (#21) saves and reuses the token across connections', async () => {
     const c = await mcpConnect(m.url);
-    const has = (await c.tools()).includes('upsert_session');
+    assert.ok((await c.tools()).includes('upsert_session'), 'upsert_session is registered (#21)');
     await c.close();
-    if (!has) { t.skip('#21 upsert_session not registered yet'); return; }
     const key = `t23:${uniq()}`;
     const a = await once(m, 'upsert_session', { key, markdown: 'u1' });
     okResult(a, 'upsert create');

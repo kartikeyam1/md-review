@@ -7,6 +7,9 @@
  *   md-review upload <sessionId> <file>        Replace session content with file
  *   md-review add-file <sessionId> <file>      Add file to session collection
  *   md-review patch <sessionId> <patchFile>    Apply a diff file as patch
+ *   md-review publish <key> <file> [--name] [--note] [--token] [--slug] [--filename] [--author] [--expiry] [--content-type]
+ *                                              Publish a recurring doc under a stable key (#21):
+ *                                              creates it the first time, else adds a revision
  *
  * Options:
  *   --api <url>        Paste API URL (default: PASTE_API_URL or http://localhost:3100)
@@ -292,6 +295,38 @@ async function cmdPatch(sessionId, patchFile, flags) {
   console.log(JSON.stringify(result));
 }
 
+/**
+ * #21 rule 11: PUT /paste/by-key/<key> with the file's content. Prints
+ * {url, revision, created, changed, id, slug} (+ editToken/editUrl on create —
+ * keep the token: later runs need it as --token or MDREVIEW_EDIT_TOKEN).
+ */
+async function cmdPublish(key, filePath, flags) {
+  const apiUrl = flags.api || API;
+  const content = await readFile(filePath, 'utf-8');
+  // The display filename is sent only with --filename: a job writing to a temp file with a
+  // random name must not flip the doc's filename (and report changed:true) on every run.
+  const payload = {
+    markdown: content,
+    contentType: flags['content-type'] || (/\.html?$/i.test(filePath) ? 'html' : 'markdown'),
+  };
+  if (typeof flags.filename === 'string') payload.filename = flags.filename;
+  if (typeof flags.name === 'string') payload.sessionName = flags.name;
+  if (typeof flags.slug === 'string') payload.slug = flags.slug;
+  if (typeof flags.note === 'string') payload.changeNote = flags.note;
+  if (typeof flags.author === 'string') payload.author = flags.author;
+  if (flags.expiry === 'none') payload.expiry_days = null;
+  else if (flags.expiry) payload.expiry_days = parseInt(flags.expiry, 10);
+  const r = await api(`/paste/by-key/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+    api: apiUrl,
+    token: tokenOf(flags),
+  });
+  const out = { url: r.url, revision: r.revision, created: r.created, changed: r.changed, id: r.id, slug: r.slug || null };
+  if (r.editToken) Object.assign(out, { editToken: r.editToken, editUrl: r.editUrl });
+  console.log(JSON.stringify(out));
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 const { cmd, positional, flags } = parseArgs(process.argv);
@@ -318,6 +353,11 @@ try {
       await cmdPatch(positional[0], positional[1], flags);
       break;
 
+    case 'publish':
+      if (!positional[0] || !positional[1]) throw new Error('Usage: md-review publish <key> <file> [--name <name>] [--note <change note>] [--token <edit token>]');
+      await cmdPublish(positional[0], positional[1], flags);
+      break;
+
     default:
       console.error(`md-review — upload files to the paste review service
 
@@ -326,6 +366,10 @@ Commands:
   upload <sessionId> <file>    Replace session content with file
   add-file <sessionId> <file>  Add file to session collection
   patch <sessionId> <diff>     Apply a diff file as patch
+  publish <key> <file>         Publish a recurring doc under a stable key: creates it
+                               the first time, otherwise adds a revision (same URL).
+                               Takes --note, --author and the options below
+                               (--slug on create only); updates need the edit token
 
 Options:
   --api <url>         API URL (default: $PASTE_API_URL or http://localhost:3100)
@@ -336,8 +380,10 @@ Options:
   --encoding <enc>    utf-8 (default) or base64
   --content-type <t>  markdown or html (default: auto-detected from extension)
   --chunk-size <KB>   Chunk size in KB (default: 512)
+  --note <text>       publish: change note for this run (max 500 chars)
+  --author <name>     publish: who is writing (recorded on the revision)
 
-Edit tokens (edit-protected docs; upload, add-file, patch):
+Edit tokens (edit-protected docs; upload, add-file, patch, publish updates):
   MDREVIEW_EDIT_TOKEN   env var holding the doc's edit token (the usual way)
   --token <token>       the same, per call (overrides MDREVIEW_EDIT_TOKEN)
   create prints the new doc's editToken + editUrl — keep them to edit it later.
@@ -347,7 +393,8 @@ Examples:
   md-review create ./report.html --name "HTML report review"
   md-review upload abc123 ./updated.md
   md-review add-file abc123 ./image.png --encoding base64
-  md-review patch abc123 ./fix.diff`);
+  md-review patch abc123 ./fix.diff
+  md-review publish factory:weekly-status ./status.md --name "Weekly status" --note "run 12"`);
       process.exit(cmd ? 1 : 0);
   }
 } catch (err) {

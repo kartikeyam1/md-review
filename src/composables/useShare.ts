@@ -21,6 +21,8 @@ export interface RevisionEntry {
   writes?: number
   /** Seeded from a session that predates revision history. */
   seeded?: boolean
+  /** #21: the change note of an upsert run (present only when set). */
+  note?: string
 }
 
 export interface RevisionContent extends RevisionEntry {

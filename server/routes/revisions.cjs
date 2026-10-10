@@ -42,6 +42,7 @@ module.exports = async function revisions(req, res) {
       at: entry ? entry.at : null, at_end: entry ? (entry.at_end || null) : null,
       by: entry ? (entry.by ?? null) : null, client: entry ? (entry.client ?? null) : null,
       size: entry ? entry.size : markdown.length, parent: entry ? (entry.parent ?? null) : null,
+      note: entry ? (entry.note ?? null) : null, // #21 rule 5
       is_current: hash === meta.content_hash,
       // #2/#4 ruling: a pinned revision never GETs /paste/<id>, so the doc's
       // mode and name (for the reader header title) come with the revision.

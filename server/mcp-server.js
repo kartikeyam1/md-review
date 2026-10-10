@@ -10,6 +10,8 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/
 // The backend's public origin (#22): when set, handed-out links are its /d/ meta pages (link unfurls).
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
 const CHUNK_SIZE = 512 * 1024; // 512 KB chunks for large files
+/** #21 rule 10: upsert_session sends the content in one request; larger docs go through the CLI / shell. */
+const UPSERT_MAX_BYTES = 10 * 1024 * 1024;
 
 /** #23 rule 11: what a write tool returns on 401/403. */
 export const EDIT_PROTECTED_MESSAGE = 'This document is edit-protected. Pass editToken (returned when it was created) or ask the owner for its edit link.';
@@ -74,6 +76,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       const body = await res.json().catch(() => ({}));
       const out = { error: body.error || `Paste service returned ${res.status}`, status: res.status };
       if (body.content_hash) out.content_hash = body.content_hash;
+      if (typeof body.code === 'string') out.code = body.code; // e.g. invalid_key (#21)
       return out;
     }
     if (res.status === 204) return {};
@@ -416,6 +419,38 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       return { name, content: text };
     },
 
+    // ── Upsert by key (#21): one stable URL per recurring doc ────────────────
+    async upsert_session({ key, markdown, filename, contentType, sessionName, slug, expiryDays, changeNote, author, expectedContentHash, editToken }) {
+      if (typeof markdown !== 'string') return { error: 'markdown (string) is required' };
+      if (Buffer.byteLength(markdown, 'utf-8') > UPSERT_MAX_BYTES) {
+        return { error: 'Content is larger than 10 MB. Publish it from disk instead: md-review publish <key> <file> (CLI), or create_via_shell.' };
+      }
+      // Token: argument → the store (saved under `key:<key>` when this server created it) → none.
+      const storeKey = `key:${key}`;
+      const token = editToken || tokenStore.get(storeKey);
+      const payload = { markdown, author: author || 'agent' };
+      if (filename !== undefined) payload.filename = filename;
+      if (contentType !== undefined) payload.contentType = contentType;
+      if (sessionName !== undefined) payload.sessionName = sessionName;
+      if (slug !== undefined) payload.slug = slug;
+      if (expiryDays !== undefined) payload.expiry_days = expiryDays;
+      if (changeNote !== undefined) payload.changeNote = changeNote;
+      const result = await apiCall(`/paste/by-key/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        headers: tokenHeaders(token, expectedContentHash ? { 'If-Match': expectedContentHash } : undefined),
+        body: JSON.stringify(payload),
+      });
+      if (result.error) {
+        if (result.code === 'edit_token_invalid' && !editToken && token) {
+          return { ...result, error: 'The edit token this server remembers for this key is no longer valid (the doc was deleted and re-created elsewhere, or its token was rotated). Pass editToken.' };
+        }
+        return result;
+      }
+      const known = result.editToken || (editToken ? editToken : null);
+      if (known) tokenStore.save([storeKey, result.id, result.slug], known);
+      return { ...result, shareUrl: result.url };
+    },
+
     // ── Shell command generators (curl — runs on any client machine) ──────────
 
     async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl, contentType, mode }) {
@@ -463,6 +498,33 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       };
     },
   };
+}
+
+// ── Tools registered identically by both servers (stdio here, HTTP in mcp-server-http.js) ──
+
+const toolResult = (result) => ({ content: [{ type: 'text', text: JSON.stringify(result) }] });
+
+/** Register the tools added by the view-and-share items (#21 upsert_session; #24/#25 add theirs here). */
+export function registerSharedTools(server, handlers) {
+  server.registerTool('upsert_session', {
+    title: 'Upsert Session by Key',
+    description: 'Publish a recurring doc under a stable key: creates it the first time, otherwise adds a new revision; the URL never changes. '
+      + 'Use a key like "<owner-or-tool>:<doc-name>" (lowercase letters, digits, . _ : -). Each call with changed content is its own revision, '
+      + 'with changeNote as its note. The edit token is remembered by this server; pass editToken when the doc was created elsewhere. Content over 10 MB: use the CLI (md-review publish) or create_via_shell.',
+    inputSchema: z.object({
+      key: z.string().describe('Stable key, e.g. "factory:dp-weekly-status" (lowercase, 1-128 chars: a-z 0-9 . _ : -)'),
+      markdown: z.string().describe('The full document content (Markdown or HTML)'),
+      filename: z.string().optional().describe('Display filename (updated when given)'),
+      contentType: z.enum(['markdown', 'html']).optional().describe('Document type (updated when given)'),
+      sessionName: z.string().optional().describe('Human-readable name (updated when given)'),
+      slug: z.string().optional().describe('URL slug, used only when the doc is created'),
+      expiryDays: z.number().nullable().optional().describe('Expiry in days (1, 7, 30, 90, or null for never); recomputed from now when given'),
+      changeNote: z.string().optional().describe('What changed in this run (shown in the revision history, max 500 chars)'),
+      author: z.string().optional().describe('Who is writing (recorded on the revision). Default "agent"'),
+      expectedContentHash: z.string().optional().describe('Only update if the current content still has this hash (412 otherwise)'),
+      editToken: editTokenArg(),
+    }),
+  }, async (args) => toolResult(await handlers.upsert_session(args)));
 }
 
 // ── MCP Server Setup (only when run directly) ───────────────────────────────
@@ -846,6 +908,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const result = await handlers.add_file_via_shell(args);
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   });
+
+  registerSharedTools(server, handlers);
 
   // ── Resource ──────────────────────────────────────────────────────────────
 

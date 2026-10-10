@@ -189,6 +189,7 @@ function restore() {
               <span class="rev-at">{{ formatAt(entry) }}</span>
               <span v-if="entry.writes && entry.writes > 1" class="rev-meta">{{ entry.writes }} saves</span>
               <span v-if="entry.seeded" class="rev-meta">before history</span>
+              <span v-if="entry.note" class="rev-note" data-testid="revision-note" :title="entry.note">{{ entry.note }}</span>
             </span>
             <span class="rev-client" :title="entry.client === 'mcp' ? 'written by an agent via MCP' : entry.client === 'ui' ? 'written in the browser' : 'written via the API'">{{ entry.client === 'mcp' ? '🤖' : entry.client === 'ui' ? '👤' : '⚙' }}</span>
           </button>
@@ -388,6 +389,19 @@ function restore() {
 
 .rev-by { font-size: 13px; font-weight: 500; }
 .rev-at, .rev-meta { font-size: 11px; color: var(--text-muted); }
+/* #21: an upsert run's change note — plain text, wrapped, never HTML; at most 3 lines (full text in title). */
+.rev-note {
+  font-size: 12px;
+  color: var(--text-secondary, var(--text-primary));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
 .rev-client { font-size: 13px; opacity: 0.8; }
 
 .rev-diff {

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createHandlers, editTokenArg } from './mcp-server.js';
+import { createHandlers, editTokenArg, registerSharedTools } from './mcp-server.js';
 import { createSessionRegistry } from './mcp-sessions.js';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
@@ -390,6 +390,8 @@ function registerTools(server, handlers) {
     const result = await handlers.add_file_via_shell(args);
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   });
+
+  registerSharedTools(server, handlers);
 
   server.registerResource(
     'session',

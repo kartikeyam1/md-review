@@ -33,7 +33,11 @@ function generateSlug(name) {
 // `releasing` is a slug the caller (`selfId`) is about to free: it counts as
 // available only when it belongs to that caller. `selfId`'s own stored slug
 // never blocks it either.
+// 00 §6: never assigned (they collide with /paste/list and /paste/by-key/:key).
+const RESERVED_SLUGS = new Set(['list', 'by-key']);
 function slugTaken(slug, { releasing = null, selfId = null } = {}) {
+  // A legacy session that already owns a reserved slug may keep it (PUT /meta re-submitting it).
+  if (RESERVED_SLUGS.has(slug)) return !(selfId && db.prepare('SELECT 1 FROM sessions WHERE id = ? AND slug = ?').get(selfId, slug));
   const row = db.prepare('SELECT target_id FROM slugs WHERE slug = ?').get(slug);
   if (row && !(slug === releasing && row.target_id === selfId)) return true;
   return !!db.prepare('SELECT 1 FROM sessions WHERE slug = ? AND id IS NOT ?').get(slug, selfId);
@@ -178,6 +182,19 @@ function setEditTokenHash(id, hash, expected) {
   return r.changes === 1;
 }
 
+// ── Upsert keys (#21) ───────────────────────────────────────────────────────
+
+/** The session holding upsert key `key` (expired ones included): { id, updated_at }, else null. */
+function sessionByKey(key) {
+  return db.prepare('SELECT id, updated_at FROM sessions WHERE upsert_key = ?').get(key) || null;
+}
+
+/** The session's upsert key, or null. */
+function upsertKeyOf(id) {
+  const r = db.prepare('SELECT upsert_key FROM sessions WHERE id = ?').get(id);
+  return r ? r.upsert_key : null;
+}
+
 // ── Revision history ─────────────────────────────────────────────────────────
 
 /** The revision list (oldest first), as the JSON-file server kept it in meta.revisions. */
@@ -218,8 +235,11 @@ function recordRevision(id, { prevHash, prevMarkdown, sharedAt, newHash, gz, siz
   const lastRow = db.prepare(`SELECT ${rows.REVISION_META_COLUMNS} FROM revisions WHERE session_id = ? ORDER BY seq DESC LIMIT 1`).get(id);
   const last = lastRow ? rows.decodeRevision(lastRow) : null;
   const lastAt = last ? Date.parse(last.at_end || last.at) : NaN;
-  const coalesce = last
+  // #21: an upsert run is always its own revision, and a later write never folds into a noted one.
+  const coalesce = !ctx.noCoalesce
+    && last
     && !last.seeded
+    && !last.note
     && last.by === by && last.client === client
     && last.hash === prevHash
     && Number.isFinite(lastAt) && (Date.now() - lastAt) < REVISION_COALESCE_MS;
@@ -228,7 +248,9 @@ function recordRevision(id, { prevHash, prevMarkdown, sharedAt, newHash, gz, siz
     db.prepare('UPDATE revisions SET hash = ?, at_end = ?, size = ?, writes = ?, blob = ? WHERE session_id = ? AND seq = ?')
       .run(newHash, now, size, (last.writes || 1) + 1, gz, id, lastRow.seq);
   } else {
-    rows.insertRevision(db, id, (lastRow ? lastRow.seq : 0) + 1, { hash: newHash, at: now, by, client, size, parent: prevHash || null }, gz);
+    const entry = { hash: newHash, at: now, by, client, size, parent: prevHash || null };
+    if (ctx.note) entry.note = ctx.note; // #21 rule 5
+    rows.insertRevision(db, id, (lastRow ? lastRow.seq : 0) + 1, entry, gz);
   }
 
   db.prepare(`DELETE FROM revisions WHERE session_id = ? AND seq IN (
@@ -271,6 +293,7 @@ function savePaste(id, data, ctx = {}, opts = {}) {
 
     rows.upsertSessionRow(db, id, meta, { mode: meta.mode, slugOwned, createdBy: opts.createdBy ?? null });
     if (opts.editTokenHash) db.prepare('UPDATE sessions SET edit_token_hash = ? WHERE id = ?').run(opts.editTokenHash, id);
+    if (opts.upsertKey) db.prepare('UPDATE sessions SET upsert_key = ? WHERE id = ?').run(opts.upsertKey, id);
     delete meta.content_hash;
     if (prevHash) meta.content_hash = prevHash;
 
@@ -444,7 +467,7 @@ module.exports = {
   generateSlug, uniqueSlug, isExpired, resolveId, sessionExists,
   getSite, listSites, resolveSiteId, createSite, deleteSite,
   filesDir, hashContent, currentContentHash, contentHashMismatch, loadContent, loadMeta, loadPaste, sessionEtag,
-  getEditTokenHash, setEditTokenHash,
+  getEditTokenHash, setEditTokenHash, sessionByKey, upsertKeyOf, tx: (fn) => tx(db, fn),
   listRevisions, readRevisionBlob, revisionSummary, savePaste, deleteSession, removeCovers, listSessionsForList,
   listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile,
   chunkDir, saveChunk, assembleChunks,
