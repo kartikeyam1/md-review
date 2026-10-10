@@ -5,7 +5,7 @@
 #   source scripts/lib/browser-slot.sh; browser_slot_acquire [timeout_s]   # holds fd 9
 #   browser_slot_release
 #   scripts/lib/browser-slot.sh <cmd...>    # run one command inside a slot
-BROWSER_SLOTS="${BROWSER_SLOTS:-3}"
+BROWSER_SLOTS="${BROWSER_SLOTS:-2}"
 BROWSER_SLOT_PREFIX="${VERIFY_BROWSER_LOCK:-/tmp/md-review-viewshare-browser.lock}"
 BROWSER_SLOT=""
 
