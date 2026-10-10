@@ -20,7 +20,8 @@
 #   E2E_FILES="app,shared-mode"   subset of e2e files (basename, name.test.mjs
 #                            or a path; comma or space separated)
 #   VERIFY_E2E_FILE_TIMEOUT  seconds per e2e file before it is killed (900)
-#   VERIFY_BROWSER_LOCK      lock file (/tmp/md-review-viewshare-browser.lock)
+#   VERIFY_BROWSER_LOCK      browser slot lock prefix (/tmp/md-review-viewshare-browser.lock)
+#   BROWSER_SLOTS            concurrent browser runs allowed across worktrees (3)
 #   VERIFY_ITEMS=04,02       backlog items whose acceptance tests run in addition
 #                            to the landed ones listed in docs/build/LANDED.
 #                            Item tests are files named NN-*.test.* under
@@ -46,6 +47,8 @@ LOG_DIR="$RUN_DIR/logs"
 export STACK_LOG_DIR="$LOG_DIR"
 # shellcheck source=lib/stack.sh
 source "$ROOT/scripts/lib/stack.sh"
+# shellcheck source=lib/browser-slot.sh
+source "$ROOT/scripts/lib/browser-slot.sh"
 
 ALL_STEPS=(typecheck unit build e2e server)
 FAIL_FAST="${VERIFY_FAIL_FAST:-0}"
@@ -186,12 +189,11 @@ step_e2e() {
   local api="$STACK_API_URL" base="$STACK_BASE_URL" data="$STACK_DATA_DIR"
 
   t1=$(now)
-  exec 9>"$LOCK"
-  if ! flock -w 3600 9; then
-    record "e2e:lock" FAIL "could not take $LOCK" "$(elapsed "$t1")"
+  if ! browser_slot_acquire 3600; then
+    record "e2e:lock" FAIL "no browser slot free (${BROWSER_SLOTS} slots)" "$(elapsed "$t1")"
     record e2e FAIL "not run" "$(elapsed "$t0")"; stack_stop_all; return
   fi
-  record "e2e:lock" PASS "browser lock held" "$(elapsed "$t1")"
+  record "e2e:lock" PASS "browser slot $BROWSER_SLOT/$BROWSER_SLOTS" "$(elapsed "$t1")"
 
   for f in "${E2E_LIST[@]}"; do
     name="$(basename "$f" .test.mjs)"
@@ -207,7 +209,7 @@ step_e2e() {
     sum_t=$((sum_t + T_TESTS)); sum_p=$((sum_p + T_PASS)); sum_f=$((sum_f + T_FAIL)); sum_s=$((sum_s + T_SKIP))
     if (( FAIL_FAST )) && [[ $status == FAIL ]]; then break; fi
   done
-  flock -u 9; exec 9>&-
+  browser_slot_release
   stack_stop_all
   record e2e "$status" "$sum_p/$sum_t pass, $sum_f fail, $sum_s skip (${#E2E_LIST[@]} files)" "$(elapsed "$t0")"
 }
