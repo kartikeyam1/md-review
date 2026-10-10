@@ -110,8 +110,10 @@ describe('resolveView (00 §1.3)', () => {
     expect(resolveView('', editor)).toEqual({ view: 'read', rewrite: true })
     expect(resolveView('AGENT', editor)).toEqual({ view: 'read', rewrite: true })
   })
+  it('split for editors on a doc (#7)', () => {
+    expect(resolveView('split', editor)).toEqual({ view: 'split', rewrite: false })
+  })
   it('allowed but not shipped → read without rewriting', () => {
-    expect(resolveView('split', editor)).toEqual({ view: 'read', rewrite: false })
     expect(resolveView('agent', editor)).toEqual({ view: 'read', rewrite: false })
     expect(resolveView('slides', editor)).toEqual({ view: 'read', rewrite: false })
   })

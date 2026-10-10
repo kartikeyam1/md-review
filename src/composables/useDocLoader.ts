@@ -6,7 +6,7 @@ import { toast } from '@/composables/useToast'
 import { detectContentType } from '@/composables/useContentType'
 import { historyBarrier } from '@/composables/useExternalChange'
 import { resolveView, routeKey, type RouterLocation } from '@/composables/useRouter'
-import type { DocState, DocViewName } from '@/composables/useDocState'
+import { paneModeFor, type DocState, type DocViewName } from '@/composables/useDocState'
 
 // ── Doc loaders (spec #4 routes, #2 shell split) ─────────────────────────────
 // What happens when a route is entered: load the shared doc / pinned revision
@@ -238,6 +238,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       const { content, filename: name } = await res.json()
       // The dev fixture harness opens in review mode (00 §1.4).
       handleFileLoaded(content, name, undefined, { mode: 'review' })
+      // `?filePath=…&view=edit|split` opens that view (#7 edge case: the dev loader + split).
+      applyViewParam()
     } catch {
       // API not available (production build) — ignore
     }
@@ -254,14 +256,14 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       routeKind: doc.routeKind.value,
       contentType: doc.contentType.value,
     })
-    doc.paneMode.value = view === 'edit' ? 'edit' : 'preview'
+    doc.paneMode.value = paneModeFor(view)
     if (rewrite) router.setQueryParam('view', 'read')
   }
 
   /** A UI view change (view toggle): replaceState to ?view=<view> (00 §1.3). */
   function setView(view: DocViewName) {
-    if (view === 'edit' && doc.capability.value !== 'editor') return
-    doc.paneMode.value = view === 'edit' ? 'edit' : 'preview'
+    if (view !== 'read' && doc.capability.value !== 'editor') return
+    doc.paneMode.value = paneModeFor(view)
     router.setQueryParam('view', view)
   }
 

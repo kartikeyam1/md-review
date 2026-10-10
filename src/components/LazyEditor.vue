@@ -16,7 +16,13 @@ const props = defineProps<{
   active?: boolean
 }>()
 
-type EditorHandle = { scrollToLine?: (line: number) => void; focus?: () => void }
+type EditorHandle = {
+  scrollToLine?: (line: number) => void
+  focus?: () => void
+  scrollElement?: () => HTMLElement | null
+  topLine?: () => number | null
+  scrollTopForLine?: (line: number) => number | null
+}
 
 const inner = ref<EditorHandle | null>(null)
 const failed = ref(false)
@@ -58,7 +64,12 @@ function focus() {
   inner.value?.focus?.()
 }
 
-defineExpose({ scrollToLine, focus })
+// Split view's scroll sync (#7); null until the editor has mounted.
+const scrollElement = () => inner.value?.scrollElement?.() ?? null
+const topLine = () => inner.value?.topLine?.() ?? null
+const scrollTopForLine = (line: number) => inner.value?.scrollTopForLine?.(line) ?? null
+
+defineExpose({ scrollToLine, focus, scrollElement, topLine, scrollTopForLine })
 </script>
 
 <template>

@@ -15,7 +15,7 @@ import type { DocState } from '@/composables/docState'
 
 export type RouteKind = 'doc' | 'pinned' | 'file' | 'embed'
 export type Capability = 'viewer' | 'editor'
-export type DocViewName = 'read' | 'edit'
+export type DocViewName = 'read' | 'edit' | 'split'
 
 export interface DocAxesInput {
   routeKind: Route['kind']
@@ -41,6 +41,11 @@ export interface DocAxes {
   reviewUI: boolean
 }
 
+/** The panes a resolved view puts on screen (read, and views not built here, show the preview). */
+export function paneModeFor(view: string): PaneMode {
+  return view === 'edit' || view === 'split' ? view : 'preview'
+}
+
 /** Pure: the axes for one screen state (00 §1). */
 export function resolveDocAxes(input: DocAxesInput): DocAxes {
   const routeKind: RouteKind = input.embed ? 'embed'
@@ -51,7 +56,8 @@ export function resolveDocAxes(input: DocAxesInput): DocAxes {
   // doc is editable only with edit access (#23 — a protected doc without a valid token is view-only).
   const canEdit = !input.pasteId || input.canEdit !== false
   const capability: Capability = routeKind === 'doc' && canEdit ? 'editor' : 'viewer'
-  const view: DocViewName = capability === 'editor' && input.paneMode === 'edit' ? 'edit' : 'read'
+  // Edit and split are editing views (#7): only an editor gets them.
+  const view: DocViewName = capability === 'editor' && input.paneMode !== 'preview' ? input.paneMode : 'read'
   return { routeKind, capability, view, isShared: !!input.pasteId, mode: input.mode, reviewUI: input.mode === 'review' }
 }
 

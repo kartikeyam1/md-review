@@ -9,17 +9,14 @@ import { docIdOf } from '@/composables/useEditToken'
 import DocHeader from '@/components/DocHeader.vue'
 import DocBanners from '@/components/DocBanners.vue'
 import CommentsLayer from '@/components/CommentsLayer.vue'
-import FileUpload from '@/components/FileUpload.vue'
 import LazyEditor from '@/components/LazyEditor.vue'
 import PreviewPane from '@/components/PreviewPane.vue'
-import PromptModal from '@/components/PromptModal.vue'
-import ShareModal from '@/components/ShareModal.vue'
+import SplitView from '@/components/SplitView.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
 import TocPanel from '@/components/TocPanel.vue'
 import { provideToc } from '@/composables/useToc'
 import { useActiveHeading } from '@/composables/useActiveHeading'
 import { useBreakpoint } from '@/composables/useBreakpoint'
-import ShareRequiredDialog from '@/components/ShareRequiredDialog.vue'
 import ReactionBar from '@/components/ReactionBar.vue'
 import ReactionOverlays from '@/components/ReactionOverlays.vue'
 
@@ -33,6 +30,12 @@ import ReactionOverlays from '@/components/ReactionOverlays.vue'
 
 // Carries the diff library — only loaded when someone opens History.
 const RevisionsModal = defineAsyncComponent(() => import('@/components/RevisionsModal.vue'))
+// Off the entry chunk (the #6 AC-06.8 budget): dialogs and the landing upload screen
+// render on demand; each chunk loads when DocView first renders it.
+const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
+const ShareModal = defineAsyncComponent(() => import('@/components/ShareModal.vue'))
+const ShareRequiredDialog = defineAsyncComponent(() => import('@/components/ShareRequiredDialog.vue'))
+const FileUpload = defineAsyncComponent(() => import('@/components/FileUpload.vue'))
 
 const doc = useDocState()
 const actions = useDocActions()
@@ -51,11 +54,14 @@ const previewRef = ref<InstanceType<typeof PreviewPane>>()
 onMounted(() => setHighlightClearer(() => previewRef.value?.clearSelectionHighlight()))
 
 // #6: the editor is lazy. Its slot mounts the first time the doc is shown in
-// edit view (which fetches the chunk) and then stays mounted, hidden with
-// v-show, so read ↔ edit keeps the same editor instance (rule 5) — for the
-// lifetime of the open document only: `docKey` changes with the doc on screen,
-// which drops the slot (and with it any per-doc editor state, e.g. #8 history).
-const editorShown = computed(() => paneMode.value === 'edit' && capability.value === 'editor' && !readOnly.value && !fileView.value)
+// edit or split view (which fetches the chunk) and then stays mounted, hidden
+// with v-show, so read ↔ edit ↔ split keeps the same editor instance (rule 5) —
+// for the lifetime of the open document only: `docKey` changes with the doc on
+// screen, which drops the slot (and with it any per-doc editor state, e.g. #8 history).
+const editorShown = computed(() => paneMode.value !== 'preview' && capability.value === 'editor' && !readOnly.value && !fileView.value)
+/** #7: editor and preview side by side (or as tabs below 960px). */
+const splitShown = computed(() => editorShown.value && paneMode.value === 'split')
+const previewShown = computed(() => !fileView.value && (!editorShown.value || splitShown.value))
 const docKey = computed(() => `${screenKey.value ?? ''}|${pasteId.value ?? ''}`)
 const editorMounted = ref(false)
 watch(editorShown, (shown) => { if (shown) editorMounted.value = true }, { immediate: true })
@@ -85,15 +91,15 @@ const stopHost = setAttachmentHost({
     shareAsk.value = async (ok) => {
       shareAsk.value = null
       if (!ok) return resolve(null)
-      // Share keeps the author in the editor they pasted into (the share URL has no `view`).
-      const wasEditing = paneMode.value === 'edit'
+      // Share keeps the author in the editor they pasted into, edit or split (the share URL has no `view`).
+      const wasView = paneMode.value
       try {
         await actions.handleShare()
       } catch {
         return resolve(null)
       }
       const shared = currentDoc()
-      if (shared && wasEditing) actions.setView('edit')
+      if (shared && wasView !== 'preview') actions.setView(wasView)
       resolve(shared)
     }
   }),
@@ -103,8 +109,9 @@ onBeforeUnmount(() => { shareAsk.value?.(false); stopHost() })
 watch(docKey, () => shareAsk.value?.(false))
 
 function scrollToLine(line: number) {
-  if (paneMode.value === 'edit') editorRef.value?.scrollToLine(line)
-  else previewRef.value?.scrollToLine(line)
+  // #7 rule 13: split view scrolls both panes.
+  if (editorShown.value) editorRef.value?.scrollToLine(line)
+  if (previewShown.value) previewRef.value?.scrollToLine(line)
 }
 
 function goHome() {
@@ -164,29 +171,45 @@ const embedOpenHref = computed(() => {
           <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
           <a v-else class="btn btn-primary" :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
         </div>
-        <LazyEditor
-          v-if="editorMounted && !fileView"
-          v-show="editorShown"
-          :key="docKey"
-          ref="editorRef"
-          v-model="markdown"
-          :active="editorShown"
-          :comments="reviewUI ? comments : NO_COMMENTS"
-          :content-type="contentType"
-          @selection="handleSelection"
-          @selection-clear="handleSelectionClear"
-        />
-        <PreviewPane
-          v-if="!fileView && !editorShown"
-          ref="previewRef"
+        <!-- #7: both panes render through SplitView in every view, so a view switch never remounts
+             the editor; the preview mounts with the read and split views. -->
+        <SplitView
+          v-else
+          :split="splitShown"
+          :editor="editorRef"
+          :preview="previewRef"
           :content="markdown"
-          :comments="reviewUI ? comments : NO_COMMENTS"
-          :commenting="reviewUI && !readOnly"
-          :theme="theme"
-          :content-type="contentType"
-          @selection="handleSelection"
-          @selection-clear="handleSelectionClear"
-        />
+          :html="contentType === 'html'"
+        >
+          <template #editor>
+            <LazyEditor
+              v-if="editorMounted"
+              v-show="editorShown"
+              :key="docKey"
+              ref="editorRef"
+              v-model="markdown"
+              :active="editorShown"
+              :comments="reviewUI ? comments : NO_COMMENTS"
+              :content-type="contentType"
+              @selection="handleSelection"
+              @selection-clear="handleSelectionClear"
+            />
+          </template>
+          <template #preview>
+            <PreviewPane
+              v-if="previewShown"
+              ref="previewRef"
+              :content="markdown"
+              :comments="reviewUI ? comments : NO_COMMENTS"
+              :commenting="reviewUI && !readOnly"
+              :theme="theme"
+              :content-type="contentType"
+              :reload-delay="splitShown ? 400 : 0"
+              @selection="handleSelection"
+              @selection-clear="handleSelectionClear"
+            />
+          </template>
+        </SplitView>
         <ReactionBar v-if="reactions.active.value && !fileView && !editorShown" />
       </main>
       <aside class="doc-aside" :class="{ collapsed: sidebarHidden }"><CommentsLayer v-if="reviewUI" @scroll-to="scrollToLine" /></aside>
@@ -339,7 +362,11 @@ const embedOpenHref = computed(() => {
 .doc-content > .file-view,
 .doc-content > .lazy-editor,
 .doc-content > :deep(.preview-pane),
-.doc-content > :deep(.html-frame) {
+.doc-content > :deep(.html-frame),
+.doc-content > .panes.split,
+.doc-content > .panes:not(.split) .lazy-editor,
+.doc-content > .panes:not(.split) :deep(.pane-body > .preview-pane),
+.doc-content > .panes:not(.split) :deep(.pane-body > .html-frame) {
   flex: 1 1 0;
   min-height: 0;
 }

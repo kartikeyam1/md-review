@@ -28,7 +28,8 @@ const bp = useBreakpoint()
 const toc = useToc()
 
 const editor = computed(() => capability.value === 'editor')
-const variant = computed(() => (onScreen.value && view.value === 'edit' ? 'editor' : 'reader'))
+// 00 §2.1: `editor` = the edit and split views.
+const variant = computed(() => (onScreen.value && (view.value === 'edit' || view.value === 'split') ? 'editor' : 'reader'))
 const isLocal = computed(() => onScreen.value && !pasteId.value && !docLink.value)
 const phone = computed(() => bp.value === 'phone')
 const desktop = computed(() => bp.value === 'desktop')

@@ -43,7 +43,8 @@ export function useAutosave(opts: {
   watch(filename, () => { if (sync.isShared.value && sync.isDirty.value) scheduleAutosave() })
 
   watch(paneMode, (mode, prev) => {
-    if (prev === 'edit' && mode === 'preview' && sync.isShared.value && sync.isDirty.value) {
+    // Leaving an editing view (edit or split, #7) for the read view saves.
+    if (prev !== 'preview' && mode === 'preview' && sync.isShared.value && sync.isDirty.value) {
       flushAutosave()
     }
   })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watchEffect } from 'vue'
+import { computed, defineAsyncComponent, onMounted, watchEffect } from 'vue'
 import { provideDocState } from '@/composables/docState'
 import { useDocLoader } from '@/composables/useDocLoader'
 import { useGlobalShortcuts } from '@/composables/useGlobalShortcuts'
@@ -7,11 +7,13 @@ import { shortcutsHelpShortcut } from '@/composables/useShortcutsOverlay'
 import { useRouter } from '@/composables/useRouter'
 import { installEditTokenHook } from '@/composables/useEditToken'
 import DocView from '@/components/DocView.vue'
-import DashboardView from '@/components/DashboardView.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
 import AppToast from '@/components/AppToast.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import { APP_NAME, formatDocumentTitle } from '@/composables/useDocTitle'
+
+// The library page loads on demand (keeps the entry chunk within #6's AC-06.8 budget).
+const DashboardView = defineAsyncComponent(() => import('@/components/DashboardView.vue'))
 
 // The router shell (00 §4.2): landing / doc routes → DocView, the library,
 // not-found. The doc state lives here so it survives a trip to the library.

@@ -10,6 +10,7 @@ import { DOC_STATE } from '@/composables/useDocState'
 import { copyText } from '@/composables/useCopyLink'
 import { toast } from '@/composables/useToast'
 import { runEnhancers } from '@/preview/enhancers'
+import { buildAnchors, lineToOffset, offsetToLine, type Anchor } from '@/composables/useScrollSync'
 
 const props = withDefaults(defineProps<{
   content: string
@@ -21,7 +22,12 @@ const props = withDefaults(defineProps<{
    * selection is plain browser selection: no events, no persisted highlight.
    */
   commenting?: boolean
-}>(), { theme: undefined, contentType: undefined, commenting: true })
+  /**
+   * #7 rule 6: an HTML doc reloads its iframe at most once per this many ms of
+   * edits (trailing). 0 = on every change (read view).
+   */
+  reloadDelay?: number
+}>(), { theme: undefined, contentType: undefined, commenting: true, reloadDelay: 0 })
 
 // Mermaid is loaded on demand — only documents that actually contain a
 // diagram pay for it (it and its plugins are the bulk of the bundle).
@@ -170,6 +176,23 @@ const BRIDGE_SCRIPT = `
     send({type:'selection', text:text, rect:{top:r.top,right:r.right,bottom:r.bottom,left:r.left}});
   });
   document.addEventListener('mousedown', function(){ send({type:'selection-clear'}); });
+  // Split view's synced scrolling (#7 rule 9): proportional, both ways. A
+  // scroll the parent asked for is not reported back (no feedback loop), and
+  // reports go out at most once per frame.
+  function maxY(){ var el = document.scrollingElement || document.documentElement; return Math.max(0, el.scrollHeight - innerHeight); }
+  var echoY = -1, scrollQueued = false;
+  window.addEventListener('scroll', function(){
+    if(scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(function(){
+      scrollQueued = false;
+      var y = window.scrollY, ours = echoY >= 0 && Math.abs(y - echoY) < 2;
+      echoY = -1;
+      if(ours) return;
+      var m = maxY();
+      send({type:'scroll-ratio', ratio: m > 0 ? Math.min(1, Math.max(0, y / m)) : 0});
+    });
+  }, {passive:true});
   // In-page anchor links (a TOC, href="#section"). The frame is sandboxed
   // without allow-same-origin, so its origin is opaque and native fragment
   // navigation of the blob: document is blocked by the browser. Intercept the
@@ -203,6 +226,13 @@ const BRIDGE_SCRIPT = `
     if(d.__mdreview && d.type==='anchor' && typeof d.id === 'string'){
       var target = findAnchor(d.id);
       if(target) target.scrollIntoView({behavior: d.smooth ? motion() : 'auto', block:'start'});
+      return;
+    }
+    if(d.__mdreview && d.type==='scroll-ratio' && typeof d.ratio === 'number' && isFinite(d.ratio)){
+      var top = Math.round(Math.min(1, Math.max(0, d.ratio)) * maxY());
+      if(Math.abs(window.scrollY - top) < 1) return;
+      try { window.scrollTo({top: top, behavior: 'instant'}); } catch(err){ window.scrollTo(0, top); }
+      echoY = window.scrollY;
       return;
     }
     if(d.__mdreview && d.type==='scroll' && d.text){
@@ -246,16 +276,41 @@ function revokeObjectUrl() {
   }
 }
 
+function loadFrameDoc(doc: string) {
+  revokeObjectUrl()
+  if (!doc) {
+    frameUrl.value = ''
+    return
+  }
+  objectUrl = URL.createObjectURL(new Blob([doc], { type: 'text/html' }))
+  frameUrl.value = objectUrl
+}
+
+// ── Scroll ratio (#7 rule 9) ────────────────────────────────────────────────
+/** The HTML document's last known scroll ratio (reported by the bridge or set by us). */
+let frameRatio = 0
+/** Which document the frame shows: another doc starts at its top (or its #fragment), never at the last one's ratio. */
+const docIdentity = () => `${docState?.screenKey.value ?? ''}|${docState?.pasteId.value ?? ''}`
+let frameDocIdentity = docIdentity()
+
+// #7 rule 6: while typing in split view the iframe reloads at most once per
+// `reloadDelay` ms (trailing) instead of on every keystroke. Another document
+// loads at once.
+let frameReloadTimer: ReturnType<typeof setTimeout> | null = null
+
 watch(
   frameDoc,
   (doc) => {
-    revokeObjectUrl()
-    if (!doc) {
-      frameUrl.value = ''
+    if (frameReloadTimer) { clearTimeout(frameReloadTimer); frameReloadTimer = null }
+    const identity = docIdentity()
+    const sameDoc = identity === frameDocIdentity
+    frameDocIdentity = identity
+    if (!sameDoc) frameRatio = 0
+    if (sameDoc && props.reloadDelay > 0 && frameUrl.value && doc) {
+      frameReloadTimer = setTimeout(() => { frameReloadTimer = null; loadFrameDoc(frameDoc.value) }, props.reloadDelay)
       return
     }
-    objectUrl = URL.createObjectURL(new Blob([doc], { type: 'text/html' }))
-    frameUrl.value = objectUrl
+    loadFrameDoc(doc)
   },
   { immediate: true }
 )
@@ -275,6 +330,12 @@ function postThemeToFrame() {
 function onFrameLoad() {
   postThemeToFrame()
   postAnchorToFrame(false)
+  // #7 rule 7: a reload starts at the top — put the document back where it was.
+  if (frameRatio > 0) postRatioToFrame(frameRatio)
+}
+
+function postRatioToFrame(ratio: number) {
+  frameRef.value?.contentWindow?.postMessage({ __mdreview: true, type: 'scroll-ratio', ratio }, '*')
 }
 
 // ── Anchors / URL fragment (spec #4 rules 12–15) ─────────────────────────────
@@ -412,6 +473,15 @@ function onFrameMessage(e: MessageEvent) {
   }
   if (data.type === 'selection-clear') {
     emit('selection-clear')
+    return
+  }
+  if (data.type === 'scroll-ratio') {
+    const r = Number(data.ratio)
+    if (!Number.isFinite(r)) return
+    frameRatio = Math.min(1, Math.max(0, r))
+    // The iframe scrolled (by the reader): surface it as a scroll event on the
+    // frame element, where split view's scroll sync listens (#7).
+    frame.dispatchEvent(new Event('scroll'))
     return
   }
   if (data.type === 'selection' && data.text) {
@@ -595,10 +665,14 @@ watch(
   }
 )
 
+// Bumped after every render (invalidates the scroll-sync anchors, #7).
+let renderSeq = 0
+
 watch(
   () => renderedHtml.value,
   async () => {
     await nextTick()
+    renderSeq++
     enhance()
     applyCommentHighlights()
     runMermaid()
@@ -638,6 +712,7 @@ onUnmounted(() => {
   realignCleanup?.()
   enhancerCleanup?.()
   if (anchorTimer) clearTimeout(anchorTimer)
+  if (frameReloadTimer) clearTimeout(frameReloadTimer)
 })
 
 function findBlockAncestor(node: Node): HTMLElement | null {
@@ -747,7 +822,52 @@ function scrollToLine(line: number) {
   }
 }
 
-defineExpose({ scrollToLine, clearSelectionHighlight })
+// ── Scroll API for split view's synced scrolling (#7 rules 8, 9) ─────────────
+
+/** The element that scrolls the markdown preview (null for an HTML doc: it scrolls inside the iframe). */
+function scrollElement(): HTMLElement | null {
+  return isHtml.value ? null : containerRef.value
+}
+
+// The line ↔ offset anchors, rebuilt when the render or the layout changed.
+let anchorCache: { key: string; anchors: Anchor[] } | null = null
+
+function anchors(): Anchor[] {
+  const c = containerRef.value
+  if (!c) return []
+  const key = `${renderedHtml.value.length}:${c.scrollHeight}:${c.clientWidth}:${renderSeq}`
+  if (anchorCache?.key === key) return anchorCache.anchors
+  const base = c.getBoundingClientRect().top - c.scrollTop
+  const blocks = [...c.querySelectorAll<HTMLElement>('[data-line-start]')].map((el) => {
+    const r = el.getBoundingClientRect()
+    return { start: Number(el.dataset.lineStart), end: Number(el.dataset.lineEnd), top: r.top - base, bottom: r.bottom - base, hidden: r.height === 0 && r.width === 0 }
+  }).filter((b) => !b.hidden)
+  anchorCache = { key, anchors: buildAnchors(blocks) }
+  return anchorCache.anchors
+}
+
+/** The scrollTop that puts source line `line` (fractional) at the preview's top edge. */
+function offsetForLine(line: number): number {
+  return lineToOffset(anchors(), line)
+}
+
+/** The source line (fractional) at scroll offset `offset`. */
+function lineAtOffset(offset: number): number {
+  return offsetToLine(anchors(), offset)
+}
+
+/** HTML doc: the iframe's scroll ratio, last reported or set. */
+function getRatio(): number {
+  return frameRatio
+}
+
+/** HTML doc: scroll the iframe to `ratio` (the bridge does not report it back). */
+function setRatio(ratio: number) {
+  frameRatio = Math.min(1, Math.max(0, ratio))
+  postRatioToFrame(frameRatio)
+}
+
+defineExpose({ scrollToLine, clearSelectionHighlight, scrollElement, offsetForLine, lineAtOffset, getRatio, setRatio })
 </script>
 
 <template>

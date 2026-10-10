@@ -311,6 +311,36 @@ function scrollToLine(line: number) {
   })
 }
 
+// ── Scroll API for split view's synced scrolling (#7 rule 8) ─────────────────
+
+/** The element that scrolls the editor. */
+function scrollElement(): HTMLElement | null {
+  return view.value?.scrollDOM ?? null
+}
+
+/** The top visible source line: 0-indexed, fractional within the line. */
+function topLine(): number | null {
+  const v = view.value
+  if (!v) return null
+  const h = v.scrollDOM.getBoundingClientRect().top - v.documentTop
+  if (h <= 0) return 0
+  const block = v.lineBlockAtHeight(h)
+  const frac = block.height > 0 ? (h - block.top) / block.height : 0
+  return v.state.doc.lineAt(block.from).number - 1 + Math.min(1, Math.max(0, frac))
+}
+
+/** The scroller scrollTop that puts source line `line` (fractional) at the top edge. */
+function scrollTopForLine(line: number): number | null {
+  const v = view.value
+  if (!v) return null
+  const n = Math.max(1, Math.min(Math.floor(line) + 1, v.state.doc.lines))
+  const block = v.lineBlockAt(v.state.doc.line(n).from)
+  const frac = Math.min(1, Math.max(0, line - (n - 1)))
+  const sd = v.scrollDOM
+  const docTop = v.documentTop - sd.getBoundingClientRect().top + sd.scrollTop
+  return docTop + block.top + frac * block.height
+}
+
 /** Move keyboard focus into the editor (used by the lazy slot once it mounts, #6). */
 function focus() {
   view.value?.focus()
@@ -331,7 +361,7 @@ function formatTable() {
   v.focus()
 }
 
-defineExpose({ scrollToLine, focus, formatTable })
+defineExpose({ scrollToLine, focus, formatTable, scrollElement, topLine, scrollTopForLine })
 </script>
 
 <template>
