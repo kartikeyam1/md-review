@@ -511,6 +511,7 @@ The parent accepts only messages from its own iframe's `contentWindow`.
 | `app.test.mjs:869-875` h4/h5/h6 sizes, code-block tests `125-170` | #18, #14 | must pass unchanged (#18 rule 3 keeps 100% sizes; AC-14.8) |
 | `server/test.mjs:535-567`, `731-750` (JSON-file pokes) | #20 | move to migration-script tests |
 | server tests asserting `#shared=` share URLs (MCP/CLI) | #4 | `…/d/<slug or id>` |
+| `durable-sync.test.mjs:165-169`, `:212-215` (reload while in edit view, expect `.preview-pane`) | #2 (or #7) | when UI view toggles start writing `?view=` (00 §1.3), a reload reopens edit view: switch back to read before the reload, or expect the editor. Until then #4 only *drops* a `view` param on UI toggles (DECISIONS #4) |
 
 ## §12 Breakpoints and viewports
 - Phone < 641px · tablet 641–1099px · desktop ≥ 1100px (#5). Use these everywhere.

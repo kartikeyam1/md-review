@@ -33,7 +33,7 @@ test('create_session — returns id and shareUrl', async () => {
   const result = await h.create_session({ markdown: '# Hello', filename: 'test.md' });
 
   assert.equal(result.id, 'abc123');
-  assert.equal(result.shareUrl, `${FRONTEND_URL}/#shared=abc123`);
+  assert.equal(result.shareUrl, `${FRONTEND_URL}/d/abc123`);
 
   const call = fetchMock.calls[0];
   assert.equal(call.url, `${PASTE_API_URL}/paste`);
@@ -73,7 +73,7 @@ test('get_session — returns full state with appended shareUrl', async () => {
   assert.equal(result.filename, 'test.md');
   assert.deepEqual(result.comments, []);
   assert.equal(result.sharedAt, '2026-03-26T00:00:00.000Z');
-  assert.equal(result.shareUrl, `${FRONTEND_URL}/#shared=abc123`);
+  assert.equal(result.shareUrl, `${FRONTEND_URL}/d/abc123`);
   assert.equal(fetchMock.calls[0].url, `${PASTE_API_URL}/paste/abc123`);
 });
 

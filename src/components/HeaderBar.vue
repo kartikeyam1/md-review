@@ -21,6 +21,8 @@ const props = defineProps<{
   revisionCount?: number
   /** True while there are changes the reader has not acknowledged yet. */
   hasUnseenChanges?: boolean
+  /** Viewer capability (pinned revision, file route): no edit, save, share or history controls. */
+  readOnly?: boolean
 }>()
 
 const SAVE_LABEL: Record<SaveState, string> = {
@@ -111,6 +113,7 @@ function onFilenameKeydown(e: KeyboardEvent) {
         @blur="commitFilename"
         @keydown="onFilenameKeydown"
       />
+      <span v-else-if="filename && readOnly" class="filename read-only">{{ filename }}</span>
       <span v-else-if="filename" class="filename" title="Click to rename" @click="startEditFilename">{{ filename }}</span>
       <span v-if="pasteId" class="paste-id" :title="pasteId">id: {{ pasteId }}</span>
       <input
@@ -143,7 +146,7 @@ function onFilenameKeydown(e: KeyboardEvent) {
       </span>
     </div>
     <div class="header-right">
-      <template v-if="filename">
+      <template v-if="filename && !readOnly">
         <div class="toggle">
           <button
             class="toggle-btn"
@@ -198,8 +201,10 @@ function onFilenameKeydown(e: KeyboardEvent) {
         <button class="btn btn-ghost" @click="emit('new-doc')">New</button>
       </template>
       <button class="btn btn-ghost" @click="emit('open-file')">Open file</button>
-      <button class="btn btn-ghost" :disabled="!filename || sharing" @click="emit('share')">{{ sharing ? 'Sharing…' : 'Share' }}</button>
-      <button class="btn btn-primary" :disabled="commentCount === 0 || !filename" @click="emit('generate-prompt')">Generate Prompt</button>
+      <template v-if="!readOnly">
+        <button class="btn btn-ghost" :disabled="!filename || sharing" @click="emit('share')">{{ sharing ? 'Sharing…' : 'Share' }}</button>
+        <button class="btn btn-primary" :disabled="commentCount === 0 || !filename" @click="emit('generate-prompt')">Generate Prompt</button>
+      </template>
       <button
         class="btn-icon"
         :title="THEME_META[theme].title"
@@ -249,7 +254,11 @@ function onFilenameKeydown(e: KeyboardEvent) {
   padding: 2px 4px;
 }
 
-.filename:hover {
+.filename.read-only {
+  cursor: default;
+}
+
+.filename:not(.read-only):hover {
   background: var(--bg-page);
   color: var(--text-primary);
 }

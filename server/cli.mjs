@@ -146,7 +146,7 @@ async function cmdCreate(filePath, flags) {
     console.log(JSON.stringify({
       id: result.id,
       slug: result.slug || null,
-      url: `${frontend}/#shared=${shareId}`,
+      url: `${String(frontend).replace(/\/+$/, '')}/d/${shareId}`,
       size,
     }));
     return;
@@ -183,7 +183,7 @@ async function cmdCreate(filePath, flags) {
   console.log(JSON.stringify({
     id: result.id,
     slug: result.slug || null,
-    url: `${frontend}/#shared=${shareId}`,
+    url: `${String(frontend).replace(/\/+$/, '')}/d/${shareId}`,
     size,
   }));
 }

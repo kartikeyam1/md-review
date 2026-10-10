@@ -213,8 +213,9 @@ describe('Gate + Speed features', () => {
     it('clicking a session navigates to review', async () => {
       await page.locator('.session-card').first().click()
       await page.waitForTimeout(2000)
-      const hash = await page.evaluate(() => window.location.hash)
-      assert.ok(hash.startsWith('#shared='), `Should navigate to shared view, got: ${hash}`)
+      // #4: the doc URL is path-based — /d/<slug or id>, no #shared= fragment.
+      const pathname = await page.evaluate(() => window.location.pathname)
+      assert.match(pathname, /\/d\/[a-zA-Z0-9][a-zA-Z0-9-]*$/, `Should navigate to /d/<slug or id>, got: ${pathname}`)
     })
   })
 })

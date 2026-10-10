@@ -111,8 +111,8 @@ export function createIndexedDbKeyValueStore(): KeyValueStore {
   }
 }
 
-export function createIndexedDbStore(): DraftStore {
-  return fixedKey(createIndexedDbKeyValueStore(), RECORD_KEY)
+export function createIndexedDbStore(recordKey: string = RECORD_KEY): DraftStore {
+  return fixedKey(createIndexedDbKeyValueStore(), recordKey)
 }
 
 /** Best available key/value store: IndexedDB → localStorage (prefixed) → memory. */
@@ -138,10 +138,10 @@ export async function openKeyValueStore(localStoragePrefix = 'md-review-kv:'): P
  * Pick the best available store. Probes IndexedDB with a real round-trip so a
  * broken implementation degrades to localStorage instead of failing later.
  */
-export async function openDraftStore(localStorageKey: string): Promise<DraftStore> {
+export async function openDraftStore(localStorageKey: string, recordKey: string = RECORD_KEY): Promise<DraftStore> {
   if (typeof indexedDB !== 'undefined') {
     try {
-      const idb = createIndexedDbStore()
+      const idb = createIndexedDbStore(recordKey)
       await idb.get()
       return idb
     } catch {

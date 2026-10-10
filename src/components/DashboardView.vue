@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from '@/composables/useRouter'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 
@@ -35,9 +36,11 @@ async function loadSessions() {
   }
 }
 
+const router = useRouter()
+
+/** In-app navigation to d/<slug||id> (pushState, no reload — spec #4 rule 11). */
 function openSession(s: SessionItem) {
-  const shareId = s.slug || s.id
-  window.location.hash = `#shared=${shareId}`
+  router.pushRoute({ kind: 'doc', id: s.slug || s.id })
 }
 
 function timeAgo(dateStr: string | null): string {

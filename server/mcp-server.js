@@ -10,6 +10,11 @@ const CHUNK_SIZE = 512 * 1024; // 512 KB chunks for large files
 
 // ── Handler factory (exported for testing) ──────────────────────────────────
 
+/** Handed-out doc link (spec #4 rule 17, 00 §6): `<frontendUrl>/d/<slug||id>`, exactly one slash between. */
+export function docUrl(frontendUrl, key) {
+  return `${String(frontendUrl || '').replace(/\/+$/, '')}/d/${key}`;
+}
+
 export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetchFn = fetch, allowLocalFiles = true }) {
   // pastePublicUrl = URL clients use in shell commands (curl). Defaults to pasteApiUrl.
   const shellApiUrl = pastePublicUrl || pasteApiUrl;
@@ -113,14 +118,14 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       });
       if (result.error) return result;
       const shareId = result.slug || result.id;
-      return { id: result.id, slug: result.slug || null, shareUrl: `${frontendUrl}/#shared=${shareId}` };
+      return { id: result.id, slug: result.slug || null, shareUrl: docUrl(frontendUrl, shareId) };
     },
 
     async get_session({ sessionId, fields }) {
       const qs = fields ? `?fields=${fields}` : '';
       const result = await apiCall(`/paste/${sessionId}${qs}`);
       if (result.error) return result;
-      return { ...result, shareUrl: `${frontendUrl}/#shared=${sessionId}` };
+      return { ...result, shareUrl: docUrl(frontendUrl, result.slug || sessionId) };
     },
 
     async list_comments({ sessionId }) {
@@ -344,7 +349,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       const cmd = `jq -n --rawfile content ${escapeShell(filePath)} '${jqExpr}' | curl -s -X POST ${shellApiUrl}/paste -H 'Content-Type: application/json' -d @-`;
       return {
         command: cmd,
-        instruction: `Run this command in your shell. It reads ${basename(filePath)} and uploads it directly to the paste service — the file content never enters this conversation. Returns JSON with {id, slug}. View at: ${frontendUrl}/#shared=<slug-or-id>`,
+        instruction: `Run this command in your shell. It reads ${basename(filePath)} and uploads it directly to the paste service — the file content never enters this conversation. Returns JSON with {id, slug}. View at: ${docUrl(frontendUrl, '<slug-or-id>')}`,
       };
     },
 

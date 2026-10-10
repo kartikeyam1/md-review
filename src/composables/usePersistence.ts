@@ -3,9 +3,16 @@ import type { Ref } from 'vue'
 import type { Comment, ThemeMode, ContentType } from '@/types'
 import { applyTheme, isValidTheme } from '@/composables/useTheme'
 import { detectContentType } from '@/composables/useContentType'
-import { openDraftStore, type DraftStore } from '@/composables/draftStore'
+import { openDraftStore, createMemoryStore, type DraftStore } from '@/composables/draftStore'
 
 const STORAGE_KEY = 'md-review-state'
+/**
+ * The never-shared local draft, kept apart from the main slot: opening a
+ * shared doc rewrites the main slot, and must not cost the reader the local
+ * doc they were writing (spec #4).
+ */
+const LOCAL_KEY = 'md-review-local-draft'
+const LOCAL_RECORD = 'local'
 const THEME_KEY = 'md-review-theme'
 const DEBOUNCE_MS = 500
 
@@ -48,10 +55,19 @@ export function usePersistence(
     serverMarkdown?: Ref<string | null>
     /** Injected in tests; defaults to IndexedDB with a localStorage fallback. */
     store?: DraftStore
+    /** Slot for the never-shared local draft (tests); defaults like `store`, or memory when `store` is injected. */
+    localStore?: DraftStore
+    /**
+     * While true, nothing is written: read-only views (pinned revisions, file
+     * routes, embeds) and content that is not the current route's must not
+     * overwrite the reader's own draft.
+     */
+    paused?: () => boolean
   } = {},
 ) {
   let restoredState: PersistedState | null = null
   let store: DraftStore | null = options.store ?? null
+  let localStore: DraftStore | null = options.localStore ?? (options.store ? createMemoryStore() : null)
   /** Set when the local draft could not be written (storage full/blocked). */
   const persistError = ref<string | null>(null)
   /** Which backing store ended up in use — surfaced for diagnostics. */
@@ -65,13 +81,19 @@ export function usePersistence(
     contentType.value = state.contentType ?? detectContentType(state.filename, state.markdown)
     loadComments(state.comments || [])
     setAppMode('review')
-    // Re-attach to the shared session this document came from, unless the
-    // URL already says where to go (another share, a GitHub file, the
-    // dashboard, or a dev ?filePath=). App.loadSharedDoc() then reconciles
-    // the persisted draft against the server copy.
-    if (state.pasteId && !window.location.hash && !window.location.search) {
-      window.history.replaceState({}, '', `${window.location.pathname}#shared=${state.pasteId}`)
-    }
+    // The URL is App's business (spec #4 rule 9): it reads restoredInfo() and
+    // decides whether the landing route should become d/<pasteId>.
+  }
+
+  function isClean(s: PersistedState): boolean {
+    return s.baselineEqualsLocal === true || (s.serverMarkdown != null && s.serverMarkdown === s.markdown)
+  }
+
+  /** What was restored, without consuming it: the shared session (if any) and whether it has unsaved edits. */
+  function restoredInfo(): { pasteId: string | null; dirty: boolean } | null {
+    const s = restoredState
+    if (!s) return null
+    return { pasteId: s.pasteId ?? null, dirty: !!s.pasteId && !isClean(s) }
   }
 
   /**
@@ -82,6 +104,7 @@ export function usePersistence(
     try {
       store ??= await openDraftStore(STORAGE_KEY)
       storeKind.value = store.kind
+      try { localStore ??= await openDraftStore(LOCAL_KEY, LOCAL_RECORD) } catch { localStore = createMemoryStore() }
       let raw = await store.get()
       // One-time migration from the old localStorage-only layout.
       if (raw === null && store.kind !== 'localstorage') {
@@ -113,7 +136,7 @@ export function usePersistence(
     const s = restoredState
     restoredState = null
     if (!s || s.pasteId !== pasteId) return null
-    const clean = s.baselineEqualsLocal === true || (s.serverMarkdown != null && s.serverMarkdown === s.markdown)
+    const clean = isClean(s)
     return {
       pasteId,
       markdown: s.markdown,
@@ -145,12 +168,19 @@ export function usePersistence(
 
   function persistNow(): Promise<void> {
     if (timer) { clearTimeout(timer); timer = null }
-    const payload = JSON.stringify(snapshot())
+    if (options.paused?.()) return writing ?? Promise.resolve()
+    const snap = snapshot()
+    // Nothing on screen, nothing to keep (an explicit clear is clearPersisted).
+    if (!snap.markdown && !snap.filename) return writing ?? Promise.resolve()
+    const payload = JSON.stringify(snap)
+    // A never-shared doc with content is also the local draft.
+    const isLocal = !snap.pasteId && !!(snap.markdown || snap.filename)
     const run = async () => {
       await restored
       if (!store) return
       try {
         await store.set(payload)
+        if (isLocal) await localStore?.set(payload)
         persistError.value = null
       } catch (e) {
         const quota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED')
@@ -182,15 +212,40 @@ export function usePersistence(
     window.addEventListener('pagehide', () => { persistNow() })
   }
 
-  async function clearPersisted() {
+  /** Drop the persisted draft. `keepLocal` leaves the never-shared local draft alone. */
+  async function clearPersisted(opts: { keepLocal?: boolean } = {}) {
     restoredState = null
     if (timer) { clearTimeout(timer); timer = null }
     try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
     await restored
     try { await store?.remove() } catch { /* ignore */ }
+    if (!opts.keepLocal) await forgetLocalDraft()
   }
 
-  return { clearPersisted, takeRestoredDraft, persistNow, restored, persistError, storeKind }
+  /** The never-shared local draft, if one is stored. */
+  async function loadLocalDraft(): Promise<Pick<PersistedState, 'markdown' | 'filename' | 'comments' | 'contentType'> | null> {
+    await restored
+    try {
+      const raw = await localStore?.get()
+      if (!raw) return null
+      const s = JSON.parse(raw) as PersistedState
+      if (!s.markdown || !s.filename || s.pasteId) return null
+      return { markdown: s.markdown, filename: s.filename, comments: s.comments || [], contentType: s.contentType ?? detectContentType(s.filename, s.markdown) }
+    } catch { return null }
+  }
+
+  /** The local doc became shared (or was discarded): it is no longer a local draft. */
+  function forgetLocalDraft(): Promise<void> {
+    const run = async () => {
+      await restored
+      try { await localStore?.remove() } catch { /* ignore */ }
+    }
+    // Queued behind pending writes, so an older local snapshot cannot land after it.
+    writing = (writing ?? Promise.resolve()).then(run, run)
+    return writing
+  }
+
+  return { clearPersisted, takeRestoredDraft, restoredInfo, loadLocalDraft, forgetLocalDraft, persistNow, restored, persistError, storeKind }
 }
 
 export function useThemePersistence() {

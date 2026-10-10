@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type { Comment, Reply, ApprovalInfo, ContentType } from '@/types'
 import type { TextDelta } from '@/composables/useDelta'
+import { docShareUrl, encodeFilePath } from '@/composables/useRouter'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 /** Identifies content writes from the browser UI in the revision history. */
@@ -78,7 +79,8 @@ export function useShare() {
   const sharing = ref(false)
   const shareError = ref<string | null>(null)
 
-  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string): Promise<string | null> {
+  /** Returns the new session's id and slug (null when the server assigned none). */
+  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string): Promise<{ id: string; slug: string | null } | null> {
     sharing.value = true
     shareError.value = null
 
@@ -104,8 +106,8 @@ export function useShare() {
         return null
       }
 
-      const { id } = await res.json()
-      return id as string
+      const { id, slug } = await res.json() as { id: string; slug?: string | null }
+      return { id, slug: slug || null }
     } catch (e) {
       shareError.value = 'Could not reach paste service. Are you on VPN?'
       return null
@@ -136,26 +138,24 @@ export function useShare() {
     }
   }
 
-  function getShareIdFromHash(): string | null {
-    const hash = window.location.hash
-    const match = hash.match(/^#shared=([a-zA-Z0-9][a-zA-Z0-9-]*)$/)
-    return match ? match[1] : null
-  }
-
-  function setShareHash(id: string) {
-    window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}#shared=${id}`)
-  }
-
-  function clearShareHash() {
-    if (window.location.hash) {
-      window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`)
-    }
-  }
-
-  function getShareUrls(id: string) {
-    const ui = `${window.location.origin}${window.location.pathname}#shared=${id}`
-    const api = `${PASTE_API}/paste/${id}`
+  /** Links for a shared doc. `key` is the slug when it has one, else the id (00 §6). */
+  function getShareUrls(key: string) {
+    const ui = docShareUrl(key)
+    const api = `${PASTE_API}/paste/${key}`
     return { ui, api, comments: `${api}/comments`, markdown: `${api}/markdown` }
+  }
+
+  /** One file of a multi-file session (route d/<ID>/<FILE>, rule 8). */
+  async function loadSessionFile(id: string, file: string): Promise<{ blob: Blob | null; type: string; status: number }> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}/files/${encodeFilePath(file)}`)
+      if (!res.ok) return { blob: null, type: '', status: res.status }
+      return { blob: await res.blob(), type: res.headers.get('content-type') || '', status: res.status }
+    } catch { return { blob: null, type: '', status: 0 } }
+  }
+
+  function sessionFileUrl(id: string, file: string): string {
+    return `${PASTE_API}/paste/${encodeURIComponent(id)}/files/${encodeFilePath(file)}`
   }
 
   async function fetchGithub(githubUrl: string): Promise<{ content: string; filename: string } | null> {
@@ -367,7 +367,7 @@ export function useShare() {
 
   return {
     sharing, shareError, createShare, loadShare, loadShareDetailed, fetchGithub,
-    getShareIdFromHash, setShareHash, clearShareHash, getShareUrls,
+    getShareUrls, loadSessionFile, sessionFileUrl,
     postComment, putComment, deleteCommentApi,
     postReply, putReply, deleteReplyApi,
     putMarkdown, pollPaste,

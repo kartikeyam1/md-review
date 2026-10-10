@@ -2,8 +2,8 @@
 import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
-import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { readFile, copyFile } from 'node:fs/promises'
+import { basename, resolve } from 'node:path'
 
 function localFileApi(): Plugin {
   return {
@@ -32,9 +32,26 @@ function localFileApi(): Plugin {
   }
 }
 
+// GitHub Pages has no SPA rewrites: deep paths (/md-review/d/<id>) are served
+// 404.html. Emitting it as a byte-identical copy of index.html lets the app
+// boot from any depth (spec #4 rule 18); asset URLs are absolute under `base`.
+function spaFallback404(): Plugin {
+  let outDir = 'dist'
+  return {
+    name: 'spa-fallback-404',
+    apply: 'build',
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir)
+    },
+    async writeBundle() {
+      await copyFile(resolve(outDir, 'index.html'), resolve(outDir, '404.html'))
+    },
+  }
+}
+
 export default defineConfig({
   base: process.env.GITHUB_PAGES === 'true' ? '/md-review/' : '/',
-  plugins: [vue(), localFileApi()],
+  plugins: [vue(), localFileApi(), spaFallback404()],
   server: {
     port: parseInt(process.env.PORT || '58747'),
     // VITE_NO_WATCH=1 (set by scripts/lib/stack.sh) runs a one-shot dev server

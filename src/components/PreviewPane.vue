@@ -4,6 +4,7 @@ import type { Comment, ThemeMode, ContentType } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { isGithub, isDark } from '@/composables/useTheme'
 import { findLineRange } from '@/composables/useHtmlSource'
+import { useRouter, scrollToAnchorElement, findAnchorIn } from '@/composables/useRouter'
 
 const props = defineProps<{
   content: string
@@ -58,6 +59,12 @@ const renderedHtml = computed(() => renderHtml(props.content))
 const BRIDGE_SCRIPT = `
 <script>(function(){
   function send(msg){ try { parent.postMessage(Object.assign({__mdreview:true},msg),'*'); } catch(e){} }
+  function motion(){ try { return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'; } catch(e){ return 'auto'; } }
+  function findAnchor(id){
+    var el = document.getElementById(id);
+    if(!el){ var n = document.getElementsByName(id); el = n && n[0]; }
+    return el || null;
+  }
   document.addEventListener('mouseup', function(){
     var sel = window.getSelection();
     var text = sel && sel.toString().trim();
@@ -77,11 +84,11 @@ const BRIDGE_SCRIPT = `
     var href = a.getAttribute('href') || '';
     if(href.charAt(0) !== '#') return;
     ev.preventDefault();
-    var id = decodeURIComponent(href.slice(1));
-    if(!id){ window.scrollTo({top:0,behavior:'smooth'}); return; }
-    var el = document.getElementById(id);
-    if(!el){ var n = document.getElementsByName(id); el = n && n[0]; }
-    if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+    var id = href.slice(1);
+    try { id = decodeURIComponent(id); } catch(e){}
+    if(!id){ window.scrollTo({top:0,behavior:motion()}); send({type:'anchor-changed', id:''}); return; }
+    var el = findAnchor(id);
+    if(el){ el.scrollIntoView({behavior:motion(),block:'start'}); send({type:'anchor-changed', id:id}); }
   }, true);
   window.addEventListener('message', function(e){
     var d = e.data || {};
@@ -89,6 +96,12 @@ const BRIDGE_SCRIPT = `
     // artifacts) follow the app's dark/light toggle. Harmless no-op otherwise.
     if(d.__mdreview_theme === 'dark' || d.__mdreview_theme === 'light'){
       document.documentElement.setAttribute('data-theme', d.__mdreview_theme);
+      return;
+    }
+    // Parent -> frame: the URL fragment names an anchor in this document.
+    if(d.__mdreview && d.type==='anchor' && typeof d.id === 'string'){
+      var target = findAnchor(d.id);
+      if(target) target.scrollIntoView({behavior: d.smooth ? motion() : 'auto', block:'start'});
       return;
     }
     if(d.__mdreview && d.type==='scroll' && d.text){
@@ -160,7 +173,116 @@ function postThemeToFrame() {
 // every content change). The bridge's message listener is registered by then.
 function onFrameLoad() {
   postThemeToFrame()
+  postAnchorToFrame(false)
 }
+
+// ── Anchors / URL fragment (spec #4 rules 12–15) ─────────────────────────────
+const router = useRouter()
+
+/** Parent -> frame: scroll the HTML doc to the URL's fragment. */
+function postAnchorToFrame(smooth: boolean) {
+  const win = frameRef.value?.contentWindow
+  const id = router.current.value.fragment
+  if (win && id) win.postMessage({ __mdreview: true, type: 'anchor', id, smooth }, '*')
+}
+
+// Frame -> parent anchor changes replace the fragment (no history entries for
+// HTML docs). A document that floods them is coalesced to ≤ 2 updates/s
+// (browsers throttle — Safari throws — past ~100 history calls per 30 s).
+const ANCHOR_UPDATE_MS = 500
+let anchorTimer: ReturnType<typeof setTimeout> | null = null
+let pendingAnchor: { id: string; key: string } | null = null
+let lastAnchorAt = 0
+
+function flushAnchor() {
+  anchorTimer = null
+  const pending = pendingAnchor
+  pendingAnchor = null
+  // The doc may have changed meanwhile: never apply a fragment to the next route.
+  if (!pending || pending.key !== router.current.value.key) return
+  lastAnchorAt = Date.now()
+  router.setFragment(pending.id, 'replace', 'frame')
+}
+
+function queueFrameAnchor(id: string) {
+  pendingAnchor = { id, key: router.current.value.key }
+  const wait = ANCHOR_UPDATE_MS - (Date.now() - lastAnchorAt)
+  if (wait <= 0) flushAnchor()
+  else anchorTimer ??= setTimeout(flushAnchor, wait)
+}
+
+const findAnchor = findAnchorIn
+
+function scrollReaderTo(el: HTMLElement) {
+  const container = containerRef.value
+  if (el === container) {
+    container.scrollTo({ top: 0 })
+    window.scrollTo({ top: 0 })
+    return
+  }
+  scrollToAnchorElement(el)
+}
+
+function onPreviewClick(e: MouseEvent) {
+  const container = containerRef.value
+  if (container) router.handleLinkClick(e, container, scrollReaderTo)
+}
+
+// Rule 14: after the first render, put the fragment's target at the top of the
+// reading area; if mermaid/images shift the layout and the reader has not
+// scrolled meanwhile, re-align once (within 3 s).
+let mermaidRun: Promise<unknown> = Promise.resolve()
+let realignCleanup: (() => void) | null = null
+
+function alignToFragment(opts: { initial: boolean }) {
+  if (isHtml.value) { postAnchorToFrame(!opts.initial); return }
+  const container = containerRef.value
+  if (!container) return
+  const id = router.current.value.fragment
+  if (!id) {
+    if (!opts.initial) scrollReaderTo(container)
+    return
+  }
+  const el = findAnchor(container, id)
+  if (!el) return
+  scrollToAnchorElement(el, { smooth: !opts.initial })
+  if (opts.initial) scheduleRealign(id)
+}
+
+function scheduleRealign(id: string) {
+  realignCleanup?.()
+  let interacted = false
+  const mark = () => { interacted = true }
+  const events = ['wheel', 'touchmove', 'keydown', 'mousedown'] as const
+  for (const ev of events) window.addEventListener(ev, mark, { passive: true, capture: true })
+  const cleanup = () => {
+    for (const ev of events) window.removeEventListener(ev, mark, { capture: true })
+    if (realignCleanup === cleanup) realignCleanup = null
+  }
+  realignCleanup = cleanup
+  const container = containerRef.value
+  const images = container
+    ? Array.from(container.querySelectorAll('img')).filter((img) => !img.complete).map((img) =>
+        new Promise((done) => { img.addEventListener('load', done, { once: true }); img.addEventListener('error', done, { once: true }) }))
+    : []
+  const settled = Promise.all([mermaidRun.catch(() => {}), ...images])
+  const timeout = new Promise((done) => setTimeout(done, 3000))
+  Promise.race([settled, timeout]).then(() => {
+    const stillCurrent = realignCleanup === cleanup
+    cleanup()
+    if (!stillCurrent || interacted || router.current.value.fragment !== id) return
+    const c = containerRef.value
+    const el = c && findAnchor(c, id)
+    if (el) scrollToAnchorElement(el, { smooth: false })
+  })
+}
+
+// Back/Forward or a manual fragment edit on the same doc: scroll, never reload.
+watch(() => router.current.value, (loc, prev) => {
+  if (!prev || loc.key !== prev.key || loc.source === 'frame') return
+  if (loc.fragment === prev.fragment && loc.source !== 'pop') return
+  alignToFragment({ initial: false })
+})
 
 function onFrameMessage(e: MessageEvent) {
   const frame = frameRef.value
@@ -168,6 +290,11 @@ function onFrameMessage(e: MessageEvent) {
   const data: any = e.data
   if (!data || data.__mdreview !== true) return
 
+  if (data.type === 'anchor-changed') {
+    const id = data.id
+    if (typeof id === 'string' && id.length <= 256) queueFrameAnchor(id)
+    return
+  }
   if (data.type === 'selection-clear') {
     emit('selection-clear')
     return
@@ -240,11 +367,16 @@ async function renderMermaid() {
   await mermaid.run({ nodes: Array.from(nodes) })
 }
 
+function runMermaid() {
+  mermaidRun = renderMermaid()
+  return mermaidRun
+}
+
 watch(
   () => props.theme,
   () => {
     // renderMermaid re-initialises with the current theme (only when diagrams exist).
-    nextTick(() => renderMermaid())
+    nextTick(() => runMermaid())
     // Forward the new theme into the HTML preview (no-op when not HTML).
     postThemeToFrame()
   }
@@ -255,7 +387,7 @@ watch(
   async () => {
     await nextTick()
     applyCommentHighlights()
-    renderMermaid()
+    runMermaid()
   }
 )
 
@@ -272,13 +404,16 @@ onMounted(() => {
   window.addEventListener('message', onFrameMessage)
   nextTick(() => {
     applyCommentHighlights()
-    renderMermaid()
+    runMermaid()
+    alignToFragment({ initial: true })
   })
 })
 
 onUnmounted(() => {
   window.removeEventListener('message', onFrameMessage)
   revokeObjectUrl()
+  realignCleanup?.()
+  if (anchorTimer) clearTimeout(anchorTimer)
 })
 
 function findBlockAncestor(node: Node): HTMLElement | null {
@@ -406,6 +541,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight })
     :class="['preview-pane', { 'markdown-body': isGithubTheme, 'github-mode': isGithubTheme }]"
     @mouseup="onMouseUp"
     @mousedown="onMouseDown"
+    @click="onPreviewClick"
     v-html="renderedHtml"
   />
 </template>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
-import type { AppMode, PaneMode, CommentCategory, ApprovalInfo, ContentType } from '@/types'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import type { AppMode, PaneMode, CommentCategory, ApprovalInfo, ContentType, Comment } from '@/types'
 import { useComments } from '@/composables/useComments'
 import { usePersistence, useThemePersistence } from '@/composables/usePersistence'
 import { useShare } from '@/composables/useShare'
@@ -22,9 +22,39 @@ import ShareModal from '@/components/ShareModal.vue'
 import ApprovalBanner from '@/components/ApprovalBanner.vue'
 import SummaryPanel from '@/components/SummaryPanel.vue'
 import DashboardView from '@/components/DashboardView.vue'
+import RouteNotFound from '@/components/RouteNotFound.vue'
+import { useRouter, resolveView, routeKey, type Route, type RouterLocation } from '@/composables/useRouter'
 
 // Carries the diff library — only loaded when someone opens History.
 const RevisionsModal = defineAsyncComponent(() => import('@/components/RevisionsModal.vue'))
+
+// ── Routing (spec #4) ─────────────────────────────────────────────────────
+// bootstrap() strips ?edit=, applies the legacy #shared=/#dashboard redirects
+// and canonical rewrites with replaceState — before the first render.
+const router = useRouter()
+const { redirected: legacyRedirected } = router.bootstrap()
+/**
+ * While the unsaved-changes guard decides whether a shared doc may be left
+ * (rule 13), the screen keeps showing that doc: `held` is its location.
+ */
+const held = shallowRef<RouterLocation | null>(null)
+/** The location the screen renders: the held doc during a leave decision, else the URL's. */
+const viewLoc = computed(() => held.value ?? router.current.value)
+const route = computed<Route>(() => viewLoc.value.route)
+const isEmbed = (loc: RouterLocation) => new URLSearchParams(loc.search).get('embed') === '1'
+const isReadOnly = (loc: RouterLocation) => isEmbed(loc) || loc.route.kind === 'pinned' || loc.route.kind === 'file'
+const embed = computed(() => isEmbed(viewLoc.value))
+/** Pinned revisions, file routes and embeds are read-only (capability viewer, 00 §1.2). */
+const readOnly = computed(() => isReadOnly(viewLoc.value))
+const NO_COMMENTS: Comment[] = []
+/** routeKey() of the content currently in the editor/preview state ('landing' = a local doc). */
+const screenKey = ref<string | null>(null)
+/** The current doc route answered 404/410 (rule 10) — 'expired-revision' for a pinned 410. */
+const docMissing = ref<null | 'missing' | 'revision-gone'>(null)
+/** Pinned revision on screen (rule 7). */
+const pinnedInfo = ref<{ id: string; at: string | null } | null>(null)
+/** Non-text file on a file route (rule 8): an image or a download link. */
+const fileView = ref<null | { kind: 'image' | 'download'; url: string; name: string }>(null)
 
 const appMode = ref<AppMode>('upload')
 const paneMode = ref<PaneMode>('preview')
@@ -158,17 +188,23 @@ function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null)
 
 const { theme, setTheme } = useThemePersistence()
 
-const { clearPersisted, takeRestoredDraft, restored, persistError } = usePersistence(
+const { clearPersisted, takeRestoredDraft, restoredInfo, loadLocalDraft, forgetLocalDraft, restored, persistError } = usePersistence(
   markdown,
   filename,
   comments,
   contentType,
   loadComments,
   (mode) => { appMode.value = mode },
-  { pasteId, serverMarkdown: sync.serverMarkdown },
+  {
+    pasteId,
+    serverMarkdown: sync.serverMarkdown,
+    // Only what the current route shows is persisted: never a read-only view,
+    // a doc being left, or a restored draft the landing route is not showing.
+    paused: () => isReadOnly(router.current.value) || screenKey.value !== router.current.value.key,
+  },
 )
 
-const { sharing, shareError, createShare, loadShareDetailed, fetchGithub, getShareIdFromHash, setShareHash, clearShareHash, getShareUrls, getApproval, putApproval } = useShare()
+const { sharing, shareError, createShare, loadShareDetailed, fetchGithub, getShareUrls, getRevision, loadSessionFile, sessionFileUrl, getApproval, putApproval } = useShare()
 
 const approvalInfo = ref<ApprovalInfo | null>(null)
 
@@ -290,12 +326,17 @@ async function handleShare() {
     showShareModal.value = true
     return
   }
-  const id = await createShare(markdown.value, filename.value, comments.value, undefined, contentType.value, reviewerName.value || undefined)
-  if (id) {
-    setShareHash(id)
-    pasteId.value = id
+  const created = await createShare(markdown.value, filename.value, comments.value, undefined, contentType.value, reviewerName.value || undefined)
+  if (created) {
+    // Rule 11: the URL becomes d/<slug||id> (replaceState), preferring the slug.
+    const key = created.slug || created.id
+    pasteId.value = key
+    screenKey.value = routeKey({ kind: 'doc', id: key })
+    router.replace(`${router.base}d/${key}`)
+    // It is a shared doc now, no longer the never-shared local draft.
+    forgetLocalDraft()
     sync.setBaseline({ markdown: markdown.value, filename: filename.value })
-    shareResult.value = getShareUrls(id)
+    shareResult.value = getShareUrls(key)
     showShareModal.value = true
     refreshApproval()
   } else {
@@ -306,40 +347,69 @@ async function handleShare() {
 function detachFromShare() {
   pasteId.value = null
   approvalInfo.value = null
-  clearShareHash()
 }
 
-async function loadSharedDoc() {
-  const shareId = getShareIdFromHash()
-  if (!shareId) return
-  // Already attached to this session (hash re-fired) — do not reload over local edits.
-  if (pasteId.value === shareId) return
+/** Put on screen something that is not a live shared doc (pinned revision, file). */
+function showReadOnlyContent(content: string, name: string, type: ContentType) {
+  detachFromShare()
+  pinnedInfo.value = null
+  setFileView(null)
+  clearComments()
+  dismissAll()
+  notice.value = null
+  markdown.value = content
+  filename.value = name
+  contentType.value = type
+  appMode.value = 'review'
+}
+
+let navToken = 0
+const isStale = (token: number) => token !== navToken
+
+async function loadSharedDoc(shareId: string, token: number) {
+  const key = routeKey({ kind: 'doc', id: shareId })
+  // Already attached to this session (Back/Forward, library and back) — do
+  // not reload over local edits.
+  if (pasteId.value === shareId && screenKey.value === key) { applyViewParam(); return }
+  if (pasteId.value) detachFromShare()
 
   const { data, status } = await loadShareDetailed(shareId)
-  if (getShareIdFromHash() !== shareId) return // navigated away meanwhile
+  if (isStale(token)) return // navigated away meanwhile
 
   if (!data) {
     const draft = takeRestoredDraft(shareId)
     if (status === 404 || status === 410) {
-      // Session gone. Keep whatever is on screen as a plain local document.
-      detachFromShare()
+      if (!draft || embed.value) {
+        // Rule 10: no local copy — a definitive "not found", never the upload screen.
+        docMissing.value = 'missing'
+        return
+      }
+      // Session gone, but this browser has a copy: keep it as a plain local document.
+      handleFileLoaded(draft.markdown, draft.filename, undefined, { shared: true })
+      screenKey.value = 'landing'
+      router.replace(router.base)
       notice.value = status === 410
         ? 'This shared session has expired. Showing your local copy.'
         : 'This shared session no longer exists. Showing your local copy.'
-      if (!markdown.value) appMode.value = 'upload'
       return
     }
-    // Server unreachable. If the persisted copy belongs to this session, stay
-    // attached so polling/autosave resume when it comes back.
-    notice.value = 'Cannot reach the review server. Showing your local copy; it will sync when the server is back.'
+    // Server unreachable (offline is not "not found"). If the persisted copy
+    // belongs to this session, stay attached so polling/autosave resume when
+    // it comes back.
     if (draft) {
+      handleFileLoaded(draft.markdown, draft.filename, undefined, { shared: true })
       pasteId.value = shareId
+      screenKey.value = key
       if (draft.baseMarkdown !== null) {
         sync.setBaseline({ markdown: draft.baseMarkdown, filename: draft.filename })
       } else {
         sync.expectDraft()
       }
     }
+    // After handleFileLoaded, which clears notices.
+    notice.value = draft
+      ? 'Cannot reach the review server. Showing your local copy; it will sync when the server is back.'
+      : 'Cannot reach the review server. This document will load when the server is back — try again shortly.'
     return
   }
 
@@ -348,6 +418,7 @@ async function loadSharedDoc() {
     loadComments(data.comments)
   }
   pasteId.value = shareId
+  screenKey.value = key
   sync.setBaseline({
     markdown: data.markdown,
     filename: data.filename,
@@ -356,54 +427,298 @@ async function loadSharedDoc() {
   })
   // A reload with unsaved edits: put them back on top of the fresh server copy.
   const draft = takeRestoredDraft(shareId)
-  if (draft && !draft.clean && draft.markdown !== data.markdown) {
+  if (draft && !draft.clean && draft.markdown !== data.markdown && !embed.value) {
     sync.restoreDraft(draft.markdown, draft.baseMarkdown)
     notice.value = sync.conflict.value
       ? 'Restored your unsaved edits, but the server copy changed in the meantime — choose a version below.'
       : 'Restored your unsaved edits from this browser.'
   }
-  paneMode.value = 'preview'
+  applyViewParam()
   refreshApproval()
 }
 
+/** Rule 7: a pinned revision, read-only. Never GET /paste/<ID>. */
+async function loadPinned(id: string, rev: string, token: number) {
+  const key = routeKey({ kind: 'pinned', id, rev })
+  if (screenKey.value === key) { applyViewParam(); return }
+  const { data, status } = await getRevision(id, rev)
+  if (isStale(token)) return
+  if (!data) {
+    if (status === 404) docMissing.value = 'missing'
+    else if (status === 410) docMissing.value = 'revision-gone'
+    else notice.value = 'Cannot reach the review server. Try again when it is back.'
+    return
+  }
+  showReadOnlyContent(data.markdown, id, detectContentType('', data.markdown))
+  fileView.value = null
+  pinnedInfo.value = { id, at: data.at }
+  screenKey.value = key
+  applyViewParam()
+}
+
+const MARKDOWN_FILE = /\.(md|markdown|txt)$/i
+const HTML_FILE = /\.html?$/i
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
+let fileObjectUrl: string | null = null
+
+function setFileView(next: typeof fileView.value) {
+  if (fileObjectUrl) { URL.revokeObjectURL(fileObjectUrl); fileObjectUrl = null }
+  if (next?.kind === 'image') fileObjectUrl = next.url
+  fileView.value = next
+}
+
+/** Rule 8: one file of a multi-file session, read-only. */
+async function loadFile(id: string, file: string, token: number) {
+  const key = routeKey({ kind: 'file', id, file })
+  if (screenKey.value === key) { applyViewParam(); return }
+  const res = await loadSessionFile(id, file)
+  if (isStale(token)) return
+  if (!res.blob) {
+    if (res.status === 404 || res.status === 410) docMissing.value = 'missing'
+    else notice.value = 'Cannot reach the review server. Try again when it is back.'
+    return
+  }
+  const name = file.split('/').pop() || file
+  pinnedInfo.value = null
+  if (MARKDOWN_FILE.test(file) || HTML_FILE.test(file)) {
+    const text = await res.blob.text()
+    if (isStale(token)) return
+    showReadOnlyContent(text, name, HTML_FILE.test(file) ? 'html' : 'markdown')
+    setFileView(null)
+  } else {
+    showReadOnlyContent('', name, 'markdown')
+    setFileView(IMAGE_FILE.test(file) || res.type.startsWith('image/')
+      ? { kind: 'image', url: URL.createObjectURL(res.blob), name }
+      : { kind: 'download', url: sessionFileUrl(id, file), name })
+  }
+  screenKey.value = key
+  applyViewParam()
+}
+
+/**
+ * Legacy `#github=<url>` on the landing route (rule 4): open the file as a
+ * local doc, then drop the fragment. On failure show the error, URL → base.
+ */
 async function loadFromGithubHash() {
-  const hash = window.location.hash
-  const match = hash.match(/^#github=(.+)$/)
+  const match = window.location.hash.match(/^#github=(.+)$/)
   if (!match) return
 
-  const githubUrl = decodeURIComponent(match[1])
+  let githubUrl: string
+  try { githubUrl = decodeURIComponent(match[1]) } catch { githubUrl = match[1] }
   const data = await fetchGithub(githubUrl)
   if (data) {
     handleFileLoaded(data.content, data.filename)
+    const l = window.location
+    router.replace(l.pathname + l.search)
+  } else {
+    notice.value = shareError.value || 'Could not load the file from GitHub.'
+    router.replace(router.base)
   }
 }
 
-function checkDashboardHash(): boolean {
-  if (window.location.hash === '#dashboard') {
-    appMode.value = 'dashboard'
-    return true
-  }
-  return false
+/**
+ * Rule 5 / 00 §1.3: resolve ?view= against what is on screen. Disallowed or
+ * unknown values render read and are rewritten to view=read (replaceState).
+ * (UI view toggles do not write ?view= yet — see DECISIONS #4.)
+ */
+function applyViewParam() {
+  const r = route.value
+  const routeKind = embed.value ? 'embed' : r.kind === 'pinned' ? 'pinned' : r.kind === 'file' ? 'file' : 'doc'
+  const { view, rewrite } = resolveView(router.query('view'), {
+    capability: readOnly.value ? 'viewer' : 'editor',
+    routeKind,
+    contentType: contentType.value,
+  })
+  paneMode.value = view === 'edit' ? 'edit' : 'preview'
+  if (rewrite) router.setQueryParam('view', 'read')
 }
 
-function onHashChange() {
-  if (checkDashboardHash()) return
-  loadSharedDoc()
-  loadFromGithubHash()
+/** Empty landing state (New, or navigating back to the landing route). */
+function resetToEmpty() {
+  clearComments()
+  dismissAll()
+  notice.value = null
+  markdown.value = ''
+  filename.value = ''
+  contentType.value = 'markdown'
+  pasteId.value = null
+  approvalInfo.value = null
+  pinnedInfo.value = null
+  setFileView(null)
+  appMode.value = 'upload'
+  screenKey.value = 'landing'
+}
+
+/** Resolves to `fallback` when `p` takes longer than `ms` (a stalled save). */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms)
+    p.then((v) => { clearTimeout(t); resolve(v) }, () => { clearTimeout(t); resolve(fallback) })
+  })
+}
+
+/** The user chose to leave a shared doc with unsaved edits: drop them for good. */
+function discardAttached() {
+  detachFromShare()
+  screenKey.value = null
+  // The persisted draft holds exactly those edits; keep the local draft slot.
+  clearPersisted({ keepLocal: true })
+}
+
+const pathOf = (href: string) => { const u = new URL(href); return u.pathname + u.search + u.hash }
+
+/**
+ * Rule 13: any navigation away from the attached shared doc while it has
+ * unsaved changes — a link, Back/Forward, the library, New — flushes autosave
+ * (briefly), and if that cannot finish, asks. The doc stays on screen while
+ * deciding. Cancel puts the doc's URL back; accepting discards the edits so
+ * later navigation does not ask again.
+ */
+async function guardLeave(to: RouterLocation, from: RouterLocation, token: number): Promise<boolean> {
+  const attached = pasteId.value
+  if (!attached || !sync.isShared.value) return true
+  const attachedKey = routeKey({ kind: 'doc', id: attached })
+  if (to.key === attachedKey) return true
+  const unsaved = () => sync.isDirty.value || !!sync.conflict.value || sync.saveState.value === 'saving'
+  if (!unsaved()) return true
+  const showing = from.key === attachedKey && screenKey.value === attachedKey
+  if (showing) held.value = from
+  try {
+    if (!sync.conflict.value) await withTimeout(flushAutosave(), LEAVE_FLUSH_MS, false)
+    if (isStale(token)) return false
+    if (!unsaved()) return true
+    if (window.confirm('Your changes to this shared document could not be saved yet. Leave anyway and discard them?')) {
+      discardAttached()
+      return true
+    }
+    router.push(showing ? pathOf(from.href) : `${router.base}d/${attached}`)
+    return false
+  } finally {
+    if (held.value === from) held.value = null
+  }
+}
+const LEAVE_FLUSH_MS = 1500
+
+/** Put the never-shared local draft on screen (landing route), if there is one. */
+async function enterLanding(token: number) {
+  if (screenKey.value === 'landing') return
+  if (pasteId.value) detachFromShare()
+  const local = await loadLocalDraft()
+  if (isStale(token) || screenKey.value === 'landing') return
+  if (!local) { resetToEmpty(); return }
+  clearComments()
+  dismissAll()
+  notice.value = null
+  pinnedInfo.value = null
+  setFileView(null)
+  markdown.value = local.markdown
+  filename.value = local.filename
+  contentType.value = local.contentType ?? 'markdown'
+  loadComments(local.comments)
+  appMode.value = 'review'
+  screenKey.value = 'landing'
+  applyViewParam()
+}
+
+async function applyRoute(to: RouterLocation, from: RouterLocation | null) {
+  const token = ++navToken
+  if (from && !(await guardLeave(to, from, token))) return
+  if (isStale(token)) return
+  docMissing.value = null
+  const r = to.route
+  switch (r.kind) {
+    case 'landing':
+      return enterLanding(token)
+    case 'library':
+    case 'not-found':
+      return
+    case 'doc':
+      return loadSharedDoc(r.id, token)
+    case 'pinned':
+      return loadPinned(r.id, r.rev, token)
+    case 'file':
+      return loadFile(r.id, r.file, token)
+  }
+}
+
+// Every route change (push, replace, Back/Forward). Same key = same content:
+// a fragment or query change, handled by PreviewPane / applyViewParam.
+watch(() => router.current.value, (to, from) => {
+  if (!booted.value) return
+  if (to.key === from.key) {
+    // A `#github=` pasted while already on the landing route (rule 4).
+    if (to.route.kind === 'landing' && to.source === 'pop' && /^#github=/.test(new URL(to.href).hash)) loadFromGithubHash()
+    return
+  }
+  applyRoute(to, from)
+})
+
+/** The route's content is what the doc state holds. */
+const onScreen = computed(() => appMode.value === 'review' && screenKey.value === viewLoc.value.key)
+
+/**
+ * A UI view change. Until #2 writes ?view= (DECISIONS #4), it drops any
+ * `view` param so a reload or copied URL cannot reopen a stale view.
+ */
+function onPaneModeChange(mode: PaneMode) {
+  paneMode.value = mode
+  if (router.query('view') !== null) router.setQueryParam('view', null)
+}
+
+function goHome() {
+  router.push(router.base)
+}
+
+const isDocRoute = computed(() => ['doc', 'pinned', 'file'].includes(route.value.kind))
+const showHeader = computed(() => route.value.kind !== 'library' && route.value.kind !== 'not-found' && !docMissing.value)
+
+const pinnedWhen = computed(() => {
+  const at = pinnedInfo.value?.at
+  if (!at) return 'an earlier point'
+  const d = new Date(at)
+  return isNaN(d.getTime()) ? at : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+})
+
+/** Rule 16: the same URL without `embed`, for "Open in md-review". */
+const embedOpenHref = computed(() => {
+  const u = new URL(router.current.value.href)
+  u.searchParams.delete('embed')
+  return u.href
+})
+
+/** Plain left click on an in-app link → pushState; modified clicks keep the browser default. */
+function onAppLinkClick(e: MouseEvent, path: string) {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  router.push(path)
 }
 
 onMounted(async () => {
-  filePathParam.value = new URLSearchParams(window.location.search).get('filePath')
   // Put the previous draft back first: loadSharedDoc() reconciles it against
   // the server copy and the upload screen must not flash over a restored doc.
   await restored
-  booted.value = true
-  if (!checkDashboardHash()) {
-    loadFromFilePath()
-    loadSharedDoc()
-    loadFromGithubHash()
+  const info = restoredInfo()
+  if (info) screenKey.value = info.pasteId ? routeKey({ kind: 'doc', id: info.pasteId }) : 'landing'
+  const hasGithub = /^#github=/.test(window.location.hash)
+  if (route.value.kind === 'landing') {
+    filePathParam.value = router.query('filePath')
+    // Rule 9: only unsaved edits to a shared doc hijack the landing route.
+    if (!legacyRedirected && !filePathParam.value && !hasGithub && info?.pasteId && info.dirty) {
+      router.replace(`${router.base}d/${info.pasteId}${window.location.search}`)
+    }
   }
-  window.addEventListener('hashchange', onHashChange)
+  booted.value = true
+  if (route.value.kind === 'landing') {
+    loadFromFilePath()
+    loadFromGithubHash()
+    if (!filePathParam.value && !hasGithub) {
+      // A restored shared draft is not shown here; the local draft (if any) is.
+      if (screenKey.value === 'landing') applyViewParam()
+      else enterLanding(++navToken)
+    }
+  } else {
+    applyRoute(router.current.value, null)
+  }
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('beforeunload', onBeforeUnload)
   window.addEventListener('pagehide', onPageHide)
@@ -411,7 +726,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  window.removeEventListener('hashchange', onHashChange)
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('beforeunload', onBeforeUnload)
   window.removeEventListener('pagehide', onPageHide)
@@ -448,7 +762,13 @@ function handleFileLoaded(content: string, name: string, type?: ContentType, opt
   if (!opts.shared) {
     if (!confirmDiscardIfDirty()) return
     detachFromShare()
+    // A local doc lives on the landing route.
+    screenKey.value = 'landing'
+    if (route.value.kind !== 'landing') router.replace(router.base)
   }
+  // Whatever was on screen before (a pinned banner, a file's image) goes.
+  pinnedInfo.value = null
+  setFileView(null)
   clearComments()
   dismissAll()
   notice.value = null
@@ -460,19 +780,13 @@ function handleFileLoaded(content: string, name: string, type?: ContentType, opt
 
 function handleNewDoc() {
   if (!confirmDiscardIfDirty()) return
-  clearComments()
-  clearPersisted()
-  dismissAll()
-  notice.value = null
-  markdown.value = ''
-  filename.value = ''
-  contentType.value = 'markdown'
-  pasteId.value = null
-  approvalInfo.value = null
-  appMode.value = 'upload'
-  if (window.location.search || window.location.hash) {
-    window.history.replaceState({}, '', window.location.pathname)
-  }
+  // New from a shared doc keeps the (unrelated) local draft in storage.
+  clearPersisted({ keepLocal: screenKey.value !== 'landing' })
+  resetToEmpty()
+  filePathParam.value = null
+  // Rule 11: New → landing (pushState); already there → just drop query/fragment.
+  if (route.value.kind === 'landing') router.replace(router.base)
+  else router.push(router.base)
 }
 
 function handleSelection(info: {
@@ -481,7 +795,7 @@ function handleSelection(info: {
   selectedText: string
   coords: { x: number; y: number }
 }) {
-  if (showPopover.value) return
+  if (showPopover.value || readOnly.value) return
   selection.value = info
   showActionBar.value = true
 }
@@ -621,25 +935,41 @@ function handleImportComments() {
 </script>
 
 <template>
-  <div class="app">
+  <div v-if="embed" class="app embed">
+    <!-- Rule 16: ?embed=1 — the content and one link out, nothing else. -->
+    <RouteNotFound v-if="route.kind === 'not-found' || route.kind === 'landing' || route.kind === 'library'" kind="route" :home="router.base" @home="goHome" />
+    <RouteNotFound v-else-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" @home="goHome" />
+    <div v-else-if="onScreen" class="main-pane embed-pane">
+      <div v-if="fileView" class="file-view">
+        <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
+        <a v-else :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
+      </div>
+      <PreviewPane v-else ref="previewRef" :content="markdown" :comments="NO_COMMENTS" :theme="theme" :content-type="contentType" />
+    </div>
+    <div class="embed-footer">
+      <a class="embed-open-link" data-testid="embed-open-link" :href="embedOpenHref" target="_blank" rel="noopener">Open in md-review</a>
+    </div>
+  </div>
+  <div v-else class="app">
     <HeaderBar
-      v-if="appMode !== 'dashboard'"
-      :filename="filename"
+      v-if="showHeader"
+      :filename="onScreen ? filename : ''"
       :pane-mode="paneMode"
       :comment-count="comments.length"
       :theme="theme"
       :word-count="wordCount"
       :char-count="charCount"
-      :can-refresh="!!filePathParam"
+      :can-refresh="!!filePathParam && onScreen && route.kind === 'landing'"
       :sharing="sharing"
       :sync-status="sync.syncStatus.value"
       :save-state="sync.saveState.value"
       :pending-count="sync.pendingCount.value"
-      :paste-id="pasteId"
+      :paste-id="onScreen ? pasteId : null"
       :reviewer-name="reviewerName"
       :revision-count="revisionList.length"
       :has-unseen-changes="!!changeSummary"
-      @update:pane-mode="paneMode = $event"
+      :read-only="readOnly"
+      @update:pane-mode="onPaneModeChange"
       @update:theme="setTheme"
       @update:filename="filename = $event"
       @open-file="handleOpenFile"
@@ -652,12 +982,23 @@ function handleImportComments() {
       @open-history="openHistory"
     />
 
-    <DashboardView v-if="appMode === 'dashboard'" @new-doc="handleNewDoc" />
-
-    <FileUpload v-if="appMode === 'upload' && booted" @file-loaded="handleFileLoaded" />
+    <div
+      v-if="onScreen && pinnedInfo && route.kind === 'pinned'"
+      class="notice-bar pinned-banner"
+      role="status"
+      data-testid="pinned-revision-banner"
+    >
+      <span>You're viewing a version from {{ pinnedWhen }}.</span>
+      <a
+        class="btn btn-ghost btn-sm"
+        data-testid="pinned-revision-latest-link"
+        :href="`${router.base}d/${pinnedInfo.id}`"
+        @click="onAppLinkClick($event, `${router.base}d/${pinnedInfo.id}`)"
+      >View the latest version</a>
+    </div>
 
     <ApprovalBanner
-      v-if="appMode === 'review' && pasteId && approvalInfo"
+      v-if="onScreen && pasteId && approvalInfo"
       :approval-status="approvalInfo.approval_status"
       :approved-by="approvalInfo.approved_by"
       :approved-at="approvalInfo.approved_at"
@@ -669,29 +1010,29 @@ function handleImportComments() {
     />
 
     <SummaryPanel
-      v-if="appMode === 'review' && pasteId"
+      v-if="onScreen && pasteId"
       :filename="filename"
       :comments="comments"
       :approval-status="approvalInfo?.approval_status"
     />
 
     <ChangesBanner
-      v-if="appMode === 'review' && pasteId && changeSummary"
+      v-if="onScreen && pasteId && changeSummary"
       :summary="changeSummary"
       @view="handleViewChanges"
       @dismiss="handleDismissChanges"
     />
 
-    <div v-if="notice" class="notice-bar" role="status">
+    <div v-if="notice && route.kind !== 'library' && route.kind !== 'not-found'" class="notice-bar" role="status">
       <span>{{ notice }}</span>
       <button class="btn btn-ghost btn-sm" @click="notice = null">Dismiss</button>
     </div>
 
-    <div v-if="appMode === 'review' && persistError" class="notice-bar warn" role="status" data-testid="persist-error">
+    <div v-if="onScreen && persistError" class="notice-bar warn" role="status" data-testid="persist-error">
       <span>{{ persistError }}</span>
     </div>
 
-    <div v-if="appMode === 'review' && sync.conflict.value" class="conflict-bar" role="alert" data-testid="conflict-bar">
+    <div v-if="onScreen && sync.conflict.value" class="conflict-bar" role="alert" data-testid="conflict-bar">
       <span class="conflict-text">
         <strong>Conflict:</strong> this document changed on the server while you had unsaved edits.
         Your edits are kept here until you choose.
@@ -702,10 +1043,22 @@ function handleImportComments() {
       </span>
     </div>
 
-    <div v-if="appMode === 'review'" class="review-layout">
+    <RouteNotFound v-if="route.kind === 'not-found'" kind="route" :home="router.base" @home="goHome" />
+
+    <DashboardView v-else-if="route.kind === 'library'" @new-doc="handleNewDoc" />
+
+    <RouteNotFound v-else-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" @home="goHome" />
+
+    <FileUpload v-else-if="route.kind === 'landing' && booted && !onScreen" @file-loaded="handleFileLoaded" />
+
+    <div v-if="onScreen" class="review-layout">
       <div class="main-pane">
+        <div v-if="fileView" class="file-view">
+          <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
+          <a v-else class="btn btn-primary" :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
+        </div>
         <EditorPane
-          v-if="paneMode === 'edit'"
+          v-else-if="paneMode === 'edit' && !readOnly"
           ref="editorRef"
           v-model="markdown"
           :comments="comments"
@@ -714,7 +1067,7 @@ function handleImportComments() {
           @selection-clear="handleSelectionClear"
         />
         <PreviewPane
-          v-if="paneMode === 'preview'"
+          v-else
           ref="previewRef"
           :content="markdown"
           :comments="comments"
@@ -724,31 +1077,34 @@ function handleImportComments() {
           @selection-clear="handleSelectionClear"
         />
       </div>
-      <button
-        class="sidebar-toggle"
-        :class="{ collapsed: sidebarHidden }"
-        :title="sidebarHidden ? 'Show comments panel' : 'Hide comments panel'"
-        @click="sidebarHidden = !sidebarHidden"
-      >
-        <span class="sidebar-toggle-grip"></span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        <span class="sidebar-toggle-grip"></span>
-      </button>
-      <CommentsSidebar
-        v-show="!sidebarHidden"
-        :comments="comments"
-        @delete="sync.deleteComment"
-        @edit="sync.editComment"
-        @scroll-to="handleScrollTo"
-        @export-comments="handleExportComments"
-        @import-comments="handleImportComments"
-        @add-reply="handleAddReply"
-        @edit-reply="sync.editReply"
-        @delete-reply="sync.deleteReply"
-        @resolve="handleResolve"
-        @unresolve="sync.unresolveComment"
-      />
+      <template v-if="!readOnly">
+        <button
+          class="sidebar-toggle"
+          :class="{ collapsed: sidebarHidden }"
+          :title="sidebarHidden ? 'Show comments panel' : 'Hide comments panel'"
+          @click="sidebarHidden = !sidebarHidden"
+        >
+          <span class="sidebar-toggle-grip"></span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          <span class="sidebar-toggle-grip"></span>
+        </button>
+        <CommentsSidebar
+          v-show="!sidebarHidden"
+          :comments="comments"
+          @delete="sync.deleteComment"
+          @edit="sync.editComment"
+          @scroll-to="handleScrollTo"
+          @export-comments="handleExportComments"
+          @import-comments="handleImportComments"
+          @add-reply="handleAddReply"
+          @edit-reply="sync.editReply"
+          @delete-reply="sync.deleteReply"
+          @resolve="handleResolve"
+          @unresolve="sync.unresolveComment"
+        />
+      </template>
     </div>
+    <div v-else-if="isDocRoute && !docMissing" class="doc-loading" aria-busy="true"></div>
 
     <SelectionActionBar
       :visible="showActionBar"
@@ -833,6 +1189,65 @@ function handleImportComments() {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.app.embed {
+  position: relative;
+}
+
+.embed-pane {
+  flex: 1;
+}
+
+.embed-pane {
+  min-height: 0;
+}
+
+/* In the flow under the content (never over it, even on a phone). */
+.embed-footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.embed-open-link {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.embed-open-link:hover {
+  color: var(--text-primary);
+}
+
+.pinned-banner {
+  color: var(--text-primary);
+}
+
+.file-view {
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-surface);
+}
+
+.file-view img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.doc-loading {
+  flex: 1;
 }
 
 .review-layout {
