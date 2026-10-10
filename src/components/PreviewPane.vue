@@ -743,8 +743,11 @@ function clearSelectionHighlight() {
   }
 }
 
-function onMouseUp() {
-  if (!props.commenting) return
+/** Controls enhancers add to the rendered doc (#17 fold toggles) are not text: no comment flow. */
+const isPreviewControl = (e: MouseEvent) => !!(e.target as Element | null)?.closest?.('[data-preview-control]')
+
+function onMouseUp(e: MouseEvent) {
+  if (!props.commenting || isPreviewControl(e)) return
   const selection = window.getSelection()
   if (!selection || selection.isCollapsed || !selection.rangeCount) {
     emit('selection-clear')
@@ -788,7 +791,8 @@ function onMouseUp() {
   })
 }
 
-function onMouseDown() {
+function onMouseDown(e: MouseEvent) {
+  if (isPreviewControl(e)) return
   clearSelectionHighlight()
   const selection = window.getSelection()
   if (selection && !selection.isCollapsed) {
@@ -816,6 +820,8 @@ function scrollToLine(line: number) {
     const start = parseInt(el.getAttribute('data-line-start')!, 10)
     const end = parseInt(el.getAttribute('data-line-end')!, 10)
     if (line >= start && line < end) {
+      // Enhancers that hide content (#17 folds, closed <details>) reveal the target first.
+      el.dispatchEvent(new CustomEvent('preview-reveal', { bubbles: true }))
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }

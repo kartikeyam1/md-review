@@ -235,6 +235,31 @@
     border: 1px solid var(--rag-dot);
   }
 
+  /* ── #17 rule 15: folds and closed <details> print expanded ── */
+  .preview-pane [hidden='until-found'],
+  .preview-pane [data-fold-hidden] {
+    content-visibility: visible !important;
+  }
+
+  /* Safari treats until-found as plain hidden (display: none). */
+  .preview-pane [data-fold-hidden]:not(table) {
+    display: block !important;
+  }
+
+  .preview-pane details:not([open])::details-content {
+    display: block !important;
+    content-visibility: visible !important;
+  }
+
+  .preview-pane details:not([open]) > :not(summary) {
+    display: block !important;
+  }
+
+  .preview-pane .heading-fold-ellipsis,
+  .preview-pane .heading-fold-toggle {
+    display: none !important;
+  }
+
   /* ── Rule 15: show where external links go ── */
   .preview-pane a[href^='http://']:not(.autolink)::after,
   .preview-pane a[href^='https://']:not(.autolink)::after {

@@ -4,6 +4,7 @@ import type { TocEntry } from '@/markdown/headingIds'
 import type { TocState } from '@/composables/useToc'
 import { useRouter, findAnchorIn, scrollToAnchorElement } from '@/composables/useRouter'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { foldUi } from '@/composables/foldUi'
 
 // The table of contents (spec #3 rules 10–13): the sticky desktop rail
 // (`toc-panel`) or, below 1100px, the drawer (`toc-drawer`) that `toc-toggle`
@@ -22,6 +23,13 @@ const drawerRef = ref<HTMLElement | null>(null)
 const open = computed(() => props.variant === 'drawer' && props.toc.drawerOpen.value)
 
 const href = (e: TocEntry) => `#${encodeURIComponent(e.id)}`
+
+// #17 rule 8: Collapse all / Expand all, while the doc on screen has a foldable heading.
+const foldable = foldUi.foldable
+const foldButtons = [
+  { testid: 'fold-collapse-all', label: 'Collapse all sections', icon: ['7 20 12 15 17 20', '7 4 12 9 17 4'], run: () => foldUi.controller.value?.collapseAll() },
+  { testid: 'fold-expand-all', label: 'Expand all sections', icon: ['7 15 12 20 17 15', '7 9 12 4 17 9'], run: () => foldUi.controller.value?.expandAll() },
+]
 
 /** Rule 12: a plain click behaves like an in-doc anchor (pushState + scroll under the header). */
 function onLinkClick(ev: MouseEvent, entry: TocEntry) {
@@ -101,16 +109,32 @@ onUnmounted(() => {
   >
     <div class="toc-head">
       <span class="toc-title">Contents</span>
-      <button
-        type="button"
-        class="toc-icon-btn"
-        title="Hide contents"
-        aria-label="Hide table of contents"
-        data-testid="toc-collapse-btn"
-        @click="toc.setCollapsed(true)"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" /></svg>
-      </button>
+      <span class="toc-head-actions">
+        <template v-if="foldable">
+          <button
+            v-for="b in foldButtons"
+            :key="b.testid"
+            type="button"
+            class="toc-icon-btn"
+            :title="b.label"
+            :aria-label="b.label"
+            :data-testid="b.testid"
+            @click="b.run"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline v-for="(pts, i) in b.icon" :key="i" :points="pts" /></svg>
+          </button>
+        </template>
+        <button
+          type="button"
+          class="toc-icon-btn"
+          title="Hide contents"
+          aria-label="Hide table of contents"
+          data-testid="toc-collapse-btn"
+          @click="toc.setCollapsed(true)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" /></svg>
+        </button>
+      </span>
     </div>
     <ol ref="listRef" class="toc-list">
       <li v-for="e in toc.entries.value" :key="e.id">
@@ -141,15 +165,31 @@ onUnmounted(() => {
     >
       <div class="toc-head">
         <span class="toc-title">Contents</span>
-        <button
-          type="button"
-          class="toc-icon-btn"
-          aria-label="Close table of contents"
-          data-testid="toc-drawer-close"
-          @click="toc.closeDrawer()"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-        </button>
+        <span class="toc-head-actions">
+          <template v-if="foldable">
+            <button
+              v-for="b in foldButtons"
+              :key="b.testid"
+              type="button"
+              class="toc-icon-btn"
+              :title="b.label"
+              :aria-label="b.label"
+              :data-testid="b.testid"
+              @click="b.run"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline v-for="(pts, i) in b.icon" :key="i" :points="pts" /></svg>
+            </button>
+          </template>
+          <button
+            type="button"
+            class="toc-icon-btn"
+            aria-label="Close table of contents"
+            data-testid="toc-drawer-close"
+            @click="toc.closeDrawer()"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </span>
       </div>
       <nav class="toc-nav" aria-label="Table of contents">
         <ol ref="listRef" class="toc-list">
@@ -198,6 +238,12 @@ onUnmounted(() => {
   gap: 8px;
   padding: 12px 8px 6px 16px;
   flex-shrink: 0;
+}
+
+.toc-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .toc-title {
