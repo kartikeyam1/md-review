@@ -29,7 +29,7 @@
 #                            time and stay out of the gate until enabled here.
 #                            An explicit E2E_FILES list is never filtered.
 #
-# Output: per-step logs in .verify/logs/, summary table on stdout and in
+# Output: per-step logs in .verify/runs/<id>/logs/ (.verify/logs -> latest), summary table on stdout and in
 # .verify/last-summary.txt. Exit status is non-zero if any step failed.
 # The live service (ports 3100/3200, server/data) is never touched.
 
@@ -38,7 +38,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 2
 VERIFY_DIR="$ROOT/.verify"
-LOG_DIR="$VERIFY_DIR/logs"
+# Each run logs into its own directory so concurrent runs in one worktree
+# never delete each other's logs; .verify/logs points at the latest run.
+VERIFY_RUN_ID="${VERIFY_RUN_ID:-$(date +%Y%m%d-%H%M%S)-$$}"
+RUN_DIR="$VERIFY_DIR/runs/$VERIFY_RUN_ID"
+LOG_DIR="$RUN_DIR/logs"
 export STACK_LOG_DIR="$LOG_DIR"
 # shellcheck source=lib/stack.sh
 source "$ROOT/scripts/lib/stack.sh"
@@ -72,7 +76,7 @@ else
 fi
 selected() { [[ " ${SELECTED[*]} " == *" $1 "* ]]; }
 
-rm -rf "$LOG_DIR"; mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR"; ln -sfn "runs/$VERIFY_RUN_ID/logs" "$VERIFY_DIR/logs.tmp" && mv -Tf "$VERIFY_DIR/logs.tmp" "$VERIFY_DIR/logs" 2>/dev/null || true
 export NO_COLOR=1 FORCE_COLOR=0 CI="${CI:-1}"
 
 # ── backlog item gating ─────────────────────────────────────────────────────
@@ -258,7 +262,7 @@ TOTAL=$(elapsed "$T_START")
     printf '%-34s %-6s %-46s %8s\n' "${R_NAME[$i]}" "${R_STATUS[$i]}" "${R_COUNTS[$i]}" "${R_DUR[$i]}"
   done
   printf '%s\n' "$(printf '%.0s-' {1..97})"
-  printf 'OVERALL: %s   total %ss   logs: .verify/logs/\n' "$([[ $ANY_FAIL == 0 ]] && echo PASS || echo FAIL)" "$TOTAL"
-} | tee "$VERIFY_DIR/last-summary.txt"
+  printf 'OVERALL: %s   total %ss   logs: %s\n' "$([[ $ANY_FAIL == 0 ]] && echo PASS || echo FAIL)" "$TOTAL" "${LOG_DIR#"$ROOT"/}/"
+} | tee "$RUN_DIR/summary.txt" "$VERIFY_DIR/last-summary.txt"
 
 exit "$ANY_FAIL"
