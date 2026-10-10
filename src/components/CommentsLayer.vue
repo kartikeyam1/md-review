@@ -176,7 +176,7 @@ function handleImportComments() {
       type="button"
       class="comments-toggle"
       data-testid="comments-toggle"
-      aria-controls="comments-drawer"
+      aria-controls="md-review-comments-drawer"
       :aria-expanded="drawerOpen ? 'true' : 'false'"
       @click="drawerOpen ? closeDrawer() : openDrawer()"
     >
@@ -186,7 +186,7 @@ function handleImportComments() {
     <div v-if="drawerOpen" class="comments-backdrop" data-testid="comments-backdrop" @click="closeDrawer()"></div>
     <div
       v-if="drawerOpen"
-      id="comments-drawer"
+      id="md-review-comments-drawer"
       ref="drawerRef"
       class="comments-drawer"
       role="dialog"
@@ -298,6 +298,7 @@ function handleImportComments() {
 .comments-backdrop {
   position: fixed;
   inset: 0;
+  touch-action: none;
   z-index: 300;
   background: var(--overlay-bg);
 }

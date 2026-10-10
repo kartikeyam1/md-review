@@ -56,6 +56,7 @@ hljs.registerAliases(['zsh', 'sh'], { languageName: 'bash' })
 hljs.registerAliases(['text', 'txt', 'plain'], { languageName: 'plaintext' })
 import taskLists from 'markdown-it-task-lists'
 import { tableScroll } from '@/markdown/tableScroll'
+import { headingIds, type HeadingInfo } from '@/markdown/headingIds'
 import { autolink } from '@/markdown/autolink'
 import { parseFrontMatter, frontMatterTable, bodyWithAbsoluteLines } from '@/markdown/frontMatter'
 
@@ -67,31 +68,6 @@ export interface LineMapEntry {
 
 function lineAttrs(map: [number, number]): string {
   return ` data-line-start="${map[0]}" data-line-end="${map[1]}"`
-}
-
-// Plugin that adds id attributes to headings so TOC anchor links work
-function headingAnchorPlugin(md: MarkdownIt) {
-  md.core.ruler.push('heading_anchors', (state) => {
-    const usedSlugs = new Map<string, number>()
-    for (const token of state.tokens) {
-      if (token.type === 'heading_open') {
-        const inline = state.tokens[state.tokens.indexOf(token) + 1]
-        if (inline?.type === 'inline' && inline.content) {
-          let slug = inline.content
-            .toLowerCase()
-            .replace(/<[^>]*>/g, '')
-            .replace(/[^\w\s-]/g, '')
-            .replace(/\s+/g, '-')
-            .replace(/-+/g, '-')
-            .replace(/^-|-$/g, '')
-          const count = usedSlugs.get(slug) || 0
-          usedSlugs.set(slug, count + 1)
-          if (count > 0) slug = `${slug}-${count}`
-          token.attrSet('id', slug)
-        }
-      }
-    }
-  })
 }
 
 // Plugin that injects data-line-start/data-line-end into block-level elements
@@ -152,7 +128,7 @@ export function useMarkdown() {
   })
   // Markdown plugins (00 §4.4): one file each under src/markdown/, registered here.
   const PLUGINS: ((md: MarkdownIt) => void)[] = [
-    headingAnchorPlugin,
+    headingIds, // #3 rules 1–7
     lineDataPlugin,
     (m) => m.use(taskLists, { enabled: true }),
     tableScroll, // #5 rule 5
@@ -161,10 +137,17 @@ export function useMarkdown() {
   for (const plugin of PLUGINS) plugin(md)
 
   // Front matter renders as a table; the body keeps absolute line numbers (#5 rule 20).
-  function renderHtml(source: string): string {
+  function renderHtml(source: string, env: Record<string, unknown> = {}): string {
     const fm = parseFrontMatter(source)
-    if (fm) return frontMatterTable(fm) + md.render(bodyWithAbsoluteLines(fm))
-    return md.render(source)
+    if (fm) return frontMatterTable(fm) + md.render(bodyWithAbsoluteLines(fm), env)
+    return md.render(source, env)
+  }
+
+  /** The HTML plus the headings it carries (ids + plain text, #3), from one parse. */
+  function renderWithHeadings(source: string): { html: string; headings: HeadingInfo[] } {
+    const env: { headings?: HeadingInfo[] } = {}
+    const html = renderHtml(source, env)
+    return { html, headings: env.headings ?? [] }
   }
 
   function getLineMap(source: string): LineMapEntry[] {
@@ -186,5 +169,5 @@ export function useMarkdown() {
     return entries
   }
 
-  return { renderHtml, getLineMap, md }
+  return { renderHtml, renderWithHeadings, getLineMap, md }
 }

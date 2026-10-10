@@ -13,6 +13,10 @@ import PreviewPane from '@/components/PreviewPane.vue'
 import PromptModal from '@/components/PromptModal.vue'
 import ShareModal from '@/components/ShareModal.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
+import TocPanel from '@/components/TocPanel.vue'
+import { provideToc } from '@/composables/useToc'
+import { useActiveHeading } from '@/composables/useActiveHeading'
+import { useBreakpoint } from '@/composables/useBreakpoint'
 
 // The doc layout (00 §4.2): header, the below-header stack (DocBanners), the
 // body, and the modals. App.vue is the router shell; this renders the
@@ -79,6 +83,11 @@ function goHome() {
  */
 const docScroll = computed(() => onScreen.value && !editorShown.value && !fileView.value && contentType.value !== 'html')
 
+// #3: the TOC — read view of a markdown doc only (never edit view, HTML, files or embeds).
+const breakpoint = useBreakpoint()
+const toc = provideToc({ markdown, enabled: docScroll, breakpoint })
+const activeHeading = useActiveHeading({ entries: toc.entries, activeId: toc.activeId, enabled: toc.visible })
+
 const isDocRoute = computed(() => ['doc', 'pinned', 'file'].includes(route.value.kind))
 const showHeader = computed(() => route.value.kind !== 'library' && route.value.kind !== 'not-found' && !docMissing.value)
 
@@ -114,7 +123,7 @@ const embedOpenHref = computed(() => {
     <FileUpload v-else-if="route.kind === 'landing' && booted && !onScreen" @file-loaded="actions.handleFileLoaded" />
 
     <div v-if="onScreen" class="doc-body review-layout">
-      <div class="doc-rail"><!-- #3 toc-panel --></div>
+      <div class="doc-rail"><TocPanel v-if="toc.railShown.value" :toc="toc" variant="rail" @pin="activeHeading.pin" /></div>
       <main class="doc-content main-pane">
         <div v-if="fileView" class="file-view">
           <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
@@ -148,6 +157,7 @@ const embedOpenHref = computed(() => {
       <aside class="doc-aside" :class="{ collapsed: sidebarHidden }"><CommentsLayer v-if="reviewUI" @scroll-to="scrollToLine" /></aside>
     </div>
     <div v-else-if="isDocRoute && !docMissing" class="doc-loading" aria-busy="true"></div>
+    <TocPanel v-if="toc.visible.value && toc.drawerMode.value" :toc="toc" variant="drawer" @pin="activeHeading.pin" />
 
     <PromptModal
       :visible="showPromptModal && reviewUI"
@@ -260,6 +270,12 @@ const embedOpenHref = computed(() => {
 .doc-aside {
   display: flex;
   min-height: 0;
+}
+
+/* The TOC rail (#3) sticks inside its full-height column. */
+.doc-rail {
+  flex-shrink: 0;
+  align-items: flex-start;
 }
 
 .doc-rail:empty,

@@ -15,6 +15,7 @@ export async function copyText(text: string): Promise<boolean> {
     ta.style.position = 'fixed'
     ta.style.opacity = '0'
     document.body.appendChild(ta)
+    ta.focus()
     ta.select()
     const ok = document.execCommand('copy')
     ta.remove()

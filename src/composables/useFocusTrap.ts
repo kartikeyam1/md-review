@@ -4,7 +4,8 @@ import { watch, nextTick, onUnmounted, type Ref } from 'vue'
 // drawer; #3's TOC drawer and #9's shortcuts overlay reuse it. While `active`:
 // focus moves into the container (the `initialFocus` element, else the first
 // focusable), Tab / Shift+Tab cycle inside it, and on deactivation focus goes
-// back to `returnFocus` (else whatever had it before). Esc is the caller's.
+// back to `returnFocus` (else whatever had it before), also when the owner
+// unmounts while active. Traps nest: only the innermost handles Tab. Esc is the caller's.
 
 const FOCUSABLE = [
   'a[href]', 'area[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])',
@@ -21,16 +22,21 @@ export function focusableIn(root: HTMLElement): HTMLElement[] {
 export interface FocusTrapOptions {
   /** Where focus goes on activation (default: the first focusable, else the container). */
   initialFocus?: () => HTMLElement | null | undefined
-  /** Where focus goes on deactivation (default: the element focused before activation). */
-  returnFocus?: () => HTMLElement | null | undefined
+  /** Where focus goes on deactivation (default: the element focused before activation); `false` = leave it. */
+  returnFocus?: () => HTMLElement | null | undefined | false
 }
+
+/** Active traps, innermost last: only the top one handles Tab (a dialog opened over a drawer). */
+const stack: object[] = []
 
 export function useFocusTrap(container: Ref<HTMLElement | null | undefined>, active: Ref<boolean>, opts: FocusTrapOptions = {}) {
   let previous: HTMLElement | null = null
+  const self = {}
+  let on = false
 
   function onKeydown(e: KeyboardEvent) {
     const root = container.value
-    if (e.key !== 'Tab' || !root) return
+    if (e.key !== 'Tab' || !root || stack[stack.length - 1] !== self) return
     const els = focusableIn(root)
     if (!els.length) { e.preventDefault(); root.focus(); return }
     const first = els[0]!
@@ -46,6 +52,8 @@ export function useFocusTrap(container: Ref<HTMLElement | null | undefined>, act
   }
 
   function activate() {
+    on = true
+    stack.push(self)
     previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     document.addEventListener('keydown', onKeydown, true)
     nextTick(() => {
@@ -58,16 +66,23 @@ export function useFocusTrap(container: Ref<HTMLElement | null | undefined>, act
   }
 
   function deactivate() {
+    if (!on) return
+    on = false
+    const i = stack.indexOf(self)
+    if (i >= 0) stack.splice(i, 1)
     document.removeEventListener('keydown', onKeydown, true)
-    const back = opts.returnFocus?.() ?? previous
+    const want = opts.returnFocus?.()
+    const back = want === false ? null : (want ?? previous)
     previous = null
     if (back?.isConnected) back.focus({ preventScroll: true })
   }
 
-  watch(active, (on, was) => {
-    if (on && !was) activate()
-    else if (!on && was) deactivate()
+  watch(active, (now, was) => {
+    if (now && !was) activate()
+    else if (!now && was) deactivate()
   }, { immediate: true })
 
-  onUnmounted(() => document.removeEventListener('keydown', onKeydown, true))
+  // Unmounted while active (e.g. the TOC drawer when the window widens to desktop):
+  // release and hand focus back like a close would.
+  onUnmounted(deactivate)
 }

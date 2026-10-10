@@ -1,6 +1,5 @@
-import MarkdownIt from 'markdown-it'
-import { parseFrontMatter, frontMatterTitle, bodyWithAbsoluteLines } from '@/markdown/frontMatter'
-import { plainText } from '@/markdown/plainText'
+import { parseFrontMatter, frontMatterTitle } from '@/markdown/frontMatter'
+import { extractHeadings } from '@/markdown/headingIds'
 
 // ── docTitle (00 §5; FE owner #5) ────────────────────────────────────────────
 // The one title rule for a doc — the tab, the reader header's doc-title, and
@@ -25,27 +24,10 @@ export const TITLE_MAX = 80
 
 const collapse = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim()
 
-// Block structure only matters here (which line is the first H1); the inline
-// rules match the preview's so link text / entities read the same.
-let parser: MarkdownIt | null = null
-function titleParser(): MarkdownIt {
-  parser ??= new MarkdownIt({ html: true, linkify: true, typographer: true })
-  return parser
-}
-
-/** Markdown: [front-matter title, first H1 plain text]. */
+/** Markdown: [front-matter title, first H1 plain text] — the H1 from the same heading list as the TOC (#3). */
 function markdownTitles(source: string): [string, string] {
-  const fm = parseFrontMatter(source)
-  const tokens = titleParser().parse(fm ? bodyWithAbsoluteLines(fm) : source, {})
-  let h1 = ''
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i]!
-    if (t.type === 'heading_open' && t.tag === 'h1') {
-      h1 = plainText(tokens[i + 1]?.children)
-      if (collapse(h1)) break
-    }
-  }
-  return [frontMatterTitle(fm), h1]
+  const h1 = extractHeadings(source).find((h) => h.level === 1 && collapse(h.text))
+  return [frontMatterTitle(parseFrontMatter(source)), h1?.text ?? '']
 }
 
 /** HTML: [<title>, first <h1>] — parsed inert with DOMParser (no scripts, no loads). */

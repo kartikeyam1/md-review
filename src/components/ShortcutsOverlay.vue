@@ -2,10 +2,10 @@
 // Keyboard-shortcuts help (spec #9 rule 11b). A modal dialog listing every
 // editor binding; rows are data (`SHORTCUT_ROWS`) so later items append theirs.
 // Esc, the close button or a backdrop click closes it; focus returns to where it
-// was (useShortcutsOverlay). Focus is trapped inside while open.
-// TODO(#3): switch the inline trap to `useFocusTrap` once #3 lands it.
-import { nextTick, onMounted, ref } from 'vue'
+// was (useShortcutsOverlay). Focus is trapped inside while open (useFocusTrap, #3).
+import { ref } from 'vue'
 import { SHORTCUT_ROWS, formatCombo, isMacPlatform } from '@/editor/shortcutList'
+import { useFocusTrap } from '@/composables/useFocusTrap'
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -15,11 +15,8 @@ const rows = SHORTCUT_ROWS.map((r) => ({ ...r, combos: r.keys.map((k) => formatC
 const dialog = ref<HTMLElement | null>(null)
 const closeBtn = ref<HTMLButtonElement | null>(null)
 
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])'
-
-function focusables(): HTMLElement[] {
-  return dialog.value ? [...dialog.value.querySelectorAll<HTMLElement>(FOCUSABLE)] : []
-}
+// Mounted only while open; returning focus on close is useShortcutsOverlay's job.
+useFocusTrap(dialog, ref(true), { initialFocus: () => closeBtn.value, returnFocus: () => false })
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
@@ -27,24 +24,8 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault()
     e.stopPropagation()
     emit('close')
-    return
-  }
-  if (e.key !== 'Tab') return
-  const els = focusables()
-  if (!els.length) { e.preventDefault(); return }
-  const first = els[0]!
-  const last = els[els.length - 1]!
-  const active = document.activeElement
-  if (e.shiftKey && (active === first || !dialog.value?.contains(active))) {
-    e.preventDefault()
-    last.focus()
-  } else if (!e.shiftKey && (active === last || !dialog.value?.contains(active))) {
-    e.preventDefault()
-    first.focus()
   }
 }
-
-onMounted(() => nextTick(() => closeBtn.value?.focus()))
 </script>
 
 <template>

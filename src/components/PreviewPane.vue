@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, inject } from 'vue'
 import type { Comment, ThemeMode, ContentType } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { isGithub, isDark, isLocus, themeStyle } from '@/composables/useTheme'
 import { findLineRange } from '@/composables/useHtmlSource'
 import '@/styles/preview.css'
 import { useRouter, scrollToAnchorElement, findAnchorIn } from '@/composables/useRouter'
+import { DOC_STATE } from '@/composables/useDocState'
+import { copyText } from '@/composables/useCopyLink'
+import { toast } from '@/composables/useToast'
+import { runEnhancers } from '@/preview/enhancers'
 
 const props = withDefaults(defineProps<{
   content: string
@@ -103,14 +107,46 @@ const emit = defineEmits<{
   'selection-clear': []
 }>()
 
-const { renderHtml } = useMarkdown()
+const { renderWithHeadings } = useMarkdown()
 const containerRef = ref<HTMLElement | null>(null)
 const frameRef = ref<HTMLIFrameElement | null>(null)
 const isGithubTheme = computed(() => isGithub(props.theme ?? 'light'))
 const isHtml = computed(() => props.contentType === 'html')
 
 // renderHtml now injects data-line-start/data-line-end via the markdown-it plugin
-const renderedHtml = computed(() => renderHtml(props.content))
+const rendered = computed(() => renderWithHeadings(props.content))
+const renderedHtml = computed(() => rendered.value.html)
+
+// ── Preview enhancers (00 §4.5): run after every render ─────────────────────
+const docState = inject(DOC_STATE, null)
+let enhancerCleanup: (() => void) | null = null
+
+/** #3 rule 17: the section's link — <origin><base>d/<slug||id>#<id>, or this page's URL for a local doc. */
+function sectionLink(id: string): string {
+  const frag = `#${encodeURIComponent(id)}`
+  const shared = docState?.docLink.value
+  if (shared) return shared + frag
+  const u = new URL(window.location.href)
+  u.searchParams.delete('edit')
+  u.searchParams.delete('view')
+  u.hash = ''
+  return u.href + frag
+}
+
+async function copySectionLink(id: string) {
+  // The address bar shows the link either way (replaceState: no Back step);
+  // the reader is already at the heading, so no scroll ('frame' = handled here).
+  router.setFragment(id, 'replace', 'frame')
+  if (await copyText(sectionLink(id))) toast.info('Link copied')
+  else toast.error('Couldn\'t copy — the link is in the address bar')
+}
+
+function enhance() {
+  enhancerCleanup?.()
+  enhancerCleanup = null
+  const container = containerRef.value
+  if (container) enhancerCleanup = runEnhancers(container, { headings: rendered.value.headings, docState, router, toast, copyText, copySectionLink })
+}
 
 // ── HTML preview (sandboxed iframe) ─────────────────────────────────────────
 // Full HTML documents render faithfully inside an opaque-origin sandbox
@@ -311,7 +347,14 @@ function alignToFragment(opts: { initial: boolean }) {
   const el = findAnchor(container, id)
   if (!el) return
   scrollToAnchorElement(el, { smooth: !opts.initial })
-  if (opts.initial) scheduleRealign(id)
+  // A later jump (TOC click, in-doc link) re-aligns too while diagrams/images above can still move it.
+  if (opts.initial || layoutPending(container)) scheduleRealign(id)
+}
+
+/** Diagrams not drawn yet or images still loading: the layout above an anchor may still shift. */
+function layoutPending(container: HTMLElement): boolean {
+  return [...container.querySelectorAll<HTMLElement>('.mermaid')].some((m) => !m.dataset.renderedKey && !m.querySelector('.mermaid-error'))
+    || [...container.querySelectorAll('img')].some((img) => !img.complete)
 }
 
 function scheduleRealign(id: string) {
@@ -330,7 +373,10 @@ function scheduleRealign(id: string) {
     ? Array.from(container.querySelectorAll('img')).filter((img) => !img.complete).map((img) =>
         new Promise((done) => { img.addEventListener('load', done, { once: true }); img.addEventListener('error', done, { once: true }) }))
     : []
-  const settled = Promise.all([mermaidRun.catch(() => {}), ...images])
+  // The page's load event too: the browser's own fragment scroll can land on an
+  // app element with the same id (a heading named `app`) after ours.
+  const loaded = document.readyState === 'complete' ? null : new Promise((done) => window.addEventListener('load', done, { once: true }))
+  const settled = Promise.all([mermaidRun.catch(() => {}), ...images, loaded])
   const timeout = new Promise((done) => setTimeout(done, 3000))
   Promise.race([settled, timeout]).then(() => {
     const stillCurrent = realignCleanup === cleanup
@@ -346,7 +392,11 @@ function scheduleRealign(id: string) {
 watch(() => router.current.value, (loc, prev) => {
   if (!prev || loc.key !== prev.key || loc.source === 'frame') return
   if (loc.fragment === prev.fragment && loc.source !== 'pop') return
-  alignToFragment({ initial: false })
+  // After a history/fragment navigation the browser does its own fragment scroll
+  // once our handler has run — to the first element with that id in the whole
+  // page (`#app` is the app root). Align on the next frame so ours wins.
+  if (loc.source === 'pop') requestAnimationFrame(() => alignToFragment({ initial: false }))
+  else alignToFragment({ initial: false })
 })
 
 function onFrameMessage(e: MessageEvent) {
@@ -549,6 +599,7 @@ watch(
   () => renderedHtml.value,
   async () => {
     await nextTick()
+    enhance()
     applyCommentHighlights()
     runMermaid()
   }
@@ -568,6 +619,7 @@ onMounted(() => {
   window.addEventListener('beforeprint', onBeforePrint)
   window.addEventListener('afterprint', onAfterPrint)
   nextTick(() => {
+    enhance()
     applyCommentHighlights()
     runMermaid()
     alignToFragment({ initial: true })
@@ -584,6 +636,7 @@ onUnmounted(() => {
   }
   revokeObjectUrl()
   realignCleanup?.()
+  enhancerCleanup?.()
   if (anchorTimer) clearTimeout(anchorTimer)
 })
 

@@ -30,6 +30,56 @@
   html.locus-theme .preview-pane li { font-size: 16px; }
 }
 
+/* ── Heading anchors (#3 rules 15, 16, 19) ── */
+/* Anchor jumps (native and scrollToAnchorElement) land the target fully below the sticky header. */
+.preview-pane [id] {
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
+
+.preview-pane .heading-anchor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  /* A 32px hit area that does not grow the heading's line box. */
+  margin: -8px 0 -8px 4px;
+  padding: 0;
+  vertical-align: middle;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.12s;
+}
+
+.preview-pane :is(h1, h2, h3, h4, h5, h6):hover > .heading-anchor,
+.preview-pane .heading-anchor:focus-visible {
+  opacity: 1;
+}
+
+.preview-pane .heading-anchor:hover {
+  color: var(--accent);
+}
+
+.preview-pane .heading-anchor:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+@media (hover: none) {
+  .preview-pane .heading-anchor {
+    width: 44px;
+    height: 44px;
+    margin: -14px 0 -14px 0;
+    opacity: 0.55;
+  }
+}
+
 /* ── Overflow containment (#5 rule 5): nothing in a doc widens the page ── */
 .preview-pane p,
 .preview-pane li,

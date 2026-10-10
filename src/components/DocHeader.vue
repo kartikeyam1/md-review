@@ -14,6 +14,7 @@ import CopyLinkButton from '@/components/CopyLinkButton.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import HeaderOverflowMenu from '@/components/HeaderOverflowMenu.vue'
 import { truncateTitle } from '@/composables/useDocTitle'
+import { useToc } from '@/composables/useToc'
 
 // The doc header (00 §2): one line, never wraps. `reader` in the read view,
 // `editor` in the edit view (editors only). Order and per-width placement are
@@ -23,6 +24,7 @@ const doc = useDocState()
 const actions = useDocActions()
 const { router, onScreen, capability, view, reviewUI, pasteId, docLink, docTitle } = doc
 const bp = useBreakpoint()
+const toc = useToc()
 
 const editor = computed(() => capability.value === 'editor')
 const variant = computed(() => (onScreen.value && view.value === 'edit' ? 'editor' : 'reader'))
@@ -59,6 +61,20 @@ function onLibraryClick(e: MouseEvent) {
 
 <template>
   <header class="header" data-testid="doc-header" :data-variant="variant" :data-breakpoint="bp">
+    <!-- #3: first in the left group; opens the drawer (< 1100px) or reopens the collapsed rail. -->
+    <button
+      v-if="toc?.toggleShown.value"
+      type="button"
+      class="btn btn-ghost toc-toggle"
+      title="Contents"
+      aria-label="Table of contents"
+      :aria-expanded="toc.drawerMode.value && toc.drawerOpen.value ? 'true' : 'false'"
+      :aria-controls="toc.drawerMode.value ? 'md-review-toc-drawer' : undefined"
+      data-testid="toc-toggle"
+      @click="toc.toggle()"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="9" y1="6" x2="20" y2="6" /><line x1="9" y1="12" x2="20" y2="12" /><line x1="9" y1="18" x2="20" y2="18" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" /></svg>
+    </button>
     <a
       v-if="!phone"
       class="logo"
@@ -169,6 +185,15 @@ function onLibraryClick(e: MouseEvent) {
 
 .header > * {
   flex-shrink: 0;
+}
+
+.toc-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
 }
 
 .logo {

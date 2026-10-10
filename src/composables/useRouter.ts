@@ -450,7 +450,7 @@ export function scrollToAnchorElement(el: HTMLElement, opts: { smooth?: boolean 
     scroller.scrollTo({ top, behavior })
     return
   }
-  const header = document.querySelector<HTMLElement>('[data-testid="doc-header"]') || document.querySelector<HTMLElement>('header')
-  const headerBottom = header && getComputedStyle(header).position === 'sticky' ? header.getBoundingClientRect().height : 0
-  window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - headerBottom, behavior })
+  // Document scroll: the target's scroll-margin-top (sticky header + 12px, #3
+  // rule 19) keeps it below the header — the same offset native navigation uses.
+  el.scrollIntoView({ block: 'start', behavior })
 }
