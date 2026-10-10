@@ -7,6 +7,7 @@ import FilenameField from '@/components/FilenameField.vue'
 import ReviewerName from '@/components/ReviewerName.vue'
 import DocStats from '@/components/DocStats.vue'
 import DocUpdated from '@/components/DocUpdated.vue'
+import ViewStats from '@/components/ViewStats.vue'
 import ViewToggle from '@/components/ViewToggle.vue'
 import SyncIndicator from '@/components/SyncIndicator.vue'
 import SaveState from '@/components/SaveState.vue'
@@ -117,6 +118,7 @@ function onLibraryClick(e: MouseEvent) {
           <DocUpdated v-if="!isLocal" />
           <span v-else-if="editor" class="badge local-badge" data-testid="doc-local-badge">Not shared</span>
           <span v-if="reviewUI" class="badge mode-badge" data-testid="doc-mode-badge">Review</span>
+          <ViewStats v-if="!isLocal" />
         </template>
       </div>
     </template>
@@ -143,6 +145,7 @@ function onLibraryClick(e: MouseEvent) {
     <DocUpdated v-if="!isLocal" />
     <span v-else-if="editor" class="badge local-badge" data-testid="doc-local-badge">Not shared</span>
     <span v-if="reviewUI" class="badge mode-badge" data-testid="doc-mode-badge">Review</span>
+    <ViewStats v-if="!isLocal" />
   </div>
 </template>
 

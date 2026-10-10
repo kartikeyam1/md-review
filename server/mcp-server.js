@@ -471,6 +471,17 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       return reactionsForAgent(r);
     },
 
+    // ── View counts (#25): readers too when this server holds the edit token ──
+    async get_views({ sessionId, editToken }) {
+      const token = tokenFor(sessionId, editToken);
+      const result = await apiCall(`/paste/${sessionId}/views`, { headers: tokenHeaders(token) });
+      // Reads never fail on a token; say so when the one given (or remembered) did not unlock the reader list.
+      if (!result.error && token && !Array.isArray(result.readers)) {
+        result.warning = 'The edit token was not accepted for this document, so only the counts are shown (named readers need its valid edit token).';
+      }
+      return result;
+    },
+
     // ── Shell command generators (curl — runs on any client machine) ──────────
 
     async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl, contentType, mode }) {
@@ -524,7 +535,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
 
 const toolResult = (result) => ({ content: [{ type: 'text', text: JSON.stringify(result) }] });
 
-/** Register the tools added by the view-and-share items (#21 upsert_session; #24/#25 add theirs here). */
+/** Register the tools added by the view-and-share items: #21 upsert_session, #24 get_reactions, #25 get_views. */
 export function registerSharedTools(server, handlers) {
   server.registerTool('upsert_session', {
     title: 'Upsert Session by Key',
@@ -554,6 +565,17 @@ export function registerSharedTools(server, handlers) {
       sessionId: z.string().describe('The session ID or slug'),
     }),
   }, async (args) => toolResult(await handlers.get_reactions(args)));
+
+  server.registerTool('get_views', {
+    title: 'Get Views',
+    description: 'How many times a doc was viewed (one view = one reader per UTC day) and by how many readers. '
+      + "With the doc's edit token (remembered for docs this server created) it also lists the named readers: "
+      + 'when each last looked and whether they saw the latest version. The author\'s own views are not counted. Read-only.',
+    inputSchema: z.object({
+      sessionId: z.string().describe('The session ID or slug'),
+      editToken: editTokenArg(),
+    }),
+  }, async (args) => toolResult(await handlers.get_views(args)));
 }
 
 // ── MCP Server Setup (only when run directly) ───────────────────────────────

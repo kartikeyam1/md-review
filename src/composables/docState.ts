@@ -15,6 +15,7 @@ import { onTokenRejected, sameDoc, docIdOf, type DocAccess } from '@/composables
 import { saveLocalCopy, clearLocalCopy, type LocalCopy } from '@/composables/localCopy'
 import { toast } from '@/composables/useToast'
 import { createReactions } from '@/composables/useReactions'
+import { createViews } from '@/composables/useViews'
 import type { SharedPayload } from '@/composables/useShare'
 import { docTitle as computeDocTitle } from '@/composables/useDocTitle'
 
@@ -226,6 +227,20 @@ export function createDocState(router: Router) {
   /** The route's content is what the doc state holds. */
   const onScreen = computed(() => appMode.value === 'doc' && screenKey.value === viewLoc.value.key)
 
+  /** #25: view counts for the shared doc or pinned revision on screen (never embeds or local docs). */
+  const viewDocId = computed(() => pasteId.value ?? pinnedInfo.value?.id ?? null)
+  const views = createViews({
+    docId: viewDocId,
+    revision: computed(() => {
+      const r = route.value
+      if (r.kind === 'pinned') return r.rev // the router only matches a full content hash (REV_RE)
+      return sync.serverHash.value
+    }),
+    eligible: computed(() => onScreen.value && !embed.value && !!viewDocId.value && (route.value.kind === 'doc' || route.value.kind === 'pinned')),
+    // Stats differ by edit access (editors get the reader list): reload when it changes.
+    accessKey: computed(() => (access.value ? `${access.value.protected}:${access.value.can_edit}` : '')),
+  })
+
   const wordCount = computed(() => {
     if (!markdown.value) return 0
     return markdown.value.split(/\s+/).filter(w => w.length > 0).length
@@ -247,7 +262,7 @@ export function createDocState(router: Router) {
     // UI state
     showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
     // reviewer + comments + sync + reactions (#24)
-    ...reviewer, ...commentsApi, sync, reactions,
+    ...reviewer, ...commentsApi, sync, reactions, views,
     // revisions
     ...revisions,
     // theme, persistence, share, approval

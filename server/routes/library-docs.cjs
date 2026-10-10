@@ -79,9 +79,9 @@ function libraryDocs(req, res) {
   if (!Number.isFinite(limit)) limit = DEFAULT_LIMIT;
   limit = Math.min(MAX_LIMIT, Math.max(1, limit));
 
-  // relevance needs q; views falls back while view counts are unavailable (#25)
+  // relevance needs q (00 §8); views sorts by view_count (#25)
   let sort = sortParam || (q ? 'relevance' : 'updated');
-  if (sort === 'views' || (sort === 'relevance' && !q)) sort = 'updated';
+  if (sort === 'relevance' && !q) sort = 'updated';
 
   // the cursor is bound to everything that decides the result set and its order
   const fingerprint = crypto.createHash('sha1')
@@ -135,6 +135,7 @@ function libraryDocs(req, res) {
     updated: 's.updated_at DESC, s.id',
     created: 's.created_at DESC, s.id',
     title: 'lower(s.title) ASC, s.id',
+    views: 'view_count DESC, s.updated_at DESC, s.id', // the selected column (#25)
   }[sort];
 
   const terms = q ? queryTerms(q) : [];
@@ -145,6 +146,7 @@ function libraryDocs(req, res) {
       SELECT s.id, s.slug, s.title, s.filename, s.content_type, s.mode, s.created_by, s.created_at, s.updated_at,
              (SELECT count(*) FROM files f WHERE f.session_id = s.id) AS file_count,
              (SELECT count(*) FROM reactions rx WHERE rx.session_id = s.id) AS reaction_count,
+             (SELECT count(*) FROM views v WHERE v.session_id = s.id AND v.is_editor = 0) AS view_count,
              (SELECT COALESCE(sum(must_fix_open), 0) FROM comments c WHERE c.session_id = s.id) AS must_fix_unresolved,
              (SELECT json_object('id', co.id, 'name', co.name) FROM collection_items ci JOIN collections co ON co.id = ci.collection_id
                WHERE ci.session_id = s.id) AS collection_json,
@@ -171,7 +173,7 @@ function libraryDocs(req, res) {
     tags: r.tags_json ? JSON.parse(r.tags_json).sort((a, b) => a.localeCompare(b)) : [],
     file_count: r.file_count,
     reaction_count: r.reaction_count, // #24
-    view_count: null, // #25
+    view_count: r.view_count, // #25: total_views (non-editor reader-days)
     must_fix_unresolved: r.must_fix_unresolved,
     pinned: false, // #26
     match: q ? matchFor(r, terms) : null,
