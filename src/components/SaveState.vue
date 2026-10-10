@@ -1,30 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { SaveState } from '@/composables/useSync'
 import { useDocState } from '@/composables/useDocState'
+import { SAVE_LABEL, SAVE_TITLE } from '@/composables/saveStateLabels'
 
 // Where the document stands against the server, plus Save / Retry save.
 // Quiet when all is well (#2 rule 5): nothing shows while idle or saved.
 defineProps<{ /** Phone (00 §2.2 "✓ (icon)"): a status dot + an icon Save button, labels kept for AT. */ compact?: boolean }>()
 const { sync, flushAutosave } = useDocState()
 const saveState = computed(() => sync.saveState.value)
-
-const SAVE_LABEL: Record<SaveState, string> = {
-  idle: '',
-  saved: 'Saved',
-  dirty: 'Unsaved changes',
-  saving: 'Saving…',
-  error: 'Save failed',
-  conflict: 'Conflict',
-}
-const SAVE_TITLE: Record<SaveState, string> = {
-  idle: '',
-  saved: 'All changes are on the server',
-  dirty: 'Edits not yet saved to the server — they autosave shortly, or press Save (Ctrl/Cmd+S)',
-  saving: 'Writing to the server…',
-  error: 'The last save failed. Your edits are kept locally — click to retry',
-  conflict: 'The server copy changed while you had unsaved edits — choose a version below',
-}
 </script>
 
 <template>

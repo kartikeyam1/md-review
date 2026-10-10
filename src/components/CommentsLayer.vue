@@ -5,6 +5,7 @@ import { useDocState } from '@/composables/useDocState'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import { useFocusTrap } from '@/composables/useFocusTrap'
 import { toast } from '@/composables/useToast'
+import { focusActive } from '@/composables/useFocusMode'
 import CommentsSidebar from '@/components/CommentsSidebar.vue'
 import SelectionActionBar from '@/components/SelectionActionBar.vue'
 import CommentPopover from '@/components/CommentPopover.vue'
@@ -47,6 +48,8 @@ watch(drawerOpen, (open) => {
 })
 // Back to desktop width: the rail is back, the sheet goes.
 watch(drawerMode, (m) => { if (!m) closeDrawer() })
+// #13: focus mode hides the comments, so an open sheet closes (no hidden focus trap).
+watch(focusActive(), (on) => { if (on) closeDrawer() })
 onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
 /** A comment tapped in the sheet: close it so the line it scrolls to is visible. */

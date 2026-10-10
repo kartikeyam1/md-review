@@ -33,6 +33,7 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { label: 'Redo', keys: ['Mod-Shift-z', 'Mod-y'] },
   { label: 'Find', keys: ['Mod-f'] },
   { label: 'Save', keys: ['Mod-s'] },
+  { label: 'Focus mode', keys: ['Mod-Shift-Enter'], note: 'Esc to leave' },
   { label: 'Leave the editor', keys: ['Escape Tab'], note: 'Tab within 2 s' },
   { label: 'Show keyboard shortcuts', keys: ['?'], note: 'outside the editor' },
 ]

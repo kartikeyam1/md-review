@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, defineAsyncComponent, nextTick, onMounted, onBeforeUnmount, onUnmounted, watch } from 'vue'
 import type { RevisionEntry } from '@/composables/useShare'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
@@ -14,6 +14,8 @@ import PreviewPane from '@/components/PreviewPane.vue'
 import SplitView from '@/components/SplitView.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
 import TocPanel from '@/components/TocPanel.vue'
+import { focusActive, setFocusAllowed, setFocusMode, toggleFocusMode } from '@/composables/useFocusMode'
+import { useGlobalShortcuts } from '@/composables/useGlobalShortcuts'
 import { provideToc } from '@/composables/useToc'
 import { useActiveHeading } from '@/composables/useActiveHeading'
 import { useBreakpoint } from '@/composables/useBreakpoint'
@@ -36,6 +38,8 @@ const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.
 const ShareModal = defineAsyncComponent(() => import('@/components/ShareModal.vue'))
 const ShareRequiredDialog = defineAsyncComponent(() => import('@/components/ShareRequiredDialog.vue'))
 const FileUpload = defineAsyncComponent(() => import('@/components/FileUpload.vue'))
+// #13: rendered only in focus mode.
+const FocusControls = defineAsyncComponent(() => import('@/components/FocusControls.vue'))
 
 const doc = useDocState()
 const actions = useDocActions()
@@ -68,6 +72,75 @@ watch(editorShown, (shown) => { if (shown) editorMounted.value = true }, { immed
 watch(docKey, () => { editorMounted.value = editorShown.value })
 // #23: a viewer never keeps a hidden editor — losing edit access drops the kept slot.
 watch(capability, (c) => { if (c !== 'editor') editorMounted.value = false })
+
+// ── #13 focus mode ───────────────────────────────────────────────────────────
+// Only in the edit and split views, for editors, never in an embed (rule 1).
+// In memory: off on load, on leaving the editing views or the document (rule 10).
+const focusAllowed = computed(() => onScreen.value && editorShown.value && !embed.value)
+const focusShown = focusActive()
+setFocusMode(false)
+watch(focusAllowed, (ok) => {
+  setFocusAllowed(ok)
+  // Fetch the (lazy) floating controls while focus mode is merely possible, so they draw at once.
+  if (ok) void import('@/components/FocusControls.vue')
+}, { immediate: true })
+watch(docKey, () => setFocusMode(false))
+onUnmounted(() => setFocusAllowed(false))
+// Rule 8: entering (and leaving) keeps keyboard focus in the editor, caret and scroll untouched.
+watch(focusShown, () => nextTick(() => editorRef.value?.focus()))
+
+const OPEN_LAYERS = '.modal-overlay, [aria-modal="true"], [data-testid="slash-menu"], [data-testid="zoom-viewer"]'
+const layerOpen = () => !!document.querySelector(OPEN_LAYERS)
+
+useGlobalShortcuts([
+  // Mod+Shift+Enter, whatever has focus (00 §3.5) — not under an open dialog; a held key toggles once.
+  { key: 'Enter', mod: true, shift: true, alt: false, when: () => focusAllowed.value && !layerOpen(), run: (e) => { if (!e.repeat) toggleFocusMode() } },
+])
+
+/**
+ * Rule 9 / 00 §3.4: Esc leaves focus mode only once every inner layer has had
+ * it. Layers that handle Esc themselves mark the event (preventDefault /
+ * stopPropagation: CodeMirror's search panel and selection simplify, the
+ * shortcuts overlay, drawers); dialogs that only close on it are still in the
+ * DOM while this bubble-phase listener runs. A held Esc closes one layer only.
+ *
+ * The comment action bar and popover (layer 5, in every editing or reading
+ * view) sit above CodeMirror's own layers, so they close in the capture phase,
+ * before the editor sees the key — except a popover holding a typed comment,
+ * which Esc never throws away (in focus mode that Esc is swallowed, so it does
+ * not leave focus mode either).
+ */
+const isEsc = (e: KeyboardEvent) => e.key === 'Escape' && !e.defaultPrevented && !e.isComposing
+const popoverDraft = () => !!(document.querySelector<HTMLTextAreaElement>('.popover-input')?.value.trim())
+// Dialogs that close on Esc in their own listener are gone from the DOM by the
+// time a window bubble listener runs (Vue patches in the microtask between
+// listeners), so "was a layer open?" is decided when the key arrives.
+const escHadLayer = new WeakSet<Event>()
+function onFocusEscapeCapture(e: KeyboardEvent) {
+  if (!isEsc(e)) return
+  if (layerOpen()) { escHadLayer.add(e); return }
+  if (!(doc.showPopover.value || doc.showActionBar.value)) return
+  if (doc.showPopover.value && popoverDraft()) {
+    if (focusShown.value) { e.preventDefault(); e.stopPropagation() }
+    return
+  }
+  e.preventDefault()
+  e.stopPropagation()
+  if (!e.repeat) doc.dismissAll()
+}
+function onFocusEscape(e: KeyboardEvent) {
+  if (!isEsc(e) || !focusShown.value || escHadLayer.has(e) || layerOpen()) return
+  e.preventDefault()
+  if (!e.repeat) setFocusMode(false)
+}
+onMounted(() => {
+  window.addEventListener('keydown', onFocusEscapeCapture, true)
+  window.addEventListener('keydown', onFocusEscape)
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onFocusEscapeCapture, true)
+  window.removeEventListener('keydown', onFocusEscape)
+})
 
 function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null) {
   if (!confirmDiscardIfDirty()) return
@@ -157,8 +230,17 @@ const embedOpenHref = computed(() => {
       <a class="embed-open-link" data-testid="embed-open-link" :href="embedOpenHref" target="_blank" rel="noopener">Open in md-review</a>
     </div>
   </div>
-  <div v-else class="app" :class="{ 'doc-scroll': docScroll }" :data-view="view" :data-mode="mode" :data-capability="capability">
-    <DocHeader v-if="showHeader" />
+  <div
+    v-else
+    class="app"
+    :class="{ 'doc-scroll': docScroll }"
+    :data-view="view"
+    :data-mode="mode"
+    :data-capability="capability"
+    :data-focus-mode="focusShown ? 'true' : undefined"
+  >
+    <!-- Focus mode hides the header but keeps it mounted (a filename edit in progress survives). -->
+    <div v-if="showHeader" v-show="!focusShown" class="doc-header-slot"><DocHeader /></div>
     <DocBanners />
 
     <RouteNotFound v-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" @home="goHome" />
@@ -216,6 +298,7 @@ const embedOpenHref = computed(() => {
     </div>
     <div v-else-if="isDocRoute && !docMissing" class="doc-loading" aria-busy="true"></div>
     <TocPanel v-if="toc.visible.value && toc.drawerMode.value" :toc="toc" variant="drawer" @pin="activeHeading.pin" />
+    <FocusControls v-if="focusShown" @exit="setFocusMode(false)" />
 
     <PromptModal
       :visible="showPromptModal && reviewUI"
@@ -261,6 +344,11 @@ const embedOpenHref = computed(() => {
 }
 
 /* #5 rule 2: document scroll in the read view; the header sticks (DocHeader). */
+/* The header's slot takes no box: the header stays a direct flex/sticky child in layout. */
+.doc-header-slot {
+  display: contents;
+}
+
 .app.doc-scroll {
   height: auto;
   min-height: 100vh;
@@ -414,6 +502,68 @@ const embedOpenHref = computed(() => {
 .doc-aside > :deep(.sidebar) {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* #13 focus mode: no rail, no comments column or toggle (the selection action
+   bar and comment popover stay available: they live in CommentsLayer, fixed). */
+.app[data-focus-mode='true'] .doc-rail {
+  display: none;
+}
+
+.app[data-focus-mode='true'] .doc-aside {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  overflow: visible;
+}
+
+.app[data-focus-mode='true'] .doc-aside :deep(.sidebar),
+.app[data-focus-mode='true'] .doc-aside :deep(.sidebar-toggle),
+.app[data-focus-mode='true'] .doc-aside :deep(.comments-toggle),
+.app[data-focus-mode='true'] .doc-aside :deep(.comments-drawer),
+.app[data-focus-mode='true'] .doc-aside :deep(.comments-backdrop) {
+  display: none !important;
+}
+
+/* Edit view: a centred 860px text column, the gutter attached to it (rule 6). */
+.app[data-focus-mode='true'][data-view='edit'] :deep(.cm-editor) {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+/* The floating focus controls sit over the right end of the rightmost toolbar row (the
+   editor toolbar, the preview bar in wide split, or the bar under the tabs below 960px —
+   the tabs keep their full width), which keeps room for them. */
+.app[data-focus-mode='true'] :deep(.panes:not(.split) .editor-toolbar),
+.app[data-focus-mode='true'] :deep(.panes.wide .split-preview-bar),
+.app[data-focus-mode='true'] :deep(.panes.tabs .editor-toolbar),
+.app[data-focus-mode='true'] :deep(.panes.tabs .split-preview-bar) {
+  padding-right: calc(var(--focus-controls-w, 40px) + 16px);
+}
+
+/* Below the split tabs (their 40px + 1px border). */
+.app[data-focus-mode='true']:has(.panes.tabs) {
+  --focus-controls-top: 41px;
+}
+
+/* Phones and touch screens: the toolbar rows grow to hold the 40×40 exit button. */
+@media (max-width: 640.98px), (hover: none) {
+  .app[data-focus-mode='true'] :deep(.editor-pane .editor-toolbar),
+  .app[data-focus-mode='true'] :deep(.panes .split-preview-bar) {
+    flex-basis: 44px;
+    height: 44px;
+  }
+}
+
+/* CodeMirror's dotted focus outline would draw the column's edges. */
+.app[data-focus-mode='true'] :deep(.cm-editor.cm-focused) {
+  outline: none;
+}
+
+/* …and the first line of text starts below them, even on a phone (rule 5). */
+.app[data-focus-mode='true'] :deep(.cm-content) {
+  padding-top: 12px;
 }
 
 /* #5 rule 8: below 1100px the comments are a bottom-sheet drawer (CommentsLayer):

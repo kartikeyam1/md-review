@@ -6,6 +6,7 @@ import ApprovalBanner from '@/components/ApprovalBanner.vue'
 import SummaryPanel from '@/components/SummaryPanel.vue'
 import ChangesBanner from '@/components/ChangesBanner.vue'
 import LocalCopyBanner from '@/components/LocalCopyBanner.vue'
+import { focusActive } from '@/composables/useFocusMode'
 
 // The below-header stack (00 §2.4), top → bottom. doc-meta-row (1) lives in
 // DocHeader. Later items add one line each in their slot:
@@ -16,6 +17,8 @@ const {
   reviewerName, setReviewerName, filename, comments, changeSummary, openHistory, acknowledge,
 } = doc
 const persistError = doc.persistence.persistError
+/** #13 rule 3/4: focus mode hides the notice, approval, summary and changes banners — never the conflict or persist-error bars. */
+const focusOn = focusActive()
 
 /** The doc approvals go to: the attached doc, or a pinned revision's doc (status only there). */
 const approvalTarget = computed(() => pasteId.value ?? pinnedInfo.value?.id ?? null)
@@ -81,7 +84,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
   </div>
 
   <!-- 5. notice -->
-  <div v-if="notice" class="notice-bar" role="status">
+  <div v-if="notice" v-show="!focusOn" class="notice-bar" role="status">
     <span>{{ notice }}</span>
     <button class="btn btn-ghost btn-sm" @click="notice = null">Dismiss</button>
   </div>
@@ -90,6 +93,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
   <template v-if="onScreen && reviewUI && approvalTarget">
     <ApprovalBanner
       v-if="approvalInfo"
+      v-show="!focusOn"
       :approval-status="approvalInfo.approval_status"
       :approved-by="approvalInfo.approved_by"
       :approved-at="approvalInfo.approved_at"
@@ -101,6 +105,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
       @request-changes="decide('changes_requested', $event)"
     />
     <SummaryPanel
+      v-show="!focusOn"
       :filename="filename"
       :comments="comments"
       :approval-status="approvalInfo?.approval_status"
@@ -110,6 +115,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
   <!-- 7. changes since you last looked -->
   <ChangesBanner
     v-if="onScreen && pasteId && changeSummary"
+    v-show="!focusOn"
     :summary="changeSummary"
     @view="openHistory()"
     @dismiss="acknowledge(sync.serverHash.value)"
