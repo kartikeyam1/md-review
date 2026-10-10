@@ -3,10 +3,10 @@ import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BASE } from './helpers.mjs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const FIXTURE = resolve(__dirname, 'fixture.md')
-const BASE = 'http://localhost:58747'
 const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
 
 let browser, context, page

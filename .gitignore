@@ -39,3 +39,6 @@ coverage/
 test-results/
 playwright-report/
 .gstack/
+
+# verify.sh harness output (logs, summary, screenshots, build)
+.verify/

@@ -1,9 +1,7 @@
 import { chromium } from 'playwright'
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-
-const BASE = process.env.E2E_BASE || 'http://localhost:4175'
-const API = process.env.PASTE_API || 'http://localhost:3100'
+import { BASE, API } from './helpers.mjs'
 
 let browser, context, page
 

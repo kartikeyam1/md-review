@@ -37,6 +37,10 @@ export default defineConfig({
   plugins: [vue(), localFileApi()],
   server: {
     port: parseInt(process.env.PORT || '58747'),
+    // VITE_NO_WATCH=1 (set by scripts/lib/stack.sh) runs a one-shot dev server
+    // with no file watcher: tests don't need HMR, and the watcher dies with
+    // EMFILE on hosts whose inotify instances are exhausted.
+    watch: process.env.VITE_NO_WATCH === '1' ? null : undefined,
   },
   resolve: {
     alias: {
@@ -46,6 +50,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // Node >= 25's built-in Web Storage shadows jsdom's — see the setup file.
+    setupFiles: ['tests/setup/jsdom-storage.ts'],
     // server/ has its own node_modules whose packages ship test suites (zod
     // alone adds ~1,800 tests) — keep vitest on the app's own tests.
     exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**', 'server/**'],
