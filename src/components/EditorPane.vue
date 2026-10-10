@@ -11,6 +11,7 @@ import EditorToolbar from '@/components/EditorToolbar.vue'
 import { editorExtensions } from '@/editor/extensions'
 import { applyExternal, clearHistory, externalWrite, keepState, takeKeptState } from '@/editor/history'
 import { onHistoryBarrier, takeExternalOrigin } from '@/composables/useExternalChange'
+import { formatTable as formatTableCommand } from '@/editor/tablePaste'
 
 // ── Props & Emits ──────────────────────────────────────────────
 
@@ -322,7 +323,15 @@ function runHistory(command: typeof undo) {
   v.focus()
 }
 
-defineExpose({ scrollToLine, focus })
+/** Re-align the table under the cursor (#11; also Shift+Alt+F). */
+function formatTable() {
+  const v = view.value
+  if (!v) return
+  formatTableCommand(v)
+  v.focus()
+}
+
+defineExpose({ scrollToLine, focus, formatTable })
 </script>
 
 <template>

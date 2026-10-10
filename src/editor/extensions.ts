@@ -5,6 +5,7 @@ import { search, searchKeymap } from '@codemirror/search'
 import { historyExtension } from '@/editor/history'
 import { svgPaste } from '@/editor/svgPaste'
 import { imagePaste } from '@/editor/imagePaste'
+import { plainPasteChord, tablePaste } from '@/editor/tablePaste'
 import { markdownCommands } from '@/editor/markdownCommands'
 
 /**
@@ -24,7 +25,9 @@ export function editorExtensions(opts: { restoredHistory?: Extension | null } = 
     search(),
     markdownCommands,
     keymap.of([...defaultKeymap, ...searchKeymap]),
+    plainPasteChord,
     imagePaste,
     svgPaste,
+    tablePaste,
   ]
 }

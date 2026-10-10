@@ -27,6 +27,8 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { label: 'Move line up / down', keys: ['Alt-ArrowUp', 'Alt-ArrowDown'] },
   { label: 'Duplicate line up / down', keys: ['Shift-Alt-ArrowUp', 'Shift-Alt-ArrowDown'] },
   { label: 'Toggle HTML comment', keys: ['Mod-/'] },
+  { label: 'Format table', keys: ['Shift-Alt-f'], note: 'cursor in a table' },
+  { label: 'Paste as plain text', keys: ['Mod-Shift-v'] },
   { label: 'Undo', keys: ['Mod-z'] },
   { label: 'Redo', keys: ['Mod-Shift-z', 'Mod-y'] },
   { label: 'Find', keys: ['Mod-f'] },
