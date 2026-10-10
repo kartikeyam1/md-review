@@ -152,6 +152,78 @@ html.dark.locus-theme {
   --cat-nit-on: #280A38;
 }
 
+/* #16 callout and RAG tokens. --callout-<type> is the accent (edge, icon),
+   --callout-<type>-fg the title text (>= 4.5:1 on the tinted callout). GitHub
+   themes style callouts with github-markdown-css; they use these only for RAG. */
+:root {
+  --callout-note: #0757b8;
+  --callout-tip: #166a2e;
+  --callout-important: #6f3fc9;
+  --callout-warning: #7d5300;
+  --callout-caution: #b31d28;
+  --callout-note-fg: var(--callout-note);
+  --callout-tip-fg: var(--callout-tip);
+  --callout-important-fg: var(--callout-important);
+  --callout-warning-fg: var(--callout-warning);
+  --callout-caution-fg: var(--callout-caution);
+  --callout-tint: 6%;
+  --rag-green-bg: #dcf5e6;
+  --rag-green-fg: #0f5c2e;
+  --rag-green-dot: #1f9d55;
+  --rag-amber-bg: #fff0d1;
+  --rag-amber-fg: #6e4300;
+  --rag-amber-dot: #e5a000;
+  --rag-red-bg: #fad4cf;
+  --rag-red-fg: #8f1c0e;
+  --rag-red-dot: #d93a26;
+}
+
+html.dark {
+  --callout-note: #79b8ff;
+  --callout-tip: #56d364;
+  --callout-important: #bc9cff;
+  --callout-warning: #e3b341;
+  --callout-caution: #ff8f87;
+  --callout-tint: 10%;
+  --rag-green-bg: #123d27;
+  --rag-green-fg: #8ef0b5;
+  --rag-green-dot: #3fb950;
+  --rag-amber-bg: #4a3300;
+  --rag-amber-fg: #ffd27a;
+  --rag-amber-dot: #d29922;
+  --rag-red-bg: #5c1a14;
+  --rag-red-fg: #ffb3aa;
+  --rag-red-dot: #f85149;
+}
+
+/* Locus: brand hues for edges, icons and dots (caution = the Locus status red, so it never reads as
+   a second orange next to warning); deeper (light) or lighter (dark) shades for text. */
+html.locus-theme {
+  --callout-note: #3264FF;
+  --callout-tip: #00D273;
+  --callout-important: var(--accent);
+  --callout-warning: #FF9F00;
+  --callout-caution: var(--cat-must-fix);
+  --callout-note-fg: #2A50D6;
+  --callout-tip-fg: #00703D;
+  --callout-important-fg: #7B2FD1;
+  --callout-warning-fg: #8A5300;
+  --callout-caution-fg: #B91C1C;
+  --callout-tint: 8%;
+  --rag-green-dot: #00D273;
+  --rag-amber-dot: #FF9F00;
+  --rag-red-dot: #FF6429;
+}
+
+html.dark.locus-theme {
+  --callout-note-fg: #8FA9FF;
+  --callout-tip-fg: #3DE89A;
+  --callout-important-fg: #CDA3FF;
+  --callout-warning-fg: #FFB84D;
+  --callout-caution-fg: var(--cat-must-fix);
+  --callout-tint: 14%;
+}
+
 *,
 *::before,
 *::after {

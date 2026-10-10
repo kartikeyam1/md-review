@@ -27,7 +27,7 @@ function registerTools(server, handlers) {
     description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.',
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
-      markdown: z.string().optional().describe('The document content — Markdown or HTML (provide this OR filePath)'),
+      markdown: z.string().optional().describe('The document content — Markdown or HTML (provide this OR filePath). Markdown extras: GitHub alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]` on the first quote line, optional title after it) and inline RAG status badges `:rag-green[On track]` / `:rag-amber[At risk]` / `:rag-red[Blocked]`.'),
       filePath: z.string().optional().describe('Absolute path to a .md/.markdown/.txt/.html file to read (provide this OR markdown)'),
       filename: z.string().optional().describe('Display name for the file, e.g. "report.html" (defaults to basename of filePath if provided)'),
       contentType: z.enum(['markdown', 'html']).optional().describe("Force the document type. Omit to auto-detect from the filename extension (.html/.htm → html)."),

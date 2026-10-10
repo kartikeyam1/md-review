@@ -187,6 +187,54 @@
     display: table-header-group;
   }
 
+  /* ── #16 rule 9: callouts print with their border and title, unsplit when short ── */
+  html.dark:not(.locus-theme) {
+    --callout-note: #0757b8;
+    --callout-tip: #166a2e;
+    --callout-important: #6f3fc9;
+    --callout-warning: #7d5300;
+    --callout-caution: #b31d28;
+  }
+
+  /* Dark themes print on white: light-theme text colours for callout titles and RAG pills. */
+  html.dark.locus-theme {
+    --callout-note-fg: #2A50D6;
+    --callout-tip-fg: #00703D;
+    --callout-important-fg: #7B2FD1;
+    --callout-warning-fg: #8A5300;
+    --callout-caution-fg: #B91C1C;
+  }
+
+  html.dark {
+    --rag-green-bg: #dcf5e6;
+    --rag-green-fg: #0f5c2e;
+    --rag-amber-bg: #fff0d1;
+    --rag-amber-fg: #6e4300;
+    --rag-red-bg: #fad4cf;
+    --rag-red-fg: #8f1c0e;
+  }
+
+  .preview-pane .callout {
+    break-inside: avoid;
+  }
+
+  .preview-pane:not(.github-mode) .callout {
+    border-color: var(--callout) !important;
+  }
+
+  .preview-pane:not(.github-mode) .callout .octicon {
+    color: var(--callout) !important;
+  }
+
+  :root .preview-pane:not(.github-mode) .callout > .markdown-alert-title {
+    color: var(--callout-fg) !important;
+  }
+
+  .preview-pane .rag {
+    color: var(--rag-fg) !important;
+    border: 1px solid var(--rag-dot);
+  }
+
   /* ── Rule 15: show where external links go ── */
   .preview-pane a[href^='http://']:not(.autolink)::after,
   .preview-pane a[href^='https://']:not(.autolink)::after {

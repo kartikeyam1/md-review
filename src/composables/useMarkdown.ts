@@ -59,6 +59,8 @@ import { tableScroll } from '@/markdown/tableScroll'
 import { headingIds, type HeadingInfo } from '@/markdown/headingIds'
 import { autolink } from '@/markdown/autolink'
 import { codeBlock } from '@/markdown/codeBlock'
+import { alerts } from '@/markdown/alerts'
+import { rag } from '@/markdown/rag'
 import { parseFrontMatter, frontMatterTable, bodyWithAbsoluteLines } from '@/markdown/frontMatter'
 
 export interface LineMapEntry {
@@ -135,6 +137,8 @@ export function useMarkdown() {
     tableScroll, // #5 rule 5
     autolink, // #5 rule 15
     codeBlock, // #14 rules 1–3 (wraps lineDataPlugin's fence/code_block output)
+    alerts, // #16 rules 1–9
+    rag, // #16 rules 10–15
   ]
   for (const plugin of PLUGINS) plugin(md)
 
