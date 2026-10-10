@@ -26,6 +26,12 @@
 STACK_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STACK_LOG_DIR="${STACK_LOG_DIR:-$STACK_REPO_ROOT/.verify/logs}"
 STACK_READY_TIMEOUT="${STACK_READY_TIMEOUT:-90}"
+# Test stacks share a box with the live md-review service. Make everything
+# started from here the OOM killer's first choice (inherited by children;
+# raising the score needs no privileges), so memory pressure from a test run
+# can never take the live backend down.
+echo 1000 > /proc/self/oom_score_adj 2>/dev/null || true
+
 STACK_PGIDS=()        # live process groups we started (setsid -> pid == pgid)
 STACK_ALL_PGIDS=()    # every group ever started (for leak checks)
 STACK_TMP_DIRS=()     # temp data dirs to remove on teardown
