@@ -285,3 +285,148 @@
   text-decoration: line-through;
   text-decoration-color: var(--text-muted);
 }
+
+/* ── Locus look (#1 rule 11) ───────────────────────────────────────────────
+   Montserrat headings in deep purple / white (h1, h2) and brand purple
+   (h3–h6); no title underlines, no edge stripes; cream table headers and code;
+   blockquotes are cards. Code stays JetBrains Mono. */
+html.locus-theme .preview-pane h1,
+html.locus-theme .preview-pane h2,
+html.locus-theme .preview-pane h3,
+html.locus-theme .preview-pane h4,
+html.locus-theme .preview-pane h5,
+html.locus-theme .preview-pane h6 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  border: 0;
+  padding-bottom: 0;
+  text-decoration: none;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+html.locus-theme .preview-pane h1 { font-size: 30px; line-height: 1.25; color: var(--text-primary); }
+html.locus-theme .preview-pane h2 { font-size: 22px; line-height: 1.3; color: var(--text-primary); }
+html.locus-theme .preview-pane h3 { font-size: 16px; color: var(--accent); }
+html.locus-theme .preview-pane h4 { font-size: 15px; color: var(--accent); }
+html.locus-theme .preview-pane h5 { font-size: 14px; color: var(--accent); }
+html.locus-theme .preview-pane h6 { font-size: 13px; color: var(--accent); }
+
+html.locus-theme .preview-pane p,
+html.locus-theme .preview-pane li {
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+html.locus-theme .preview-pane a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+html.locus-theme .preview-pane a:hover,
+html.locus-theme .preview-pane a:focus,
+html.locus-theme .preview-pane a:focus-visible {
+  text-decoration: underline;
+}
+
+html.locus-theme .preview-pane th,
+html.locus-theme .preview-pane td {
+  border: 1px solid var(--border);
+}
+
+html.locus-theme .preview-pane th {
+  background: var(--table-head-bg);
+  color: var(--table-head-fg);
+  font-weight: 600;
+}
+
+html.locus-theme .preview-pane tbody tr,
+html.locus-theme .preview-pane tbody tr:nth-child(even),
+html.locus-theme .preview-pane tbody tr:hover {
+  background: transparent;
+}
+
+html.locus-theme .preview-pane code {
+  font-family: var(--font-mono);
+  background: var(--bg-code);
+}
+
+html.locus-theme .preview-pane pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+html.locus-theme .preview-pane pre code {
+  background: none;
+}
+
+html.locus-theme .preview-pane blockquote {
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-code);
+  padding: 12px 16px;
+  color: var(--text-secondary);
+}
+
+html.locus-theme .preview-pane blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* highlight.js in Locus: keywords deep purple (light) / purple (dark),
+   comments --text-muted italic, every other token --text-secondary. */
+html.locus-theme .preview-pane [class^='hljs-'],
+html.locus-theme .preview-pane [class*=' hljs-'] {
+  color: var(--text-secondary);
+  font-weight: 400;
+  opacity: 1;
+}
+
+html.locus-theme .preview-pane .hljs-keyword,
+html.locus-theme .preview-pane .hljs-selector-tag,
+html.locus-theme .preview-pane .hljs-tag {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+html.dark.locus-theme .preview-pane .hljs-keyword,
+html.dark.locus-theme .preview-pane .hljs-selector-tag,
+html.dark.locus-theme .preview-pane .hljs-tag {
+  color: var(--accent);
+}
+
+html.locus-theme .preview-pane .hljs-comment,
+html.locus-theme .preview-pane .hljs-quote {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+html.locus-theme .preview-pane .task-list-item input[type='checkbox']:checked + span,
+html.locus-theme .preview-pane .task-list-item input[type='checkbox']:checked ~ * {
+  color: var(--text-secondary);
+}
+
+html.locus-theme .preview-pane blockquote blockquote {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+html.locus-theme .preview-pane ::selection {
+  background: var(--selection-bg);
+}
+
+html.locus-theme .preview-pane .mermaid .slice {
+  font-weight: 600;
+}
+
+.preview-pane .mermaid-error {
+  margin: 0;
+  text-align: left;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+}

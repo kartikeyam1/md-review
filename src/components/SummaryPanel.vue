@@ -88,7 +88,7 @@ const unresolvedMustFix = computed(() =>
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   margin-bottom: 8px;
 }
 .category-badges {

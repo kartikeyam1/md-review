@@ -17,8 +17,8 @@
 // Default set: local (fixture via ?filePath=), shared (#shared={SHARED_ID}),
 // dashboard (#dashboard).
 //
-// Themes are the app's ThemeMode values (light, dark, github-light,
-// github-dark), applied through localStorage['md-review-theme'] before load.
+// Themes are the app's ThemeMode values (light, dark, github-light, github-dark,
+// locus-light, locus-dark), applied through localStorage['md-review-theme'] before load.
 // Viewports: desktop 1400x900, tablet 820x1180, phone 390x844.
 //
 // Stack: if E2E_BASE_URL is unset, the script re-runs itself under
@@ -40,7 +40,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
 export const FIXTURE = join(ROOT, 'tests/e2e/fixture.md')
 export const THEME_KEY = 'md-review-theme'
-export const THEMES = ['light', 'dark', 'github-light', 'github-dark']
+export const THEMES = ['light', 'dark', 'github-light', 'github-dark', 'locus-light', 'locus-dark']
 export const VIEWPORTS = {
   desktop: { width: 1400, height: 900 },
   tablet: { width: 820, height: 1180 },

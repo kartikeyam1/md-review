@@ -327,8 +327,12 @@ export function usePersistence(
 }
 
 export function useThemePersistence() {
-  const stored = localStorage.getItem(THEME_KEY)
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+  // Storage can throw (privacy modes, blocked site data): the theme then lives
+  // for the session only, and switching still works (#1 rule 4).
+  let stored: string | null = null
+  try { stored = localStorage.getItem(THEME_KEY) } catch { /* storage unavailable */ }
+  let prefersDark = false
+  try { prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches } catch { /* no matchMedia */ }
   const defaultTheme: ThemeMode = prefersDark ? 'dark' : 'light'
   const theme = ref<ThemeMode>(isValidTheme(stored) ? stored : defaultTheme)
 
@@ -336,7 +340,7 @@ export function useThemePersistence() {
 
   function setTheme(t: ThemeMode) {
     theme.value = t
-    localStorage.setItem(THEME_KEY, t)
+    try { localStorage.setItem(THEME_KEY, t) } catch { /* session-only theme */ }
     applyTheme(t)
   }
 

@@ -107,6 +107,9 @@ stack_start_vite() {
   (
     cd "$STACK_REPO_ROOT" || exit 1
     unset PORT
+    # Per-worktree dep cache (see vite.config.ts cacheDir): node_modules is
+    # shared between worktrees, its .vite/deps must not be.
+    VITE_CACHE_DIR="$STACK_REPO_ROOT/.verify/vite-cache" \
     VITE_NO_WATCH=1 VITE_PASTE_API_URL="$api" exec setsid node node_modules/vite/bin/vite.js \
       --host 127.0.0.1 --port "$port" --strictPort --clearScreen false
   ) >"$log" 2>&1 < /dev/null &

@@ -98,18 +98,22 @@ onMounted(loadSessions)
 }
 .dashboard-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 8px 16px;
   margin-bottom: 16px;
 }
 .dashboard-title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 16px;
+  gap: 4px 16px;
+  min-width: 0;
 }
 .nav-link {
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   text-decoration: none;
 }
 .nav-link:hover {
@@ -119,6 +123,7 @@ onMounted(loadSessions)
 .dashboard-header h2 {
   margin: 0;
   font-size: 20px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 .refresh-btn {
@@ -134,7 +139,7 @@ onMounted(loadSessions)
 .dashboard-status {
   text-align: center;
   padding: 40px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 14px;
 }
 .dashboard-status.error { color: #dc2626; }
@@ -170,7 +175,7 @@ onMounted(loadSessions)
   padding: 2px 8px;
   border-radius: 10px;
   background: var(--bg-page);
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 .meta-tag.must-fix {
   background: #fee2e2;

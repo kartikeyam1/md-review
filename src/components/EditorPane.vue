@@ -123,6 +123,11 @@ const editorTheme = EditorView.theme({
   '.cm-content': {
     caretColor: 'var(--text-primary)',
   },
+  // CodeMirror draws its own caret (black by default): follow the theme ink so
+  // it stays visible in every dark theme.
+  '&.cm-editor .cm-cursor, &.cm-editor .cm-dropCursor': {
+    borderLeftColor: 'var(--text-primary)',
+  },
   '&.cm-focused .cm-selectionBackground': {
     backgroundColor: 'var(--selection-bg) !important',
   },

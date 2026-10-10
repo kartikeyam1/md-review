@@ -10,6 +10,7 @@ import DocView from '@/components/DocView.vue'
 import DashboardView from '@/components/DashboardView.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
 import AppToast from '@/components/AppToast.vue'
+import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 
 // The router shell (00 §4.2): landing / doc routes → DocView, the library,
 // not-found. The doc state lives here so it survives a trip to the library.
@@ -45,6 +46,10 @@ onMounted(() => { loader.boot() })
 <template>
   <DocView v-if="docArea" />
   <div v-else class="app">
+    <!-- The theme switcher (#1) on pages without a doc header. -->
+    <div class="app-bar" data-testid="app-bar">
+      <ThemeSwitcher />
+    </div>
     <RouteNotFound v-if="route.kind === 'not-found'" kind="route" :home="router.base" @home="goHome" />
     <DashboardView v-else @new-doc="loader.handleNewDoc" />
   </div>
@@ -56,5 +61,10 @@ onMounted(() => { loader.boot() })
   height: 100vh;
   display: flex;
   flex-direction: column;
+}
+.app-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 16px 0;
 }
 </style>

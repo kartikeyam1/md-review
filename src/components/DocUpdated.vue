@@ -26,7 +26,7 @@ const absolute = computed(() => {
 <style scoped>
 .doc-updated {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   white-space: nowrap;
 }
 </style>

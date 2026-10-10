@@ -11,7 +11,7 @@ import ViewToggle from '@/components/ViewToggle.vue'
 import SyncIndicator from '@/components/SyncIndicator.vue'
 import SaveState from '@/components/SaveState.vue'
 import CopyLinkButton from '@/components/CopyLinkButton.vue'
-import ThemeToggle from '@/components/ThemeToggle.vue'
+import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
 import HeaderOverflowMenu from '@/components/HeaderOverflowMenu.vue'
 
 // The doc header (00 §2): one line, never wraps. `reader` in the read view,
@@ -119,7 +119,7 @@ function onLibraryClick(e: MouseEvent) {
       @click="actions.handleShare()"
     >{{ sharing ? 'Sharing…' : 'Share' }}</button>
     <CopyLinkButton v-if="!phone" :icon-only="!desktop" />
-    <ThemeToggle />
+    <ThemeSwitcher />
     <HeaderOverflowMenu :demoted="demoted" @edit-reviewer="editingNameFromMenu = true" />
   </header>
   <div v-if="variant === 'reader' && onScreen && !desktop" class="doc-meta-row" data-testid="doc-meta-row">
@@ -145,8 +145,8 @@ function onLibraryClick(e: MouseEvent) {
   z-index: 100;
 }
 
-/* Let the overflow menu escape the header box. */
-.header:has([data-testid='header-overflow-menu']) {
+/* Let an open header menu (overflow, Style) escape the header box. */
+.header:has([role='menu']) {
   overflow: visible;
 }
 
@@ -165,7 +165,7 @@ function onLibraryClick(e: MouseEvent) {
 }
 
 .logo-accent {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .logo-mark {
@@ -232,8 +232,8 @@ function onLibraryClick(e: MouseEvent) {
 }
 
 .mode-badge {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent-text);
 }
 
 .share-btn {

@@ -132,7 +132,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
 
 .notice-bar {
   background: var(--bg-page);
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .notice-bar.warn {

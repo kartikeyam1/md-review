@@ -78,7 +78,7 @@ onMounted(() => { if (props.autoEdit) startEditReviewer() })
   gap: 4px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 12px;
   font-family: var(--font-body);
   cursor: pointer;

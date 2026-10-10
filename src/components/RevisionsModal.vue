@@ -57,8 +57,13 @@ function defaultFrom(): string | null {
   return revs.length >= 2 ? revs[revs.length - 2].hash : null
 }
 
+// Only the latest load may write its result (opening the modal and the hash
+// watcher can both start one).
+let loadSeq = 0
+
 async function load() {
   if (!props.pasteId || !toHash.value) return
+  const seq = ++loadSeq
   loading.value = true
   error.value = null
   rows.value = []
@@ -68,6 +73,7 @@ async function load() {
       fromHash.value ? fetchRevision(props.pasteId, fromHash.value) : Promise.resolve({ data: null, status: 200 }),
       fetchRevision(props.pasteId, toHash.value === (props.liveHash === undefined ? props.currentHash : props.liveHash) ? 'current' : toHash.value),
     ])
+    if (seq !== loadSeq) return
     if (!to.data) { error.value = 'Could not load the selected revision.'; return }
     if (fromHash.value && !from.data) {
       error.value = from.status === 410
@@ -78,13 +84,14 @@ async function load() {
     fromContent.value = from.data
     toContent.value = to.data
     const result = await buildLineDiff(from.data?.markdown ?? '', to.data.markdown)
+    if (seq !== loadSeq) return
     rows.value = result.rows
     stats.value = result.stats
     if (to.data.hash === props.currentHash) emit('acknowledged', to.data.hash)
   } catch {
-    error.value = 'Could not compute the diff.'
+    if (seq === loadSeq) error.value = 'Could not compute the diff.'
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -96,12 +103,14 @@ watch(() => props.visible, (v) => {
 }, { immediate: true })
 onUnmounted(() => document.removeEventListener('keydown', onEscape))
 
+// `immediate`: the modal is a lazy chunk (DocView's defineAsyncComponent); when
+// the reader opens it before the chunk has loaded, it mounts already visible.
 watch(() => props.visible, (v) => {
   if (!v) return
   toHash.value = props.currentHash
   fromHash.value = defaultFrom()
   load()
-})
+}, { immediate: true })
 
 watch([fromHash, toHash], () => { if (props.visible) load() })
 

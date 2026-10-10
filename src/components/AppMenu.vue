@@ -3,8 +3,8 @@
 // items are declared as data so every menu shares one keyboard model.
 
 export type AppMenuEntry =
-  | { type: 'item'; id: string; label: string; testid?: string; title?: string; disabled?: boolean; badge?: string; dot?: boolean; dotLabel?: string; onSelect: () => void }
-  | { type: 'radio'; id: string; label: string; testid?: string; checked: boolean; disabled?: boolean; onSelect: () => void }
+  | { type: 'item'; id: string; label: string; testid?: string; title?: string; disabled?: boolean; badge?: string; dot?: boolean; dotLabel?: string; attrs?: Record<string, string>; onSelect: () => void }
+  | { type: 'radio'; id: string; label: string; testid?: string; checked: boolean; disabled?: boolean; attrs?: Record<string, string>; onSelect: () => void }
   | { type: 'group'; id: string; label: string; testid?: string; entries: AppMenuEntry[]; note?: { text: string; testid?: string } | null }
   | { type: 'separator'; id: string }
 
@@ -17,8 +17,10 @@ import { useMenu } from '@/composables/useMenu'
 
 withDefaults(defineProps<{
   entries: AppMenuEntry[]
-  /** Accessible name of the trigger. */
+  /** Accessible name of the trigger (and of the list unless `menuLabel` is set). */
   label: string
+  /** Accessible name of the list, when it differs from the trigger's. */
+  menuLabel?: string
   triggerTestid?: string
   menuTestid?: string
   triggerClass?: string
@@ -28,6 +30,7 @@ withDefaults(defineProps<{
   menuTestid: undefined,
   triggerClass: 'btn btn-ghost',
   triggerTitle: undefined,
+  menuLabel: undefined,
 })
 
 const triggerRef = ref<HTMLButtonElement>()
@@ -67,7 +70,7 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
       ref="listRef"
       class="app-menu-list"
       role="menu"
-      :aria-label="label"
+      :aria-label="menuLabel ?? label"
       :data-testid="menuTestid"
       @keydown="menu.onListKeydown"
     >
@@ -92,9 +95,10 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
               :aria-checked="sub.checked ? 'true' : 'false'"
               :aria-disabled="sub.disabled ? 'true' : undefined"
               :data-testid="sub.testid"
+              v-bind="sub.attrs"
               @click="select(sub)"
             >
-              <span class="app-menu-check" aria-hidden="true">{{ sub.checked ? '●' : '' }}</span>{{ sub.label }}
+              <span class="app-menu-check" aria-hidden="true"></span>{{ sub.label }}
             </button>
             <button
               v-else-if="sub.type === 'item'"
@@ -105,6 +109,7 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
               :title="sub.title"
               :aria-disabled="sub.disabled ? 'true' : undefined"
               :data-testid="sub.testid"
+              v-bind="sub.attrs"
               @click="select(sub)"
             >{{ sub.label }}</button>
           </template>
@@ -119,9 +124,10 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
           :aria-checked="entry.checked ? 'true' : 'false'"
           :aria-disabled="entry.disabled ? 'true' : undefined"
           :data-testid="entry.testid"
+          v-bind="entry.attrs"
           @click="select(entry)"
         >
-          <span class="app-menu-check" aria-hidden="true">{{ entry.checked ? '●' : '' }}</span>{{ entry.label }}
+          <span class="app-menu-check" aria-hidden="true"></span>{{ entry.label }}
         </button>
         <button
           v-else
@@ -132,6 +138,7 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
           :title="entry.title"
           :aria-disabled="entry.disabled ? 'true' : undefined"
           :data-testid="entry.testid"
+          v-bind="entry.attrs"
           @click="select(entry)"
         >
           {{ entry.label }}<span v-if="entry.badge" class="app-menu-badge">{{ entry.badge }}</span><span v-if="entry.dot" class="app-menu-dot history-dot" role="img" :aria-label="entry.dotLabel || 'new'"></span>
@@ -202,6 +209,11 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
   width: 12px;
   font-size: 9px;
   color: var(--accent);
+}
+
+/* The radio dot is drawn by CSS so the item's text is just its label. */
+.app-menu-item[aria-checked='true'] .app-menu-check::before {
+  content: '●';
 }
 
 .app-menu-group {

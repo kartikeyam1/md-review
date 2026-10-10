@@ -123,7 +123,7 @@ function handleRequestChanges() {
 
 .approved-info {
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 .approved-time {
   margin-left: 4px;

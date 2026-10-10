@@ -1,12 +1,17 @@
 export type CommentCategory = 'suggestion' | 'question' | 'must-fix' | 'nit'
 
-export interface CategoryMeta { value: CommentCategory; label: string; color: string }
+/**
+ * `color` is the category hue (text on the surface, or a fill) and `onColor`
+ * the text drawn on that fill. Both are theme tokens (src/style.css, #1) so
+ * every theme keeps them at 4.5:1 or better.
+ */
+export interface CategoryMeta { value: CommentCategory; label: string; color: string; onColor: string }
 
 export const COMMENT_CATEGORIES: CategoryMeta[] = [
-  { value: 'suggestion', label: 'Suggestion', color: '#2563eb' },
-  { value: 'question', label: 'Question', color: '#7c3aed' },
-  { value: 'must-fix', label: 'Must Fix', color: '#dc2626' },
-  { value: 'nit', label: 'Nit', color: '#8a8480' },
+  { value: 'suggestion', label: 'Suggestion', color: 'var(--cat-suggestion)', onColor: 'var(--cat-suggestion-on)' },
+  { value: 'question', label: 'Question', color: 'var(--cat-question)', onColor: 'var(--cat-question-on)' },
+  { value: 'must-fix', label: 'Must Fix', color: 'var(--cat-must-fix)', onColor: 'var(--cat-must-fix-on)' },
+  { value: 'nit', label: 'Nit', color: 'var(--cat-nit)', onColor: 'var(--cat-nit-on)' },
 ]
 
 export const DEFAULT_CATEGORY: CommentCategory = COMMENT_CATEGORIES[0].value
@@ -56,4 +61,7 @@ export type AppMode = 'upload' | 'doc' | 'dashboard'
 /** Per-doc mode (#2): a reading page, or comments + approval. */
 export type DocMode = 'publish' | 'review'
 export type PaneMode = 'edit' | 'preview'
-export type ThemeMode = 'light' | 'dark' | 'github-light' | 'github-dark'
+export type ThemeMode = 'light' | 'dark' | 'github-light' | 'github-dark' | 'locus-light' | 'locus-dark'
+
+/** A theme is a style × a dark flag (#1). */
+export type ThemeStyle = 'default' | 'github' | 'locus'

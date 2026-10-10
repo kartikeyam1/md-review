@@ -151,7 +151,7 @@ function handleImportComments() {
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
   background: var(--bg-page);
-  color: var(--text-muted);
+  color: var(--text-meta);
   cursor: pointer;
   padding: 0;
   transition: color 0.15s, background 0.15s;

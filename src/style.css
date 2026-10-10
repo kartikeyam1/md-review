@@ -14,6 +14,21 @@
   --selection-bg: rgba(194, 59, 34, 0.18);
   --shadow-color: rgba(26, 22, 18, 0.08);
   --overlay-bg: rgba(26, 22, 18, 0.5);
+  /* #1: accent used as text, small meta text, the preview table header, and the
+     comment categories (hue + text on a hue fill; all >= 4.5:1). Themes that
+     do not override them keep today's look. */
+  --accent-text: var(--accent);
+  --text-meta: var(--text-muted);
+  --table-head-bg: var(--bg-page);
+  --table-head-fg: var(--text-primary);
+  --cat-suggestion: #2563eb;
+  --cat-suggestion-on: #ffffff;
+  --cat-question: #7c3aed;
+  --cat-question-on: #ffffff;
+  --cat-must-fix: #dc2626;
+  --cat-must-fix-on: #ffffff;
+  --cat-nit: var(--text-muted);
+  --cat-nit-on: #1a1612;
 }
 
 html.dark {
@@ -29,6 +44,14 @@ html.dark {
   --selection-bg: rgba(224, 90, 66, 0.25);
   --shadow-color: rgba(0, 0, 0, 0.25);
   --overlay-bg: rgba(0, 0, 0, 0.6);
+  --cat-suggestion: #93c5fd;
+  --cat-suggestion-on: #111827;
+  --cat-question: #c4b5fd;
+  --cat-question-on: #1e1b4b;
+  --cat-must-fix: #fca5a5;
+  --cat-must-fix-on: #7f1d1d;
+  --cat-nit: var(--text-muted);
+  --cat-nit-on: #111111;
 }
 
 html.github-theme {
@@ -59,6 +82,72 @@ html.dark.github-theme {
   --selection-bg: rgba(88, 166, 255, 0.25);
   --shadow-color: rgba(0, 0, 0, 0.4);
   --overlay-bg: rgba(0, 0, 0, 0.6);
+  --cat-suggestion: #93c5fd;
+  --cat-suggestion-on: #111827;
+  --cat-question: #c4b5fd;
+  --cat-question-on: #1e1b4b;
+  --cat-must-fix: #fca5a5;
+  --cat-must-fix-on: #7f1d1d;
+  --cat-nit: var(--text-muted);
+  --cat-nit-on: #111111;
+}
+
+/* Locus brand (#1 rule 9). Light → dark; no other hues are introduced. */
+html.locus-theme {
+  --bg-page: #F3F0EB;
+  --bg-surface: #FFFFFF;
+  --bg-code: #F3F0EB;
+  --text-primary: #280A38;
+  --text-secondary: #533B60;
+  --text-muted: #9B8FA8;
+  --accent: #B066FF;
+  --border: #E6E1DA;
+  --font-heading: 'Montserrat', Arial, sans-serif;
+  --font-body: 'Montserrat', Arial, sans-serif;
+  --comment-bg: rgba(176, 102, 255, 0.10);
+  --selection-bg: rgba(176, 102, 255, 0.22);
+  --shadow-color: rgba(40, 10, 56, 0.08);
+  --overlay-bg: rgba(40, 10, 56, 0.5);
+  /* Brand purple / the muted label fail AA as small text on white, so text
+     that would use them reads in the secondary ink. */
+  --accent-text: #533B60;
+  --text-meta: #533B60;
+  --table-head-bg: #F3F0EB;
+  --table-head-fg: #280A38;
+  /* Categories in brand colours (no second purple); must-fix stays a status red. */
+  --cat-suggestion: #3264FF;
+  --cat-suggestion-on: #FFFFFF;
+  --cat-question: #280A38;
+  --cat-question-on: #FFFFFF;
+  --cat-must-fix: #dc2626;
+  --cat-must-fix-on: #FFFFFF;
+  --cat-nit: #533B60;
+  --cat-nit-on: #FFFFFF;
+}
+
+html.dark.locus-theme {
+  --bg-page: #280A38;
+  --bg-surface: #280A38;
+  --bg-code: rgba(255, 255, 255, 0.06);
+  --text-primary: #FFFFFF;
+  --text-secondary: #FFFFFF;
+  --text-muted: #9B8FA8;
+  --accent: #B066FF;
+  --border: #533B60;
+  --shadow-color: rgba(0, 0, 0, 0.4);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+  --accent-text: #B066FF;
+  --text-meta: #9B8FA8;
+  --table-head-bg: #533B60;
+  --table-head-fg: #FFFFFF;
+  --cat-suggestion: #14B4EF;
+  --cat-suggestion-on: #280A38;
+  --cat-question: #B066FF;
+  --cat-question-on: #280A38;
+  --cat-must-fix: #fca5a5;
+  --cat-must-fix-on: #7f1d1d;
+  --cat-nit: #9B8FA8;
+  --cat-nit-on: #280A38;
 }
 
 *,
@@ -103,4 +192,15 @@ button {
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border);
+}
+
+/* Locus chrome (#1 rule 10): purple primary buttons with deep-purple text,
+   flat surfaces (no shadows, no gradients). */
+html.locus-theme .btn-primary {
+  background: #B066FF;
+  color: #280A38;
+}
+
+html.locus-theme .app-menu-list {
+  box-shadow: none;
 }

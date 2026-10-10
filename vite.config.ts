@@ -84,6 +84,11 @@ function editorVendorChunk(id: string, { getModuleInfo }: { getModuleInfo: Modul
 
 export default defineConfig({
   base: process.env.GITHUB_PAGES === 'true' ? '/md-review/' : '/',
+  // VITE_CACHE_DIR (set by scripts/lib/stack.sh) keeps each worktree's
+  // pre-bundled deps apart: worktrees share one node_modules, and a dev server
+  // re-optimising node_modules/.vite under another one's feet makes its lazy
+  // chunks (mermaid diagrams) fail with "Failed to fetch dynamically imported module".
+  cacheDir: process.env.VITE_CACHE_DIR || undefined,
   plugins: [vue(), localFileApi(), spaFallback404()],
   server: {
     port: parseInt(process.env.PORT || '58747'),
