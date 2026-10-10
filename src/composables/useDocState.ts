@@ -6,7 +6,7 @@ import type { DocState } from '@/composables/docState'
 // ── Doc axes (spec #2, 00 §1 / §4.1) ─────────────────────────────────────────
 // The one place that decides view, mode, capability, routeKind and isShared —
 // every piece of UI reads these (via useDocState()), nothing else decides them.
-// #23 swaps the capability source; #7/#28/#29 add views.
+// #23 swaps the capability source (canEdit = access.can_edit); #7/#28/#29 add views.
 // Mode (#2): `publish` is a reading page, `review` adds comments + approval;
 // it hides review UI for everyone, and only editors may change it.
 //
@@ -23,6 +23,11 @@ export interface DocAxesInput {
   paneMode: PaneMode
   pasteId: string | null
   mode: DocMode
+  /**
+   * #23: may this browser edit the shared doc? `access.can_edit` from the
+   * latest GET (legacy docs and older servers: true). Ignored for local docs.
+   */
+  canEdit?: boolean
 }
 
 export interface DocAxes {
@@ -42,8 +47,10 @@ export function resolveDocAxes(input: DocAxesInput): DocAxes {
     : input.routeKind === 'pinned' ? 'pinned'
       : input.routeKind === 'file' ? 'file'
         : 'doc'
-  // Pinned revisions, file routes and embeds are read-only (00 §1.2).
-  const capability: Capability = routeKind === 'doc' ? 'editor' : 'viewer'
+  // Pinned revisions, file routes and embeds are read-only (00 §1.2); a shared
+  // doc is editable only with edit access (#23 — a protected doc without a valid token is view-only).
+  const canEdit = !input.pasteId || input.canEdit !== false
+  const capability: Capability = routeKind === 'doc' && canEdit ? 'editor' : 'viewer'
   const view: DocViewName = capability === 'editor' && input.paneMode === 'edit' ? 'edit' : 'read'
   return { routeKind, capability, view, isShared: !!input.pasteId, mode: input.mode, reviewUI: input.mode === 'review' }
 }
@@ -59,6 +66,7 @@ export function useDocAxes(inputs: {
   paneMode: Ref<PaneMode>
   pasteId: Ref<string | null>
   mode: Ref<DocMode>
+  canEdit?: Ref<boolean>
 }) {
   const axes = computed(() => resolveDocAxes({
     routeKind: inputs.route.value.kind,
@@ -66,6 +74,7 @@ export function useDocAxes(inputs: {
     paneMode: inputs.paneMode.value,
     pasteId: inputs.pasteId.value,
     mode: inputs.mode.value,
+    canEdit: inputs.canEdit?.value ?? true,
   }))
   return {
     routeKind: computed(() => axes.value.routeKind),

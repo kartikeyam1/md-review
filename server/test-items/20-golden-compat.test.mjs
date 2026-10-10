@@ -14,6 +14,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { copyToTmp, cleanupTmp, runMigrate, startServer, http, LEGACY_FIXTURE, FIXTURE_DIR } from './lib/20-helpers.mjs';
 import { deriveGetRequests, replay, runWriteSequence, startHookReceiver, normalizeEntries, compareEntries, fixtureKnownValues } from './lib/20-golden.mjs';
+import { installFetchJar } from './lib/edit-token-jar.mjs';
+installFetchJar(); // #23: this suite's own docs keep being writable (it is not about edit tokens)
 
 after(cleanupTmp);
 

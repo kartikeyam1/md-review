@@ -128,6 +128,9 @@ export function useRevisionTracking(opts: {
       if (!list || historyId.value !== id) return
       revisionList.value = list.revisions
       pinnedCurrent.value = list.current
+    } else if (pasteId.value) {
+      // Live doc: the list is kept by polling; refresh it as the modal opens.
+      refreshRevisions()
     }
     showHistory.value = true
   }

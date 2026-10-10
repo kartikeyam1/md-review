@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { installFetchJar, tokenFor } from './test-items/lib/edit-token-jar.mjs';
+installFetchJar(); // #23: this suite's own docs keep being writable (it is not about edit tokens)
 
 const BASE = process.env.PASTE_API || 'http://localhost:3100';
 
@@ -549,7 +551,7 @@ test('concurrency — a slow PUT /markdown does not drop a comment posted while 
   const port = parseInt(new URL(BASE).port, 10);
 
   const body = JSON.stringify({ markdown: '# replaced by slow agent\n' + 'x'.repeat(2000) });
-  const head = `PUT /paste/${pasteId}/markdown HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n`;
+  const head = `PUT /paste/${pasteId}/markdown HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-Edit-Token: ${tokenFor(pasteId)}\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n`;
   const sock = net.connect(port, 'localhost');
   const closed = new Promise(r => { sock.on('close', r); setTimeout(r, 3000); });
   sock.on('data', () => {});

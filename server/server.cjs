@@ -31,6 +31,7 @@ require('./storage.cjs'); // opens the DB; creates DATA_DIR and its subdirectori
 // asset fallback last). A later server item adds one module and one line here.
 const ROUTES = [
   require('./routes/paste-create.cjs'),
+  require('./routes/edit-tokens.cjs'),
   require('./routes/comments.cjs'),
   require('./routes/approval.cjs'),
   require('./routes/markdown.cjs'),

@@ -42,3 +42,6 @@ playwright-report/
 
 # verify.sh harness output (logs, summary, screenshots, build)
 .verify/
+
+# MCP edit-token store (#23): secrets, never committed
+server/mcp-state/

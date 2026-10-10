@@ -82,6 +82,9 @@ selected() { [[ " ${SELECTED[*]} " == *" $1 "* ]]; }
 
 mkdir -p "$LOG_DIR"; ln -sfn "runs/$VERIFY_RUN_ID/logs" "$VERIFY_DIR/logs.tmp" && mv -Tf "$VERIFY_DIR/logs.tmp" "$VERIFY_DIR/logs" 2>/dev/null || true
 export NO_COLOR=1 FORCE_COLOR=0 CI="${CI:-1}"
+# #23: MCP servers/handlers that tests start keep their edit-token store here, never in
+# the repo default (server/mcp-state/). Suites that need their own store override it.
+export MCP_TOKEN_STORE="${MCP_TOKEN_STORE:-$RUN_DIR/mcp-state/edit-tokens.json}"
 
 # ── backlog item gating ─────────────────────────────────────────────────────
 ENABLED_ITEMS=" "

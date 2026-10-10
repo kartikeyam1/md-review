@@ -13,6 +13,8 @@ import {
   startServer, spawnExpectingExit, tmpDir, copyToTmp, cleanupTmp, http, openDbReadOnly, snapshotTree, diffSnapshots,
   runMigrate, LEGACY_FIXTURE, DB_NAME,
 } from './lib/20-helpers.mjs';
+import { installFetchJar } from './lib/edit-token-jar.mjs';
+installFetchJar(); // #23: this suite's own docs keep being writable (it is not about edit tokens)
 
 const md5 = (s) => crypto.createHash('md5').update(Buffer.from(s, 'utf-8')).digest('hex');
 const qs = (params) => new URLSearchParams(params).toString();

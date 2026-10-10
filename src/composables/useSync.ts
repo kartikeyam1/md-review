@@ -458,6 +458,9 @@ export function useSync(
       remoteHash = result.remoteHash ?? null
       return false
     }
+    // #23: 401/403 = this browser lost edit access. Not a save error: the doc
+    // state turns view-only and sets the edits aside as a local copy.
+    if (result.status === 401 || result.status === 403) return false
     saveError.value = true
     syncError.value = true
     return false

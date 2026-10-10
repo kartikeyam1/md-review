@@ -19,7 +19,8 @@ async function mcpCall(env, tool, args) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [MCP_SERVER_FILE],
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env },
+    // #23: keep the MCP edit-token store where verify.sh puts it, never in the repo.
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...(process.env.MCP_TOKEN_STORE ? { MCP_TOKEN_STORE: process.env.MCP_TOKEN_STORE } : {}), ...env },
     stderr: 'pipe',
   });
   const client = new Client({ name: 'md-review-test-22', version: '1.0.0' });

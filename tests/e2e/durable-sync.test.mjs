@@ -10,6 +10,7 @@ import { chromium } from 'playwright'
 import { describe, it, before, after, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { BASE, API as PASTE_API } from './helpers.mjs'
+import { asLegacyDoc } from './lib/legacy-docs.mjs'
 
 let browser, context, page
 
@@ -21,6 +22,7 @@ async function createSharedSession(markdown = '# Title\n\nFirst paragraph here.\
     body: JSON.stringify({ markdown, filename: 'doc.md', comments: [], sharedAt: new Date().toISOString(), mode: 'review' }),
   })
   const { id } = await res.json()
+  await asLegacyDoc(id) // #23: a link-editable doc, as every doc was before edit tokens
   return id
 }
 

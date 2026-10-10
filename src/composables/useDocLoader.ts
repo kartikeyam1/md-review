@@ -1,4 +1,5 @@
 import { watch, provide, inject, type InjectionKey } from 'vue'
+import { loadLocalCopy } from '@/composables/localCopy'
 import type { ContentType, DocMode } from '@/types'
 import { payloadMode } from '@/composables/docMeta'
 import { toast } from '@/composables/useToast'
@@ -36,6 +37,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
 
   function detachFromShare() {
     doc.pasteId.value = null
+    doc.access.value = null
+    doc.localCopy.value = null
     doc.approvalInfo.value = null
     doc.docMeta.value = { sessionName: null, slug: null, sharedAt: null, latest: null }
   }
@@ -120,9 +123,15 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       contentHash: data.content_hash ?? null,
       etag: data.etag ?? null,
     })
-    // A reload with unsaved edits: put them back on top of the fresh server copy.
+    // #23: edits set aside when this doc turned view-only (kept across reloads).
+    doc.localCopy.value = loadLocalCopy(data.id || shareId)
+    // A reload with unsaved edits: put them back on top of the fresh server copy —
+    // unless this browser cannot edit the doc: then they become the local copy and
+    // the screen shows the server version (#23).
     const draft = takeRestoredDraft(shareId)
-    if (draft && !draft.clean && draft.markdown !== data.markdown && !doc.embed.value) {
+    if (draft && !draft.clean && draft.markdown !== data.markdown && !doc.embed.value && doc.capability.value !== 'editor') {
+      doc.setLocalCopy(draft.markdown, draft.filename || data.filename)
+    } else if (draft && !draft.clean && draft.markdown !== data.markdown && !doc.embed.value) {
       sync.restoreDraft(draft.markdown, draft.baseMarkdown)
       doc.notice.value = sync.conflict.value
         ? 'Restored your unsaved edits, but the server copy changed in the meantime — choose a version below.'

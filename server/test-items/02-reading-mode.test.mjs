@@ -20,6 +20,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { createHandlers } from '../mcp-server.js'
+import { installFetchJar } from './lib/edit-token-jar.mjs'
+installFetchJar() // #23: this suite's own docs keep being writable (it is not about edit tokens)
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SERVER_DIR = join(HERE, '..')

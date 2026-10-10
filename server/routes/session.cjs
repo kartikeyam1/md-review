@@ -7,6 +7,8 @@ const {
 } = require('../storage.cjs');
 const { handedOutUrl } = require('../links.cjs');
 const { readMode, modeOf } = require('../mode.cjs');
+const { requireEdit, accessInfo } = require('./edit-tokens.cjs');
+const { normalizeExpiryDays, expiresAtFor } = require('../../shared/expiry.mjs');
 
 module.exports = async function session(req, res) {
   // DELETE /paste/:id — delete a session and all its data
@@ -16,6 +18,7 @@ module.exports = async function session(req, res) {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const meta = loadMeta(pasteId);
     if (!meta) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    if (!requireEdit(req, res, pasteId)) return;
     // Rows (content, history, comments, file metadata), search row, slug, then files/<id>/
     deleteSession(pasteId, meta);
     res.writeHead(204);
@@ -31,6 +34,7 @@ module.exports = async function session(req, res) {
     if (parsed === undefined) return;
     const meta = loadMeta(pasteId);
     if (!meta) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+    if (!requireEdit(req, res, pasteId)) return; // #23: every meta change (incl. mode, expiry) is a protected write
     const m = readMode(parsed);
     if (m.error) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -41,14 +45,12 @@ module.exports = async function session(req, res) {
     if (parsed.sessionName !== undefined) meta.sessionName = parsed.sessionName;
     if (parsed.filename !== undefined) meta.filename = parsed.filename;
 
-    // Update expiry
+    // Update expiry (#23 rule 8): 1/7/30/90 days from now, null = never, anything else → 30
+    let expiryDays;
     if (parsed.expiry_days !== undefined) {
-      if (parsed.expiry_days === null) {
-        delete meta.expires_at;
-      } else {
-        const days = [7, 30, 90].includes(parsed.expiry_days) ? parsed.expiry_days : 30;
-        meta.expires_at = new Date(Date.now() + days * 86400000).toISOString();
-      }
+      expiryDays = normalizeExpiryDays(parsed.expiry_days);
+      if (expiryDays === null) delete meta.expires_at;
+      else meta.expires_at = expiresAtFor(expiryDays);
     }
 
     // Update slug (the old one is released first, so it may be chosen again)
@@ -71,6 +73,7 @@ module.exports = async function session(req, res) {
       slug: meta.slug || null,
       expires_at: meta.expires_at || null,
       mode: modeOf(meta),
+      ...(expiryDays !== undefined ? { expiry_days: expiryDays } : {}),
     }));
   }
 
@@ -94,12 +97,15 @@ module.exports = async function session(req, res) {
       return res.end(JSON.stringify({ error: 'Session expired' }));
     }
 
-    // ETag from the session's write version + content hash
-    const etag = sessionEtag(resolvedId);
+    // ETag from the session's write version + content hash, and (#23) the caller's access
+    const access = accessInfo(req, resolvedId);
+    const etag = sessionEtag(resolvedId, access.protected ? (access.can_edit ? 'edit' : 'view') : '');
 
+    // The body (access.can_edit) and the ETag depend on the presented token (#23).
+    const VARY = 'Authorization, X-Edit-Token';
     const ifNoneMatch = req.headers['if-none-match'];
     if (ifNoneMatch && ifNoneMatch === etag) {
-      res.writeHead(304, { ETag: etag });
+      res.writeHead(304, { ETag: etag, Vary: VARY });
       return res.end();
     }
 
@@ -119,7 +125,7 @@ module.exports = async function session(req, res) {
       result = {};
       if (wanted.has('meta')) {
         const { comments, content_hash, revisions, ...rest } = meta;
-        Object.assign(result, rest, revisionSummary(resolvedId), { url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta) });
+        Object.assign(result, rest, revisionSummary(resolvedId), { url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta), id: resolvedId, access });
       }
       if (wanted.has('content')) {
         result.markdown = loadContent(resolvedId) || '';
@@ -134,12 +140,12 @@ module.exports = async function session(req, res) {
       // Full response (backward compatible) — includes file list if any
       const markdown = loadContent(resolvedId) || '';
       const { revisions, ...metaRest } = meta;
-      result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta) };
+      result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta), id: resolvedId, access };
       const sessionFiles = listSessionFiles(resolvedId);
       if (sessionFiles.length > 0) result.files = sessionFiles;
     }
 
-    res.writeHead(200, { 'Content-Type': 'application/json', ETag: etag });
+    res.writeHead(200, { 'Content-Type': 'application/json', ETag: etag, Vary: VARY });
     res.end(JSON.stringify(result));
     return;
   }

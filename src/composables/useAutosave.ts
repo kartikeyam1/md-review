@@ -16,21 +16,24 @@ export function useAutosave(opts: {
   markdown: Ref<string>
   filename: Ref<string>
   paneMode: Ref<PaneMode>
+  /** #23: false for a viewer — no autosave, no keepalive write, no leave prompt. */
+  canWrite?: () => boolean
 }) {
   const { sync, markdown, filename, paneMode } = opts
+  const canWrite = () => opts.canWrite?.() ?? true
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 
   function scheduleAutosave() {
     if (autosaveTimer) clearTimeout(autosaveTimer)
     autosaveTimer = setTimeout(() => {
       autosaveTimer = null
-      if (sync.isShared.value && sync.isDirty.value) sync.saveMarkdown()
+      if (sync.isShared.value && sync.isDirty.value && canWrite()) sync.saveMarkdown()
     }, AUTOSAVE_IDLE_MS)
   }
 
   function flushAutosave(o: { keepalive?: boolean } = {}): Promise<boolean> {
     if (autosaveTimer) { clearTimeout(autosaveTimer); autosaveTimer = null }
-    if (!sync.isShared.value) return Promise.resolve(false)
+    if (!sync.isShared.value || !canWrite()) return Promise.resolve(false)
     return sync.saveMarkdown(o)
   }
 
@@ -45,13 +48,13 @@ export function useAutosave(opts: {
 
   /** Ask before an action that would throw away unsaved edits to a shared document. */
   function confirmDiscardIfDirty(): boolean {
-    if (!sync.isShared.value || !(sync.isDirty.value || sync.conflict.value)) return true
+    if (!sync.isShared.value || !canWrite() || !(sync.isDirty.value || sync.conflict.value)) return true
     return window.confirm('You have unsaved changes to this shared document. Discard them?')
   }
 
   // Leaving the page: warn about unsaved edits, and push them out (keepalive).
   function onBeforeUnload(e: BeforeUnloadEvent) {
-    if (!sync.isShared.value) return
+    if (!sync.isShared.value || !canWrite()) return
     if (sync.isDirty.value || sync.conflict.value || sync.saveState.value === 'saving') {
       e.preventDefault()
       e.returnValue = ''
@@ -59,7 +62,7 @@ export function useAutosave(opts: {
   }
 
   function onPageHide() {
-    if (sync.isShared.value && sync.isDirty.value && !sync.conflict.value) flushAutosave({ keepalive: true })
+    if (sync.isShared.value && sync.isDirty.value && !sync.conflict.value && canWrite()) flushAutosave({ keepalive: true })
   }
 
   function onVisibilityChange() {

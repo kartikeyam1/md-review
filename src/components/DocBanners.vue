@@ -5,6 +5,7 @@ import { toast } from '@/composables/useToast'
 import ApprovalBanner from '@/components/ApprovalBanner.vue'
 import SummaryPanel from '@/components/SummaryPanel.vue'
 import ChangesBanner from '@/components/ChangesBanner.vue'
+import LocalCopyBanner from '@/components/LocalCopyBanner.vue'
 
 // The below-header stack (00 §2.4), top → bottom. doc-meta-row (1) lives in
 // DocHeader. Later items add one line each in their slot:
@@ -74,6 +75,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
       <button class="btn btn-primary btn-sm" title="Overwrite the server copy with your edits" @click="sync.overwriteRemote()">Keep my version</button>
     </span>
   </div>
+  <LocalCopyBanner />
   <div v-if="onScreen && persistError" class="notice-bar warn" role="status" data-testid="persist-error">
     <span>{{ persistError }}</span>
   </div>

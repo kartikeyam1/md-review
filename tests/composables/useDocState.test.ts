@@ -29,3 +29,20 @@ describe('resolveDocAxes (00 §1)', () => {
     expect(resolveDocAxes({ ...base, routeKind: 'pinned', paneMode: 'edit' }).view).toBe('read')
   })
 })
+
+describe('resolveDocAxes — edit access (#23)', () => {
+  const base = { routeKind: 'doc' as const, embed: false, paneMode: 'edit' as const, pasteId: 'abc', mode: 'publish' as const }
+
+  it('a protected shared doc without edit access is a viewer, read view', () => {
+    expect(resolveDocAxes({ ...base, canEdit: false })).toMatchObject({ capability: 'viewer', view: 'read' })
+  })
+
+  it('edit access (or unknown access) keeps the editor', () => {
+    expect(resolveDocAxes({ ...base, canEdit: true }).capability).toBe('editor')
+    expect(resolveDocAxes(base).capability).toBe('editor')
+  })
+
+  it('a local doc is always editable', () => {
+    expect(resolveDocAxes({ ...base, pasteId: null, canEdit: false }).capability).toBe('editor')
+  })
+})

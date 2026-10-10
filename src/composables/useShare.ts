@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import type { Comment, Reply, ApprovalInfo, ContentType, DocMode } from '@/types'
 import type { TextDelta } from '@/composables/useDelta'
 import { docShareUrl, encodeFilePath } from '@/composables/useRouter'
+import { editHeaders, settleAccess, checkWriteStatus, saveToken, type DocAccess } from '@/composables/useEditToken'
 
 const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 /** Identifies content writes from the browser UI in the revision history. */
@@ -47,6 +48,12 @@ export interface SharedPayload {
   content_hash?: string
   /** ETag of the GET that produced this payload (attached client-side). */
   etag?: string | null
+  /** The session id (#23; additive, absent on older servers). */
+  id?: string
+  /** Edit access for this browser (#23 rule 6; absent on older servers). */
+  access?: DocAccess
+  /** ISO expiry, absent/null = never (#23 expiry picker). */
+  expires_at?: string | null
 }
 
 export interface PutMarkdownResult {
@@ -88,7 +95,7 @@ export function useShare() {
   const sharing = ref(false)
   const shareError = ref<string | null>(null)
 
-  /** Returns the new session's id and slug (null when the server assigned none). */
+  /** Returns the new session's id and slug (null when the server assigned none). The edit token (#23) is stored. */
   async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string, mode?: DocMode): Promise<{ id: string; slug: string | null } | null> {
     sharing.value = true
     shareError.value = null
@@ -116,7 +123,8 @@ export function useShare() {
         return null
       }
 
-      const { id, slug } = await res.json() as { id: string; slug?: string | null }
+      const { id, slug, editToken } = await res.json() as { id: string; slug?: string | null; editToken?: string }
+      if (editToken) saveToken(id, editToken, slug)
       return { id, slug: slug || null }
     } catch (e) {
       shareError.value = 'Could not reach paste service. Are you on VPN?'
@@ -138,10 +146,11 @@ export function useShare() {
 
   async function loadShareDetailed(id: string): Promise<{ data: SharedPayload | null; status: number }> {
     try {
-      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}`)
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}`, { headers: editHeaders(id) })
       if (!res.ok) return { data: null, status: res.status }
       const data = await res.json() as SharedPayload
       data.etag = res.headers.get('etag')
+      settleAccess(id, data)
       return { data, status: res.status }
     } catch {
       return { data: null, status: 0 }
@@ -272,12 +281,13 @@ export function useShare() {
       if (filename) body.filename = filename
       if (opts.author) body.author = opts.author
       const payload = JSON.stringify(body)
-      const headers: Record<string, string> = { 'Content-Type': 'application/json', ...CLIENT_HEADER }
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', ...CLIENT_HEADER, ...editHeaders(pasteId) }
       if (opts.ifMatch) headers['If-Match'] = opts.ifMatch
       const init: RequestInit = { method: 'PUT', headers, body: payload }
       if (opts.keepalive && payload.length <= KEEPALIVE_MAX_BYTES) init.keepalive = true
 
       const res = await fetch(`${PASTE_API}/paste/${pasteId}/markdown`, init)
+      checkWriteStatus(pasteId, res.status)
       if (res.status === 412) {
         const remote = await res.json().catch(() => ({})) as { markdown?: string; filename?: string; content_hash?: string }
         return {
@@ -313,15 +323,42 @@ export function useShare() {
   }
 
   /** PUT /paste/:id/meta — true on 2xx. */
-  async function putMeta(pasteId: string, updates: { mode?: DocMode; sessionName?: string }): Promise<boolean> {
+  async function putMeta(pasteId: string, updates: { mode?: DocMode; sessionName?: string; expiry_days?: number | null }): Promise<boolean> {
+    return (await putMetaDetailed(pasteId, updates)) !== null
+  }
+
+  /** PUT /paste/:id/meta — the response body on 2xx, else null. */
+  async function putMetaDetailed(pasteId: string, updates: { mode?: DocMode; sessionName?: string; expiry_days?: number | null }): Promise<{ expires_at?: string | null; expiry_days?: number | null } | null> {
     try {
       const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/meta`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...editHeaders(pasteId) },
         body: JSON.stringify(updates),
       })
-      return res.ok
-    } catch { return false }
+      checkWriteStatus(pasteId, res.status)
+      if (!res.ok) return null
+      return await res.json().catch(() => ({}))
+    } catch { return null }
+  }
+
+  /**
+   * POST /paste/:id/edit-token (#23 rule 7): rotate (with the token we hold) or
+   * claim a legacy doc ("Make view-only"). The new token is stored.
+   */
+  async function claimEditToken(pasteId: string, docId?: string | null, slug?: string | null): Promise<string | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/edit-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...editHeaders(pasteId) },
+        body: '{}',
+      })
+      checkWriteStatus(pasteId, res.status)
+      if (!res.ok) return null
+      const { editToken } = await res.json() as { editToken?: string }
+      if (!editToken) return null
+      saveToken(docId || pasteId, editToken, slug)
+      return editToken
+    } catch { return null }
   }
 
   /** Comments of a session without loading the document (pinned revisions). */
@@ -385,7 +422,7 @@ export function useShare() {
     data: SharedPayload | null; etag: string | null; notModified: boolean; status: number
   }> {
     try {
-      const headers: Record<string, string> = {}
+      const headers: Record<string, string> = { ...editHeaders(pasteId) }
       if (etag) headers['If-None-Match'] = etag
       const res = await fetch(`${PASTE_API}/paste/${pasteId}`, { headers })
       if (res.status === 304) return { data: null, etag, notModified: true, status: 304 }
@@ -393,6 +430,7 @@ export function useShare() {
       const newEtag = res.headers.get('etag')
       const data = await res.json() as SharedPayload
       data.etag = newEtag
+      settleAccess(pasteId, data)
       return { data, etag: newEtag, notModified: false, status: res.status }
     } catch { return { data: null, etag: null, notModified: false, status: 0 } }
   }
@@ -405,6 +443,6 @@ export function useShare() {
     putMarkdown, pollPaste,
     getRevisions, getRevision,
     getApproval, putApproval, resolveCommentApi, unresolveCommentApi,
-    putMeta, getComments,
+    putMeta, putMetaDetailed, claimEditToken, getComments,
   }
 }

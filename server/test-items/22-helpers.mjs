@@ -25,6 +25,7 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { withToken, learn } from './lib/edit-token-jar.mjs';
 
 export const SERVER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const REPO_ROOT = path.resolve(SERVER_DIR, '..');
@@ -144,7 +145,9 @@ export async function sharedBackend() {
  */
 export function request(base, method, rawPath, { headers = {}, body } = {}) {
   const u = new URL(base);
-  const h = { ...headers };
+  const pathname = rawPath.split('?')[0];
+  // #23: present the doc's edit token (from the jar) on writes to docs this suite created.
+  const h = withToken(method, pathname, { ...headers });
   let payload;
   if (body !== undefined) {
     payload = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body), 'utf-8');
@@ -160,6 +163,7 @@ export function request(base, method, rawPath, { headers = {}, body } = {}) {
         const text = buf.toString('utf-8');
         let json;
         try { json = JSON.parse(text); } catch { json = undefined; }
+        learn(method, pathname, res.statusCode, json);
         resolve({ status: res.statusCode, headers: res.headers, buf, text, json });
       });
       res.on('error', reject);

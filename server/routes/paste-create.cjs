@@ -6,7 +6,9 @@ const {
   generateSlug, uniqueSlug, savePaste,
 } = require('../storage.cjs');
 const { readMode, defaultMode } = require('../mode.cjs');
-const { handedOutUrl } = require('../links.cjs');
+const { handedOutUrl, appUrl } = require('../links.cjs');
+const { newToken, hashToken, editUrlFor } = require('./edit-tokens.cjs');
+const { normalizeExpiryDays, expiresAtFor } = require('../../shared/expiry.mjs');
 
 module.exports = async function pasteCreate(req, res) {
   // POST /paste — create
@@ -35,15 +37,10 @@ module.exports = async function pasteCreate(req, res) {
     if (!parsed.approval_status) parsed.approval_status = 'pending';
     if (!parsed.sharedAt) parsed.sharedAt = new Date().toISOString();
 
-    // Session expiry: default 30 days, configurable via expiry_days (7, 30, or null for infinite)
-    if (parsed.expiry_days !== null && parsed.expiry_days !== undefined) {
-      const days = [7, 30].includes(parsed.expiry_days) ? parsed.expiry_days : 30;
-      parsed.expires_at = new Date(Date.now() + days * 86400000).toISOString();
-    } else if (parsed.expiry_days === null) {
-      // Explicitly infinite — no expiry
-    } else {
-      parsed.expires_at = new Date(Date.now() + 30 * 86400000).toISOString();
-    }
+    // Session expiry (#23 rule 8): 1/7/30/90 days; absent or any other number → 30 days;
+    // null = never (a client-given expires_at is then kept, as before).
+    const days = parsed.expiry_days === undefined ? 30 : normalizeExpiryDays(parsed.expiry_days);
+    if (days !== null) parsed.expires_at = expiresAtFor(days);
 
     const id = crypto.randomBytes(6).toString('hex');
 
@@ -67,12 +64,19 @@ module.exports = async function pasteCreate(req, res) {
     // `author` names who created the document (first revision); not stored as metadata.
     const createdBy = typeof parsed.author === 'string' ? parsed.author : null;
     delete parsed.author;
-    savePaste(id, parsed, { by: createdBy, client: clientOf(req) }, { claimSlugs: slug ? [slug] : [], createdBy });
+    // #23 rule 1: a fresh edit token; only its hash is stored, the raw token is returned once.
+    const editToken = newToken();
+    savePaste(id, parsed, { by: createdBy, client: clientOf(req) }, { claimSlugs: slug ? [slug] : [], createdBy, editTokenHash: hashToken(editToken) });
     const result = { id };
     if (slug) result.slug = slug;
     result.url = handedOutUrl(slug || id); // #22 rule 1 / 00 §6
     result.mode = parsed.mode;
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    result.editToken = editToken;
+    result.viewUrl = result.url;
+    result.app_url = appUrl(slug || id);
+    result.editUrl = editUrlFor(slug || id, editToken);
+    // The body carries the raw edit token: never cache it (#23).
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify(result));
   }
 

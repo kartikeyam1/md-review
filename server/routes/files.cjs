@@ -6,6 +6,7 @@ const { NEXT, readBody } = require('../http-util.cjs');
 const {
   resolveId, sessionExists, listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile,
 } = require('../storage.cjs');
+const { requireEdit } = require('./edit-tokens.cjs');
 
 module.exports = async function files(req, res) {
   // ── File collections ──────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ module.exports = async function files(req, res) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Invalid JSON' }));
       }
+      if (!requireEdit(req, res, pasteId)) return;
       if (!parsed.name || !parsed.content) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Missing name or content' }));
@@ -77,6 +79,7 @@ module.exports = async function files(req, res) {
     }
 
     if (req.method === 'DELETE' && fileName) {
+      if (!requireEdit(req, res, pasteId)) return;
       if (deleteSessionFile(pasteId, fileName)) {
         res.writeHead(204);
         return res.end();

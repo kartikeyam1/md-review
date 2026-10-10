@@ -3,12 +3,13 @@ import crypto from 'node:crypto';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createHandlers } from './mcp-server.js';
+import { createHandlers, editTokenArg } from './mcp-server.js';
 import { createSessionRegistry } from './mcp-sessions.js';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
-// Public URL that clients use in shell commands (curl). Falls back to PASTE_API_URL.
-const PASTE_PUBLIC_URL = process.env.PASTE_PUBLIC_URL || 'http://10.0.99.151:3100';
+// Public URL that clients use in shell commands (curl). Falls back to PASTE_API_URL
+// (never a hard-coded host: the commands must reach the configured backend).
+const PASTE_PUBLIC_URL = process.env.PASTE_PUBLIC_URL || PASTE_API_URL;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/md-review';
 // The backend's public origin (#22): when set, share links point at its /d/ meta pages.
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
@@ -34,7 +35,7 @@ function registerTools(server, handlers) {
       sessionName: z.string().optional().describe('Custom human-readable name for the session'),
       callbackUrl: z.string().optional().describe('Webhook URL to POST approval status changes to'),
       slug: z.string().optional().describe('Custom URL-safe slug (auto-generated from sessionName if omitted)'),
-      expiryDays: z.number().nullable().optional().describe('Session expiry in days (7, 30, or null for infinite). Default: 30'),
+      expiryDays: z.number().nullable().optional().describe('Session expiry in days (1, 7, 30, 90, or null for never). Default: 30'),
       mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans (default); review = comments and approval.'),
     }).refine(data => data.markdown || data.filePath, {
       message: 'Either markdown or filePath must be provided',
@@ -49,6 +50,7 @@ function registerTools(server, handlers) {
     description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions.",
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
+      editToken: editTokenArg(),
       fields: z.string().optional().describe('Comma-separated fields to load: meta,content,comments,files. Omit for full response.'),
     }),
   }, async (args) => {
@@ -157,6 +159,7 @@ function registerTools(server, handlers) {
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
+      editToken: editTokenArg(),
       markdown: z.string().optional().describe('New markdown content (provide this OR filePath OR patch)'),
       filePath: z.string().optional().describe('Absolute path to a markdown file to read (provide this OR markdown OR patch)'),
       patch: z.string().optional().describe('Unified diff to apply as a delta update (provide this OR markdown OR filePath)'),
@@ -249,6 +252,7 @@ function registerTools(server, handlers) {
     description: 'Permanently delete a review session and all its files.',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID or slug'),
+      editToken: editTokenArg(),
     }),
   }, async (args) => {
     const result = await handlers.delete_session(args);
@@ -260,9 +264,10 @@ function registerTools(server, handlers) {
     description: 'Update session name, slug, expiry or doc mode (publish|review).',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID or slug'),
+      editToken: editTokenArg(),
       sessionName: z.string().optional().describe('New session name'),
       slug: z.string().optional().describe('New URL slug'),
-      expiryDays: z.number().nullable().optional().describe('New expiry in days (7, 30, 90, or null for infinite)'),
+      expiryDays: z.number().nullable().optional().describe('New expiry in days (1, 7, 30, 90, or null for never), counted from now'),
       mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans; review = comments and approval.'),
     }),
   }, async (args) => {
@@ -278,6 +283,7 @@ function registerTools(server, handlers) {
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
+      editToken: editTokenArg(),
       patch: z.string().describe('Unified diff format patch to apply'),
       expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
       filename: z.string().optional().describe('New filename (preserved if omitted)'),
@@ -292,6 +298,7 @@ function registerTools(server, handlers) {
     description: 'Add a file to the session file collection. Read the file yourself and pass content — filePath is not available over HTTP.',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
+      editToken: editTokenArg(),
       name: z.string().describe('File name/path within the collection (e.g. "src/main.ts")'),
       content: z.string().describe('File content (text or base64-encoded)'),
       encoding: z.enum(['utf-8', 'base64']).optional().describe('"utf-8" for text, "base64" for binary. Default: utf-8'),
@@ -317,6 +324,7 @@ function registerTools(server, handlers) {
     description: 'Remove a file from the session file collection.',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
+      editToken: editTokenArg(),
       name: z.string().describe('File name/path to remove'),
     }),
   }, async (args) => {
@@ -345,7 +353,7 @@ function registerTools(server, handlers) {
       filePath: z.string().describe('Absolute path to the file on your machine (Markdown or HTML)'),
       sessionName: z.string().optional().describe('Human-readable session name'),
       slug: z.string().optional().describe('Custom URL slug'),
-      expiryDays: z.number().nullable().optional().describe('Expiry in days (7, 30, or null for infinite)'),
+      expiryDays: z.number().nullable().optional().describe('Expiry in days (1, 7, 30, 90, or null for never)'),
       callbackUrl: z.string().optional().describe('Webhook URL for approval changes'),
       contentType: z.enum(['markdown', 'html']).optional().describe('Force document type. Omit to auto-detect from the file extension.'),
       mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans (default); review = comments and approval.'),
@@ -360,6 +368,7 @@ function registerTools(server, handlers) {
     description: 'Returns a shell command that uploads a local file to an existing session. Content streams directly — never enters this conversation.',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
+      editToken: editTokenArg(),
       filePath: z.string().describe('Absolute path to the file'),
       filename: z.string().optional().describe('Override display filename'),
     }),
@@ -373,6 +382,7 @@ function registerTools(server, handlers) {
     description: 'Returns a shell command that adds a local file to a session file collection. Streams directly — never enters conversation.',
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
+      editToken: editTokenArg(),
       filePath: z.string().describe('Absolute path to the file'),
       encoding: z.enum(['utf-8', 'base64']).optional().describe('"utf-8" for text (default), "base64" for binary'),
     }),

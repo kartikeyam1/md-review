@@ -5,6 +5,7 @@ const {
   resolveId, currentContentHash, contentHashMismatch, loadPaste, savePaste,
 } = require('../storage.cjs');
 const { PatchError, applyPatch } = require('../patch.cjs');
+const { requireEdit } = require('./edit-tokens.cjs');
 
 module.exports = async function markdown(req, res) {
   // PUT /paste/:id/markdown — update markdown (full replace or patch)
@@ -19,6 +20,7 @@ module.exports = async function markdown(req, res) {
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     const parsed = await readJsonBody(req, res);
     if (parsed === undefined) return;
+    if (!requireEdit(req, res, pasteId)) return; // #23: 404 → 413/400 → token → validation
     if (parsed.patch === undefined && parsed.markdown === undefined && parsed.delta === undefined && parsed.filename === undefined) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Provide markdown, patch, delta, or filename' }));

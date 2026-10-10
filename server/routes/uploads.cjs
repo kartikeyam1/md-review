@@ -7,6 +7,12 @@ const { NEXT, readBody, clientOf } = require('../http-util.cjs');
 const {
   resolveId, sessionExists, loadPaste, savePaste, saveSessionFile, chunkDir, saveChunk, assembleChunks,
 } = require('../storage.cjs');
+const { requireEdit } = require('./edit-tokens.cjs');
+
+/** The staged upload's _meta.json (null when unreadable). */
+function readUploadMeta(uploadId) {
+  try { return JSON.parse(fs.readFileSync(path.join(chunkDir(uploadId), '_meta.json'), 'utf-8')); } catch { return null; }
+}
 
 module.exports = async function uploads(req, res) {
   // ── Chunked uploads ──────────────────────────────────────────────────────
@@ -26,6 +32,7 @@ module.exports = async function uploads(req, res) {
     }
     let parsed = {};
     try { parsed = JSON.parse(rawBody); } catch {}
+    if (!requireEdit(req, res, pasteId)) return;
     const uploadId = crypto.randomBytes(8).toString('hex');
     const uploadMeta = { pasteId, totalChunks: parsed.totalChunks || null, filename: parsed.filename || null, target: parsed.target || 'markdown', author: typeof parsed.author === 'string' ? parsed.author : null, client: clientOf(req) };
     fs.mkdirSync(chunkDir(uploadId), { recursive: true });
@@ -37,6 +44,8 @@ module.exports = async function uploads(req, res) {
   // POST /paste/:id/upload/chunk — send a chunk
   const uploadChunkMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/upload\/chunk$/);
   if (req.method === 'POST' && uploadChunkMatch) {
+    const pasteId = resolveId(uploadChunkMatch[1]);
+    if (!pasteId || !sessionExists(pasteId)) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
     let rawBody;
     try { rawBody = await readBody(req); } catch {
       res.writeHead(413, { 'Content-Type': 'application/json' });
@@ -47,12 +56,14 @@ module.exports = async function uploads(req, res) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Invalid JSON' }));
     }
+    if (!requireEdit(req, res, pasteId)) return;
     const { uploadId, index, data } = parsed;
     if (!uploadId || index === undefined || !data) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Missing uploadId, index, or data' }));
     }
-    if (!fs.existsSync(chunkDir(uploadId))) {
+    // #23: an upload belongs to the doc it was started on (so a token check on one doc cannot be bypassed via another)
+    if (!/^[a-f0-9]+$/.test(String(uploadId)) || !fs.existsSync(chunkDir(uploadId)) || readUploadMeta(uploadId)?.pasteId !== pasteId) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Upload not found' }));
     }
@@ -73,14 +84,14 @@ module.exports = async function uploads(req, res) {
     }
     let parsed = {};
     try { parsed = JSON.parse(rawBody); } catch {}
+    if (!requireEdit(req, res, pasteId)) return;
     const { uploadId } = parsed;
-    if (!uploadId || !fs.existsSync(chunkDir(uploadId))) {
+    if (!uploadId || !/^[a-f0-9]+$/.test(String(uploadId)) || !fs.existsSync(chunkDir(uploadId)) || readUploadMeta(uploadId)?.pasteId !== pasteId) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Upload not found' }));
     }
     // Read upload metadata
-    let uploadMeta = {};
-    try { uploadMeta = JSON.parse(fs.readFileSync(path.join(chunkDir(uploadId), '_meta.json'), 'utf-8')); } catch {}
+    const uploadMeta = readUploadMeta(uploadId) || {};
 
     const assembled = assembleChunks(uploadId);
     if (assembled === null) {

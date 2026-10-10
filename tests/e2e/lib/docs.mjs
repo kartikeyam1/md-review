@@ -5,9 +5,10 @@
 //            waitForDoc, readingOffset, collectShareUrls } from '../lib/docs.mjs'
 //
 // Backend (the throwaway API from helpers.mjs, never :3100):
-//   createDoc({ markdown, filename?, sessionName?, slug?, author?, contentType?, mode? })
-//       -> { id, slug }   (slug is null when the server assigned none)
-//   putMarkdown(idOrSlug, markdown, { author? })  -> { content_hash, ... }
+//   createDoc({ markdown, filename?, sessionName?, slug?, author?, contentType?, mode?, protected? })
+//       -> { id, slug }   (slug is null when the server assigned none). A link-editable
+//          (legacy, pre-#23) doc by default; protected: true → { id, slug, editToken }.
+//   putMarkdown(idOrSlug, markdown, { author?, editToken? })  -> { content_hash, ... }
 //   listRevisions(idOrSlug)                       -> { current, revisions: [...] }
 //   uniq(prefix)                                  -> `${prefix}-<random>` (slug-safe)
 //
@@ -36,6 +37,7 @@
 //     header button) and returns every http(s) URL it put on the clipboard or
 //     on screen.
 
+import { asLegacyDoc } from './legacy-docs.mjs'
 import { API } from '../helpers.mjs'
 
 export const uniq = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 8)}`
@@ -46,7 +48,7 @@ async function json(res, what) {
   return body ? JSON.parse(body) : null
 }
 
-export async function createDoc({ markdown, filename = 'doc.md', sessionName, slug, author, contentType, mode } = {}) {
+export async function createDoc({ markdown, filename = 'doc.md', sessionName, slug, author, contentType, mode, protected: isProtected = false } = {}) {
   const payload = { markdown, filename, sharedAt: new Date().toISOString(), comments: [] }
   if (sessionName !== undefined) payload.sessionName = sessionName
   if (slug !== undefined) payload.slug = slug
@@ -58,13 +60,18 @@ export async function createDoc({ markdown, filename = 'doc.md', sessionName, sl
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   }), 'POST /paste')
+  // #23: by default a link-editable (legacy) doc, the premise of the suites written before
+  // edit tokens; { protected: true } keeps the edit token — open it with ?edit=<editToken>
+  // and send it as X-Edit-Token on REST writes.
+  if (isProtected) return { id: data.id, slug: data.slug ?? null, editToken: data.editToken }
+  await asLegacyDoc(data.id)
   return { id: data.id, slug: data.slug ?? null }
 }
 
-export async function putMarkdown(idOrSlug, markdown, { author } = {}) {
+export async function putMarkdown(idOrSlug, markdown, { author, editToken } = {}) {
   return json(await fetch(`${API}/paste/${encodeURIComponent(idOrSlug)}/markdown`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(editToken ? { 'X-Edit-Token': editToken } : {}) },
     body: JSON.stringify(author ? { markdown, author } : { markdown }),
   }), 'PUT /paste/:id/markdown')
 }

@@ -1,5 +1,15 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
+import { useDocState } from '@/composables/useDocState'
+import { tokenFor } from '@/composables/useEditToken'
+import { toast } from '@/composables/useToast'
+import { EXPIRY_DAYS } from '@shared/expiry.mjs'
+
+// Share dialog (#23 rule 10). Links are FE-built (00 §6): the view link is
+// <origin><base>d/<slug||id>; the edit link adds ?edit=<token> and is shown
+// only when this browser holds the token. A legacy (link-editable) doc shows
+// one link and "Make view-only" (claim). Editors pick how long the doc lives.
+// The agent prompt (review mode only) uses the API URLs as before.
 
 const props = defineProps<{
   visible: boolean
@@ -14,7 +24,91 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const doc = useDocState()
+const { docLink, access, docMeta, reviewUI, capability } = doc
+
 const copied = ref<string | null>(null)
+/** The edit token this browser holds for the doc (re-read when the dialog opens and after a claim). */
+const token = ref<string | null>(null)
+const claiming = ref(false)
+const savingExpiry = ref(false)
+
+// Escape closes the dialog.
+function onEscape(e: KeyboardEvent) { if (e.key === 'Escape' && !e.defaultPrevented) emit('close') }
+watch(() => props.visible, (v) => {
+  if (v) document.addEventListener('keydown', onEscape)
+  else document.removeEventListener('keydown', onEscape)
+}, { immediate: true })
+onUnmounted(() => document.removeEventListener('keydown', onEscape))
+
+watch(() => [props.visible, props.pasteId] as const, ([open, id]) => { if (open) token.value = tokenFor(id) }, { immediate: true })
+
+/** Legacy doc: anyone with the link can edit (the server said so, and we hold no token). */
+const legacy = computed(() => !token.value && access.value?.protected === false)
+const viewUrl = computed(() => docLink.value ?? props.urls?.ui ?? '')
+const editUrl = computed(() => (token.value && viewUrl.value ? `${viewUrl.value}?edit=${token.value}` : null))
+const editor = computed(() => capability.value === 'editor')
+
+// ── Expiry picker ───────────────────────────────────────────────────────────
+const NEVER = 'never'
+const EXPIRY_OPTIONS = [
+  ...EXPIRY_DAYS.map((d) => ({ value: String(d), label: d === 1 ? '1 day' : `${d} days` })),
+  { value: NEVER, label: 'Never' },
+]
+const expiresAt = computed(() => docMeta.value.expiresAt ?? null)
+/** The last value this dialog applied (the server keeps only expires_at). */
+const appliedDays = ref<string | null>(null)
+watch(() => props.pasteId, () => { appliedDays.value = null })
+/**
+ * The option to preselect: what was last applied here, else Never for a doc
+ * without expiry, else the smallest option covering the time left.
+ */
+const expiryValue = computed(() => {
+  if (appliedDays.value) return appliedDays.value
+  if (!expiresAt.value) return NEVER
+  const left = (Date.parse(expiresAt.value) - Date.now()) / 86400000
+  return String(EXPIRY_DAYS.find((d) => d >= left - 1 / 24) ?? EXPIRY_DAYS[EXPIRY_DAYS.length - 1])
+})
+const expiryLabel = computed(() => {
+  if (!expiresAt.value) return 'Never expires'
+  const d = new Date(expiresAt.value)
+  return `Expires ${d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`
+})
+
+async function onExpiryChange(e: Event) {
+  const id = props.pasteId
+  if (!id) return
+  const value = (e.target as HTMLSelectElement).value
+  const previous = expiryValue.value
+  appliedDays.value = value
+  savingExpiry.value = true
+  const res = await doc.share.putMetaDetailed(id, { expiry_days: value === NEVER ? null : Number(value) })
+  savingExpiry.value = false
+  if (props.pasteId !== id) return
+  if (res) {
+    docMeta.value = { ...docMeta.value, expiresAt: res.expires_at ?? null }
+  } else {
+    appliedDays.value = previous
+    ;(e.target as HTMLSelectElement).value = previous
+    if (capability.value === 'editor') toast.error("Couldn't change the expiry. Check your connection and try again.")
+  }
+}
+
+// ── Make view-only (claim a legacy doc) ─────────────────────────────────────
+async function makeViewOnly() {
+  const id = props.pasteId
+  if (!id || claiming.value) return
+  claiming.value = true
+  const t = await doc.share.claimEditToken(id, null, docMeta.value.slug)
+  claiming.value = false
+  if (props.pasteId !== id) return
+  if (t) {
+    token.value = t
+    access.value = { protected: true, can_edit: true }
+  } else {
+    toast.error("Couldn't make this document view-only. Try again.")
+  }
+}
 
 const sharePrompt = computed(() => {
   if (!props.urls) return ''
@@ -43,17 +137,42 @@ async function copyText(text: string, label: string) {
 
 <template>
   <div v-if="visible" class="modal-overlay" @click.self="emit('close')">
-    <div class="modal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" data-testid="share-dialog">
       <div class="modal-header">
-        <h2 class="modal-title">Shared</h2>
-        <button class="modal-close" @click="emit('close')">&times;</button>
+        <h2 id="share-dialog-title" class="modal-title">Share</h2>
+        <button class="modal-close" aria-label="Close" @click="emit('close')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="url-row">
-          <label class="url-label">Share link</label>
+          <label class="url-label">{{ legacy ? 'Link' : 'View link' }}</label>
+          <p v-if="legacy" class="url-hint warn">Anyone with this link can edit</p>
+          <p v-else class="url-hint">Read-only: people with this link can read{{ reviewUI ? ' and comment' : '' }}</p>
           <div class="url-value">
-            <code>{{ urls?.ui }}</code>
-            <button class="btn-copy" @click="copyText(urls?.ui ?? '', 'ui')">{{ copied === 'ui' ? 'Copied!' : 'Copy' }}</button>
+            <code id="share-view-url" data-testid="share-view-url">{{ viewUrl }}</code>
+            <button class="btn-copy" data-testid="share-copy-view" @click="copyText(viewUrl, 'view')">{{ copied === 'view' ? 'Copied!' : 'Copy' }}</button>
+          </div>
+          <div v-if="legacy && editor" class="protect-row">
+            <button class="btn btn-ghost" data-testid="share-protect-btn" :disabled="claiming" @click="makeViewOnly">{{ claiming ? 'Working…' : 'Make view-only' }}</button>
+            <span class="url-hint">Gives you a separate edit link; the link above becomes read-only.</span>
+          </div>
+        </div>
+
+        <div v-if="editUrl" class="url-row">
+          <label class="url-label">Edit link</label>
+          <p class="url-hint warn" data-testid="share-edit-warning">Anyone with this link can edit</p>
+          <div class="url-value">
+            <code id="share-edit-url" data-testid="share-edit-url">{{ editUrl }}</code>
+            <button class="btn-copy" data-testid="share-copy-edit" @click="copyText(editUrl, 'edit')">{{ copied === 'edit' ? 'Copied!' : 'Copy' }}</button>
+          </div>
+        </div>
+
+        <div v-if="editor && pasteId" class="url-row expiry-row">
+          <label class="url-label" for="share-expiry-select">Delete after</label>
+          <div class="url-value">
+            <select id="share-expiry-select" class="expiry-select" data-testid="share-expiry-select" :value="expiryValue" :disabled="savingExpiry" @change="onExpiryChange">
+              <option v-for="o in EXPIRY_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+            <span class="expiry-label" data-testid="share-expiry-label">{{ expiryLabel }}</span>
           </div>
         </div>
 
@@ -64,13 +183,15 @@ async function copyText(text: string, label: string) {
           </div>
         </div>
 
-        <div class="divider"></div>
+        <template v-if="reviewUI">
+          <div class="divider"></div>
 
-        <label class="url-label">Agent prompt</label>
-        <pre class="prompt-text">{{ sharePrompt }}</pre>
-        <div class="prompt-actions">
-          <button class="btn btn-primary" @click="copyText(sharePrompt, 'prompt')">{{ copied === 'prompt' ? 'Copied!' : 'Copy Prompt' }}</button>
-        </div>
+          <label class="url-label">Agent prompt</label>
+          <pre class="prompt-text">{{ sharePrompt }}</pre>
+          <div class="prompt-actions">
+            <button class="btn btn-primary" @click="copyText(sharePrompt, 'prompt')">{{ copied === 'prompt' ? 'Copied!' : 'Copy Prompt' }}</button>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -84,7 +205,7 @@ async function copyText(text: string, label: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 200;
+  z-index: 400;
 }
 
 .modal {
@@ -134,6 +255,44 @@ async function copyText(text: string, label: string) {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.url-row + .url-row {
+  margin-top: 16px;
+}
+
+.url-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.url-hint.warn {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.protect-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.expiry-select {
+  font-family: var(--font-body);
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.expiry-label {
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .url-label {

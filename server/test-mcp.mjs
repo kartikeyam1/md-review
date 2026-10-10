@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createHandlers } from './mcp-server.js';
+import { createTokenStore } from './mcp-token-store.js';
+
+// #23: the handlers keep edit tokens in a persistent store — never the repo's default path here.
+const TOKEN_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'md-review-test-mcp-'));
+process.env.MCP_TOKEN_STORE = path.join(TOKEN_DIR, 'edit-tokens.json');
+test.after(() => fs.rmSync(TOKEN_DIR, { recursive: true, force: true }));
 
 const PASTE_API_URL = 'http://localhost:3100';
 const FRONTEND_URL = 'http://localhost:58747';
@@ -21,7 +30,7 @@ function mockFetch(status, body) {
 }
 
 function makeHandlers(fetchMock) {
-  return createHandlers({ pasteApiUrl: PASTE_API_URL, frontendUrl: FRONTEND_URL, fetchFn: fetchMock });
+  return createHandlers({ pasteApiUrl: PASTE_API_URL, frontendUrl: FRONTEND_URL, fetchFn: fetchMock, tokenStore: createTokenStore(process.env.MCP_TOKEN_STORE) });
 }
 
 // ── create_session ──────────────────────────────────────────────────────────

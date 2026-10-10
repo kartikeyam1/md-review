@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { BASE, API } from '../helpers.mjs'
 import { createDoc, putMarkdown, listRevisions, uniq, waitForDoc } from '../lib/docs.mjs'
+import { asLegacyDoc } from '../lib/legacy-docs.mjs'
 
 const FIXTURE = fileURLToPath(new URL('../fixture.md', import.meta.url))
 const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
@@ -467,6 +468,7 @@ describe('#6 lazy editor — editor behaviour unchanged once mounted', () => {
     })
     assert.ok(res.ok, `POST /paste ${res.status}`)
     const { id } = await res.json()
+    await asLegacyDoc(id) // #23: a link-editable doc, as every doc was before edit tokens
 
     const { context, page } = await open()
     try {

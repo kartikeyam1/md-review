@@ -14,10 +14,15 @@
  *   --name <name>      Session name
  *   --slug <slug>      Custom slug
  *   --filename <name>  Override display filename
- *   --expiry <days>    Expiry in days (7, 30, or "none")
+ *   --expiry <days>    Expiry in days: 1, 7, 30, 90, or "none" (never)
  *   --callback <url>   Webhook URL for approval changes
  *   --encoding <enc>   File encoding: utf-8 (default) or base64
  *   --chunk-size <n>   Chunk size in KB (default: 512)
+ *
+ * Edit tokens (edit-protected docs; upload, add-file, patch):
+ *   MDREVIEW_EDIT_TOKEN  env var holding the doc's edit token (the usual way)
+ *   --token <token>      the same, per call (overrides the env var)
+ *   `create` prints the new doc's editToken and editUrl — keep them to edit it later.
  *
  * Examples:
  *   md-review create ./README.md --name "README review"
@@ -59,13 +64,18 @@ function parseArgs(argv) {
 // ── API helpers ─────────────────────────────────────────────────────────────
 
 async function api(path, opts = {}) {
-  const url = (opts.api || API) + path;
+  const { api: apiUrl, token, headers, ...rest } = opts;
+  const url = (apiUrl || API) + path;
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
+    ...rest,
+    headers: { 'Content-Type': 'application/json', ...(token ? { 'X-Edit-Token': token } : {}), ...(headers || {}) },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
+    if (res.status === 401 || res.status === 403) {
+      // #23: an edit-protected doc refused the write.
+      throw new Error(`API ${res.status}: ${body}\nThis document is edit-protected: pass --token <edit token> (or set MDREVIEW_EDIT_TOKEN).`);
+    }
     throw new Error(`API ${res.status}: ${body}`);
   }
   if (res.status === 204) return {};
@@ -76,6 +86,7 @@ async function chunkedUpload(sessionId, content, opts = {}) {
   const chunkSize = (opts.chunkSize || DEFAULT_CHUNK_KB) * 1024;
   const totalChunks = Math.ceil(content.length / chunkSize);
   const apiUrl = opts.api || API;
+  const token = opts.token || null;
 
   // Start
   const start = await api(`/paste/${sessionId}/upload/start`, {
@@ -86,6 +97,7 @@ async function chunkedUpload(sessionId, content, opts = {}) {
       target: opts.target || 'markdown',
     }),
     api: apiUrl,
+    token,
   });
 
   // Send chunks
@@ -95,6 +107,7 @@ async function chunkedUpload(sessionId, content, opts = {}) {
       method: 'POST',
       body: JSON.stringify({ uploadId: start.uploadId, index: i, data: chunk }),
       api: apiUrl,
+      token,
     });
     if (totalChunks > 1) {
       process.stderr.write(`\r  chunk ${i + 1}/${totalChunks}`);
@@ -107,10 +120,24 @@ async function chunkedUpload(sessionId, content, opts = {}) {
     method: 'POST',
     body: JSON.stringify({ uploadId: start.uploadId }),
     api: apiUrl,
+    token,
   });
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
+
+/** The edit token for a write: --token, else MDREVIEW_EDIT_TOKEN, else none (#23 rule 12). */
+const tokenOf = (flags) => (typeof flags.token === 'string' && flags.token) || process.env.MDREVIEW_EDIT_TOKEN || null;
+
+/** What `create` prints: id, slug, url, size and (#23) the new doc's editToken + editUrl. */
+function createdLine(result, url, size) {
+  const out = { id: result.id, slug: result.slug || null, url, size };
+  if (result.editToken) {
+    out.editToken = result.editToken;
+    out.editUrl = result.editUrl || `${result.app_url || url}?edit=${result.editToken}`;
+  }
+  return JSON.stringify(out);
+}
 
 async function cmdCreate(filePath, flags) {
   const apiUrl = flags.api || API;
@@ -150,12 +177,7 @@ async function cmdCreate(filePath, flags) {
       api: apiUrl,
     });
     const shareId = result.slug || result.id;
-    console.log(JSON.stringify({
-      id: result.id,
-      slug: result.slug || null,
-      url: linkOf(result, shareId),
-      size,
-    }));
+    console.log(createdLine(result, linkOf(result, shareId), size));
     return;
   }
 
@@ -183,16 +205,12 @@ async function cmdCreate(filePath, flags) {
   await chunkedUpload(result.id, fileStr, {
     filename,
     api: apiUrl,
+    token: result.editToken || null,
     chunkSize: flags['chunk-size'] ? parseInt(flags['chunk-size'], 10) : DEFAULT_CHUNK_KB,
   });
 
   const shareId = result.slug || result.id;
-  console.log(JSON.stringify({
-    id: result.id,
-    slug: result.slug || null,
-    url: linkOf(result, shareId),
-    size,
-  }));
+  console.log(createdLine(result, linkOf(result, shareId), size));
 }
 
 async function cmdUpload(sessionId, filePath, flags) {
@@ -208,12 +226,14 @@ async function cmdUpload(sessionId, filePath, flags) {
       method: 'PUT',
       body: JSON.stringify(payload),
       api: apiUrl,
+      token: tokenOf(flags),
     });
   } else {
     process.stderr.write(`  uploading ${(size / 1024).toFixed(0)} KB in chunks...\n`);
     await chunkedUpload(sessionId, content, {
       filename,
       api: apiUrl,
+      token: tokenOf(flags),
       chunkSize: flags['chunk-size'] ? parseInt(flags['chunk-size'], 10) : DEFAULT_CHUNK_KB,
     });
   }
@@ -241,6 +261,7 @@ async function cmdAddFile(sessionId, filePath, flags) {
       method: 'POST',
       body: JSON.stringify({ name, content, encoding }),
       api: apiUrl,
+      token: tokenOf(flags),
     });
     console.log(JSON.stringify(result));
   } else {
@@ -249,6 +270,7 @@ async function cmdAddFile(sessionId, filePath, flags) {
       filename: name,
       target: 'file',
       api: apiUrl,
+      token: tokenOf(flags),
       chunkSize: flags['chunk-size'] ? parseInt(flags['chunk-size'], 10) : DEFAULT_CHUNK_KB,
     });
     console.log(JSON.stringify(result));
@@ -265,6 +287,7 @@ async function cmdPatch(sessionId, patchFile, flags) {
     method: 'PUT',
     body: JSON.stringify(payload),
     api: apiUrl,
+    token: tokenOf(flags),
   });
   console.log(JSON.stringify(result));
 }
@@ -309,10 +332,15 @@ Options:
   --name <name>       Session name
   --slug <slug>       Custom slug
   --filename <name>   Override display filename
-  --expiry <days>     Expiry: 7, 30, or "none"
+  --expiry <days>     Expiry: 1, 7, 30, 90, or "none" (never)
   --encoding <enc>    utf-8 (default) or base64
   --content-type <t>  markdown or html (default: auto-detected from extension)
   --chunk-size <KB>   Chunk size in KB (default: 512)
+
+Edit tokens (edit-protected docs; upload, add-file, patch):
+  MDREVIEW_EDIT_TOKEN   env var holding the doc's edit token (the usual way)
+  --token <token>       the same, per call (overrides MDREVIEW_EDIT_TOKEN)
+  create prints the new doc's editToken + editUrl — keep them to edit it later.
 
 Examples:
   md-review create ./README.md --name "README review"

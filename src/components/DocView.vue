@@ -45,11 +45,13 @@ onMounted(() => setHighlightClearer(() => previewRef.value?.clearSelectionHighli
 // v-show, so read ↔ edit keeps the same editor instance (rule 5) — for the
 // lifetime of the open document only: `docKey` changes with the doc on screen,
 // which drops the slot (and with it any per-doc editor state, e.g. #8 history).
-const editorShown = computed(() => paneMode.value === 'edit' && !readOnly.value && !fileView.value)
+const editorShown = computed(() => paneMode.value === 'edit' && capability.value === 'editor' && !readOnly.value && !fileView.value)
 const docKey = computed(() => `${screenKey.value ?? ''}|${pasteId.value ?? ''}`)
 const editorMounted = ref(false)
 watch(editorShown, (shown) => { if (shown) editorMounted.value = true }, { immediate: true })
 watch(docKey, () => { editorMounted.value = editorShown.value })
+// #23: a viewer never keeps a hidden editor — losing edit access drops the kept slot.
+watch(capability, (c) => { if (c !== 'editor') editorMounted.value = false })
 
 function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null) {
   if (!confirmDiscardIfDirty()) return

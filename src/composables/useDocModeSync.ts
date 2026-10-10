@@ -18,6 +18,8 @@ export interface DocMeta {
   /** Display name for a doc whose meta has no sessionName (pinned revisions). */
   filename?: string | null
   latest: { at: string; by: string | null } | null
+  /** ISO expiry of a shared doc; null = never (#23 expiry picker). */
+  expiresAt?: string | null
 }
 
 export const EMPTY_DOC_META: DocMeta = { sessionName: null, slug: null, sharedAt: null, latest: null }
@@ -48,6 +50,7 @@ export function useDocModeSync(opts: {
       slug: data.slug ?? null,
       sharedAt: data.sharedAt ?? null,
       latest: data.latest_revision ? { at: data.latest_revision.at, by: data.latest_revision.by ?? null } : null,
+      expiresAt: data.expires_at ?? null,
     }
     if (o.initial || (!writing && requestedAt >= settledAt)) setModeBaseline(payloadMode(data.mode))
   }

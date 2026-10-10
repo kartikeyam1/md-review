@@ -16,11 +16,13 @@ import {
 } from './22-helpers.mjs';
 
 const FRONT = 'https://fe.example.com/app';
+// #23: spawned MCP/CLI processes keep their edit-token store where verify.sh puts it, never in the repo.
+const mcpStoreEnv = process.env.MCP_TOKEN_STORE ? { MCP_TOKEN_STORE: process.env.MCP_TOKEN_STORE } : {};
 
 async function mcpCall(env, tool, args) {
   const transport = new StdioClientTransport({
     command: process.execPath, args: [MCP_SERVER_FILE],
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env }, stderr: 'pipe',
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...mcpStoreEnv, ...env }, stderr: 'pipe',
   });
   const client = new Client({ name: 'md-review-test-22-fixes', version: '1.0.0' });
   await client.connect(transport);
@@ -32,7 +34,7 @@ async function mcpCall(env, tool, args) {
 
 function cliCreate(env, args) {
   const r = spawnSync(process.execPath, [path.join(SERVER_DIR, 'cli.mjs'), 'create', ...args], {
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env }, encoding: 'utf-8', timeout: 30000,
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, ...mcpStoreEnv, ...env }, encoding: 'utf-8', timeout: 30000,
   });
   assert.equal(r.status, 0, `cli failed: ${r.stderr}`);
   return JSON.parse(r.stdout.trim().split('\n').pop());

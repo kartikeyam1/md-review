@@ -4,6 +4,7 @@ import { provideDocState } from '@/composables/docState'
 import { useDocLoader } from '@/composables/useDocLoader'
 import { useGlobalShortcuts } from '@/composables/useGlobalShortcuts'
 import { useRouter } from '@/composables/useRouter'
+import { installEditTokenHook } from '@/composables/useEditToken'
 import DocView from '@/components/DocView.vue'
 import DashboardView from '@/components/DashboardView.vue'
 import RouteNotFound from '@/components/RouteNotFound.vue'
@@ -16,6 +17,8 @@ import AppToast from '@/components/AppToast.vue'
 // bootstrap() strips ?edit=, applies the legacy #shared=/#dashboard redirects
 // and canonical rewrites with replaceState — before the first render.
 const router = useRouter()
+// #23: the ?edit= token goes to useEditToken (held until the doc's GET confirms it).
+installEditTokenHook()
 const { redirected: legacyRedirected } = router.bootstrap()
 
 const doc = provideDocState(router)

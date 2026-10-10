@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import type { RevisionEntry, RevisionContent } from '@/composables/useShare'
 import { useRevisions, displayAuthor } from '@/composables/useRevisions'
 import { buildLineDiff, type DiffRow, type DiffStats } from '@/composables/useDiff'
@@ -87,6 +87,14 @@ async function load() {
     loading.value = false
   }
 }
+
+// Escape closes the dialog (the shared modal behaviour, 00 §3).
+function onEscape(e: KeyboardEvent) { if (e.key === 'Escape' && !e.defaultPrevented) emit('close') }
+watch(() => props.visible, (v) => {
+  if (v) document.addEventListener('keydown', onEscape)
+  else document.removeEventListener('keydown', onEscape)
+}, { immediate: true })
+onUnmounted(() => document.removeEventListener('keydown', onEscape))
 
 watch(() => props.visible, (v) => {
   if (!v) return

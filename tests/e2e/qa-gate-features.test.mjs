@@ -2,6 +2,7 @@ import { chromium } from 'playwright'
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { BASE, API } from './helpers.mjs'
+import { asLegacyDoc } from './lib/legacy-docs.mjs'
 
 let browser, context, page
 
@@ -19,6 +20,7 @@ async function createTestSession() {
     }),
   })
   const data = await res.json()
+  await asLegacyDoc(data.id) // #23: a link-editable doc, as every doc was before edit tokens
 
   // Add a must-fix comment
   await fetch(`${API}/paste/${data.id}/comments`, {

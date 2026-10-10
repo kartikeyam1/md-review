@@ -150,10 +150,32 @@ function loadPaste(id) {
   return { ...meta, markdown: loadContent(id) || '' };
 }
 
-/** ETag of the full session (changes on every write: version + content hash). */
-function sessionEtag(id) {
+/**
+ * ETag of the full session (changes on every write: version + content hash).
+ * `variant` (#23) separates responses that differ per caller (access.can_edit).
+ */
+function sessionEtag(id, variant = '') {
   const r = db.prepare('SELECT s.version, c.content_hash FROM sessions s LEFT JOIN contents c ON c.session_id = s.id WHERE s.id = ?').get(id);
-  return `"${crypto.createHash('md5').update(`${id}:${r ? r.version : 0}:${r ? r.content_hash || '' : ''}`).digest('hex')}"`;
+  return `"${crypto.createHash('md5').update(`${id}:${r ? r.version : 0}:${r ? r.content_hash || '' : ''}${variant ? `:${variant}` : ''}`).digest('hex')}"`;
+}
+
+// ── Edit tokens (#23) — only sha256(token) is ever stored ───────────────────
+
+/** The session's edit-token hash: undefined when there is no such session, null for a legacy (link-editable) one. */
+function getEditTokenHash(id) {
+  const r = db.prepare('SELECT edit_token_hash FROM sessions WHERE id = ?').get(id);
+  return r ? r.edit_token_hash : undefined;
+}
+
+/**
+ * Replace the hash only while it still equals `expected` (compare-and-set, so
+ * two concurrent claims cannot both win). Bumps `version` so cached GETs
+ * (ETag) see the new access. Returns true when the row was updated.
+ */
+function setEditTokenHash(id, hash, expected) {
+  const r = db.prepare('UPDATE sessions SET edit_token_hash = ?, version = version + 1 WHERE id = ? AND edit_token_hash IS ?')
+    .run(hash, id, expected);
+  return r.changes === 1;
 }
 
 // ── Revision history ─────────────────────────────────────────────────────────
@@ -233,7 +255,7 @@ const strOrNull = (v) => (typeof v === 'string' ? v : null);
  * meta object as loaded and mutated by the handler, optionally with
  * `markdown`. `ctx` = { by, client } describes who is writing (for the
  * revision entry). Content (and history) is only rewritten when it changed.
- * `opts`: { releaseSlugs, claimSlugs, createdBy }.
+ * `opts`: { releaseSlugs, claimSlugs, createdBy, editTokenHash (#23, set on create) }.
  */
 function savePaste(id, data, ctx = {}, opts = {}) {
   const { markdown, revisions: _legacyRevisions, ...meta } = data;
@@ -248,6 +270,7 @@ function savePaste(id, data, ctx = {}, opts = {}) {
     const prevHash = prevContent && !prevContent.hashless ? prevContent.content_hash : null;
 
     rows.upsertSessionRow(db, id, meta, { mode: meta.mode, slugOwned, createdBy: opts.createdBy ?? null });
+    if (opts.editTokenHash) db.prepare('UPDATE sessions SET edit_token_hash = ? WHERE id = ?').run(opts.editTokenHash, id);
     delete meta.content_hash;
     if (prevHash) meta.content_hash = prevHash;
 
@@ -421,6 +444,7 @@ module.exports = {
   generateSlug, uniqueSlug, isExpired, resolveId, sessionExists,
   getSite, listSites, resolveSiteId, createSite, deleteSite,
   filesDir, hashContent, currentContentHash, contentHashMismatch, loadContent, loadMeta, loadPaste, sessionEtag,
+  getEditTokenHash, setEditTokenHash,
   listRevisions, readRevisionBlob, revisionSummary, savePaste, deleteSession, removeCovers, listSessionsForList,
   listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile,
   chunkDir, saveChunk, assembleChunks,

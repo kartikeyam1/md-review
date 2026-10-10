@@ -11,6 +11,10 @@ import { useRevisionTracking } from '@/composables/useRevisionTracking'
 import { useAutosave } from '@/composables/useAutosave'
 import { useCommentSelection } from '@/composables/useCommentSelection'
 import { useDocModeSync } from '@/composables/useDocModeSync'
+import { onTokenRejected, sameDoc, docIdOf, type DocAccess } from '@/composables/useEditToken'
+import { saveLocalCopy, clearLocalCopy, type LocalCopy } from '@/composables/localCopy'
+import { toast } from '@/composables/useToast'
+import type { SharedPayload } from '@/composables/useShare'
 
 // ── Doc state assembly (spec #2, 00 §4.1) ────────────────────────────────────
 // Everything a document on screen is made of: its content, the shared session
@@ -58,12 +62,64 @@ export function createDocState(router: Router) {
   /** Dev-only ?filePath= loader (the e2e fixture harness). */
   const filePathParam = ref<string | null>(null)
 
-  const axes = useDocAxes({ route, embed, paneMode, pasteId, mode })
+  /** #23: edit access for the attached shared doc, from the latest GET (null = unknown/older server → editable). */
+  const access = ref<DocAccess | null>(null)
+  const canEdit = computed(() => !pasteId.value || access.value === null || access.value.can_edit)
+
+  const axes = useDocAxes({ route, embed, paneMode, pasteId, mode, canEdit })
   const { capability, reviewUI } = axes
 
   const share = useShare()
   const modeSync = useDocModeSync({ mode, pasteId, share, canChange: () => capability.value === 'editor' })
   const { docMeta } = modeSync
+
+  /** A server payload for the attached doc: header meta, mode and (#23) edit access. */
+  function applyServerMeta(data: SharedPayload, requestedAt: number, o: { initial?: boolean } = {}) {
+    const wasEditor = access.value === null || access.value.can_edit
+    if (data.access) access.value = { ...data.access }
+    modeSync.applyServerMeta(data, requestedAt, o)
+    // A poll says this browser can no longer edit (token rotated elsewhere): same as a refused write.
+    if (!o.initial && wasEditor && data.access?.protected && !data.access.can_edit) loseEditAccess(true)
+  }
+
+  /** Edits that never reached the server, set aside when the doc turned view-only (#23). */
+  const localCopy = ref<LocalCopy | null>(null)
+
+  /** Keep `text` as the doc's unsaved local copy (persisted, so a reload still offers it). */
+  function setLocalCopy(text: string, name: string) {
+    const id = pasteId.value
+    if (!id) return
+    const copy = { markdown: text, filename: name, at: new Date().toISOString() }
+    localCopy.value = copy
+    saveLocalCopy(docIdOf(id), copy)
+  }
+
+  function discardLocalCopy() {
+    if (pasteId.value) clearLocalCopy(docIdOf(pasteId.value))
+    localCopy.value = null
+  }
+
+  /**
+   * #23 rule 9: this browser lost edit access (a write got 401/403, or a poll
+   * says can_edit: false). Switch to viewer and the read view (rewriting
+   * ?view=edit|split to read), set unsaved edits aside as a local copy — the
+   * screen shows the server version — and say so once.
+   */
+  function loseEditAccess(wasEditor = access.value === null || access.value.can_edit) {
+    access.value = { protected: true, can_edit: false }
+    paneMode.value = 'preview'
+    const v = router.query('view')
+    if (v === 'edit' || v === 'split') router.setQueryParam('view', 'read')
+    const server = sync.serverMarkdown.value
+    if (server !== null && markdown.value !== server) {
+      setLocalCopy(markdown.value, filename.value)
+      sync.adoptRemote()
+    }
+    if (wasEditor) toast.info('This link is view-only', { key: 'view-only' })
+  }
+
+  // A write refused with 401/403 (the token is already dropped).
+  onTokenRejected((key) => { if (sameDoc(key, pasteId.value)) loseEditAccess() })
 
   const reviewer = useReviewer()
   const commentsApi = useComments()
@@ -73,7 +129,7 @@ export function createDocState(router: Router) {
     addComment, editComment, deleteComment, loadComments,
     addReply, editReply, deleteReply,
     resolveComment, unresolveComment,
-  }, { filename, author: reviewer.reviewerName, onServerState: (data, at) => modeSync.applyServerMeta(data, at) })
+  }, { filename, author: reviewer.reviewerName, onServerState: (data, at) => applyServerMeta(data, at) })
 
   const revisions = useRevisionTracking({
     pasteId, serverHash: sync.serverHash, serverHashOrigin: sync.serverHashOrigin, pinnedInfo, route,
@@ -113,7 +169,7 @@ export function createDocState(router: Router) {
   const showShareModal = ref(false)
   const shareResult = ref<{ ui: string; api: string; comments: string; markdown: string } | null>(null)
 
-  const autosave = useAutosave({ sync, markdown, filename, paneMode })
+  const autosave = useAutosave({ sync, markdown, filename, paneMode, canWrite: () => capability.value === 'editor' })
 
   const commentSelection = useCommentSelection({ reviewUI, readOnly })
 
@@ -160,7 +216,7 @@ export function createDocState(router: Router) {
     held, viewLoc, route, embed, readOnly, screenKey, docMissing, pinnedInfo, fileView, setFileView, onScreen, booted,
     filePathParam,
     // axes (00 §1) + mode
-    ...axes, mode, ...modeSync, docTitle, docLink,
+    ...axes, mode, ...modeSync, applyServerMeta, access, localCopy, setLocalCopy, discardLocalCopy, docTitle, docLink,
     // content
     appMode, paneMode, markdown, filename, contentType, pasteId, wordCount, charCount, NO_COMMENTS,
     // UI state

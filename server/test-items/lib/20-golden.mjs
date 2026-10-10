@@ -450,7 +450,7 @@ export function normalizeEntries(entries, known, literals = {}) {
 // Keys later items may ADD (spec 20 rule 5 / 00 §10.5). `content_hash` and
 // `comments` may be added where the legacy server omitted them (rule 5 lists
 // them as always-present on full GETs).
-const ADDITIVE = new Set(['mode', 'id', 'access', 'upsert_key', 'note', 'editToken', 'editUrl', 'url', 'viewUrl', 'shareUrl', 'created_by', 'content_hash', 'comments']);
+const ADDITIVE = new Set(['mode', 'id', 'access', 'upsert_key', 'note', 'editToken', 'editUrl', 'url', 'viewUrl', 'app_url', 'expiry_days', 'shareUrl', 'created_by', 'content_hash', 'comments']);
 const VALID_MODES = new Set(['publish', 'review']);
 // #2: a pinned revision never GETs /paste/<id>, so a revision body
 // (GET /paste/:id/revisions/:hash, recognised by `is_current`) also carries the
@@ -517,7 +517,9 @@ export function compareEntries(golden, actual) {
     }
     if (g.status !== a.status) diffs.push(`${where}: status ${a.status}, legacy ${g.status}`);
     if (g.headers.contentType !== a.headers.contentType) diffs.push(`${where}: content-type ${a.headers.contentType}, legacy ${g.headers.contentType}`);
-    if (g.headers.cacheControl !== a.headers.cacheControl) diffs.push(`${where}: cache-control ${a.headers.cacheControl}, legacy ${g.headers.cacheControl}`);
+    // #23: responses carrying a raw edit token add Cache-Control: no-store (additive).
+    const tokenNoStore = g.headers.cacheControl == null && a.headers.cacheControl === 'no-store' && !!a.body?.json?.editToken;
+    if (g.headers.cacheControl !== a.headers.cacheControl && !tokenNoStore) diffs.push(`${where}: cache-control ${a.headers.cacheControl}, legacy ${g.headers.cacheControl}`);
     if (g.headers.etag && !a.headers.etag) diffs.push(`${where}: ETag header missing`);
     const before = diffs.length;
     if (g.body === null || a.body === null) {

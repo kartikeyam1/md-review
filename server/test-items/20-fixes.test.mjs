@@ -13,6 +13,8 @@ import {
   startServer, spawnExpectingExit, tmpDir, copyToTmp, cleanupTmp, http, openDbReadOnly, runMigrate, migrateWithReport,
   LEGACY_FIXTURE, DB_NAME,
 } from './lib/20-helpers.mjs';
+import { installFetchJar } from './lib/edit-token-jar.mjs';
+installFetchJar(); // #23: this suite's own docs keep being writable (it is not about edit tokens)
 
 after(cleanupTmp);
 
@@ -54,12 +56,16 @@ test('fix 2: client-supplied column-owned keys never round-trip into extra_json 
   for (const p of [`/paste/${id}`, `/paste/${id}?fields=meta`]) {
     const g = await http(S.url, 'GET', p);
     assert.equal(g.status, 200);
-    for (const k of Object.keys(forged)) assert.ok(!(k in g.json), `${p}: ${k} must not be echoed`);
+    // #23 rule 6 adds the real `id` to GET responses; the forged one must still never come back.
+    for (const k of Object.keys(forged)) {
+      if (k === 'id') assert.equal(g.json.id, id, `${p}: id is the real one, never the forged value`);
+      else assert.ok(!(k in g.json), `${p}: ${k} must not be echoed`);
+    }
     assert.equal(g.json.keep_me, 1, 'ordinary extra keys still round-trip');
   }
   await withDb(sDir, (db) => {
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
-    assert.equal(row.edit_token_hash, null);
+    assert.notEqual(row.edit_token_hash, 'forged-hash', 'edit_token_hash is server-owned (#23 sets its own)');
     assert.equal(row.upsert_key, null);
     assert.equal(row.created_by, 'Ann');
     assert.equal(row.from_template_json, null);
