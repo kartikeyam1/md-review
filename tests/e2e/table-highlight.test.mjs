@@ -15,7 +15,7 @@ async function clickCommentAction(p = page) {
   const bar = p.locator('.selection-action-bar .action-btn')
   await bar.waitFor({ state: 'visible', timeout: 3000 })
   await bar.click()
-  await p.waitForTimeout(300)
+  await p.locator('.popover').waitFor({ state: 'visible', timeout: 3000 })
 }
 
 before(async () => {
@@ -34,21 +34,19 @@ beforeEach(async () => {
 describe('table row comment highlight', () => {
   it('commenting on one table row should not highlight the entire table', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await page.locator('[data-testid="doc-title"]', { hasText: 'fixture.md' }).waitFor({ timeout: 10000 })
 
     // Switch to preview
     await page.click('[data-testid="view-toggle-read"]')
-    await page.waitForTimeout(500)
+    await page.locator('[data-testid="view-toggle-read"][aria-pressed="true"]').waitFor({ timeout: 3000 })
 
-    // Find the table and its rows
+    // Find the table and its rows (the click below waits for the row to be stable)
     const table = page.locator('.preview-pane table')
     await table.scrollIntoViewIfNeeded()
-    await page.waitForTimeout(300)
 
     // Triple-click the first data row (tbody tr:first-child) to select it
     const firstDataRow = page.locator('.preview-pane tbody tr').first()
     await firstDataRow.click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
 
     // Popover should appear
@@ -58,7 +56,10 @@ describe('table row comment highlight', () => {
     // Type a comment and submit
     await page.locator('.popover-input').fill('Comment on first row only')
     await page.locator('.popover .btn-primary').click()
-    await page.waitForTimeout(500)
+    // Wait for the new comment's highlight to be applied, then one more frame
+    // so every element the highlight pass touches has its class.
+    await page.locator('.preview-pane .comment-highlight').first().waitFor({ state: 'attached', timeout: 3000 })
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
 
     // Now check which elements have the .comment-highlight class
     const highlightedTags = await page.evaluate(() => {

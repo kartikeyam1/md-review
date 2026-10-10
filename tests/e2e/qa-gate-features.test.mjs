@@ -6,6 +6,16 @@ import { asLegacyDoc } from './lib/legacy-docs.mjs'
 
 let browser, context, page
 
+/** Poll an in-page predicate; false (not a throw) on timeout so the caller's assert reports. */
+const waitUntil = (fn, arg = null, timeout = 5000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false)
+/** Wait for a locator state; false on timeout. */
+const reach = (locator, state = 'visible', timeout = 5000) => locator.waitFor({ state, timeout }).then(() => true, () => false)
+/** Open a shared session and wait until its document has rendered. */
+async function openShared(key) {
+  await page.goto(`${BASE}/#shared=${key}`)
+  await waitUntil(() => document.querySelector('.app')?.textContent.includes('QA Gate Test'), null, 10000)
+}
+
 // Create a test session via API
 async function createTestSession() {
   const res = await fetch(`${API}/paste`, {
@@ -65,15 +75,13 @@ describe('Gate + Speed features', () => {
 
   describe('slug-based URLs', () => {
     it('loads session by slug', async () => {
-      await page.goto(`${BASE}/#shared=${session.slug}`)
-      await page.waitForTimeout(2000)
+      await openShared(session.slug)
       const content = await page.textContent('.app')
       assert.ok(content.includes('QA Gate Test'), 'Should show markdown content')
     })
 
     it('loads session by hex ID', async () => {
-      await page.goto(`${BASE}/#shared=${session.id}`)
-      await page.waitForTimeout(2000)
+      await openShared(session.id)
       const content = await page.textContent('.app')
       assert.ok(content.includes('QA Gate Test'), 'Should show markdown content')
     })
@@ -81,8 +89,7 @@ describe('Gate + Speed features', () => {
 
   describe('approval banner', () => {
     it('shows pending status badge', async () => {
-      await page.goto(`${BASE}/#shared=${session.slug}`)
-      await page.waitForTimeout(2000)
+      await openShared(session.slug)
       const banner = page.locator('.approval-banner')
       await banner.waitFor({ state: 'visible', timeout: 5000 })
       const badge = await page.textContent('.status-badge')
@@ -106,8 +113,7 @@ describe('Gate + Speed features', () => {
 
   describe('summary panel', () => {
     it('shows review summary with comment counts', async () => {
-      await page.goto(`${BASE}/#shared=${session.slug}`)
-      await page.waitForTimeout(2000)
+      await openShared(session.slug)
       const panel = page.locator('.summary-panel')
       await panel.waitFor({ state: 'visible', timeout: 5000 })
       const text = await panel.textContent()
@@ -124,19 +130,18 @@ describe('Gate + Speed features', () => {
 
     it('can collapse and expand', async () => {
       await page.click('.summary-toggle')
-      await page.waitForTimeout(300)
       const content = page.locator('.summary-content')
+      await reach(content, 'hidden', 3000)
       assert.ok(!(await content.isVisible()), 'Content should be hidden after collapse')
       await page.click('.summary-toggle')
-      await page.waitForTimeout(300)
+      await reach(content, 'visible', 3000)
       assert.ok(await content.isVisible(), 'Content should be visible after expand')
     })
   })
 
   describe('comment resolution', () => {
     it('shows resolve button on comments', async () => {
-      await page.goto(`${BASE}/#shared=${session.slug}`)
-      await page.waitForTimeout(2000)
+      await openShared(session.slug)
       const resolveBtn = page.locator('.resolve-btn').first()
       await resolveBtn.waitFor({ state: 'visible', timeout: 5000 })
       assert.ok(await resolveBtn.isVisible(), 'Resolve button should be visible')
@@ -145,8 +150,8 @@ describe('Gate + Speed features', () => {
     it('resolves a comment and shows resolved state', async () => {
       const resolveBtn = page.locator('.resolve-btn').first()
       await resolveBtn.click()
-      await page.waitForTimeout(1000)
       const resolvedCard = page.locator('.comment-card.resolved').first()
+      await reach(resolvedCard, 'visible', 5000)
       assert.ok(await resolvedCard.isVisible(), 'Comment should have resolved class')
     })
 
@@ -172,18 +177,20 @@ describe('Gate + Speed features', () => {
       }
 
       // Reload page to pick up changes
-      await page.goto(`${BASE}/#shared=${session.slug}`)
-      await page.waitForTimeout(3000)
+      await openShared(session.slug)
+      // Fully loaded: banner up and both comments (one now resolved) listed.
+      await reach(page.locator('.approval-banner'))
+      await waitUntil(() => document.querySelectorAll('.comment-card').length >= 2)
 
       await page.fill('.reviewer-input', 'qa-tester')
-      await page.waitForTimeout(500)
+      await reach(page.locator('.btn.approve:not([disabled])'), 'visible', 3000)
       const disabled = await page.locator('.btn.approve').isDisabled()
       assert.ok(!disabled, 'Approve should be enabled after all must-fix resolved')
     })
 
     it('approves and shows approved badge', async () => {
       await page.click('.btn.approve')
-      await page.waitForTimeout(2000)
+      await waitUntil(() => document.querySelector('.status-badge')?.textContent.includes('Approved'))
       const badge = await page.textContent('.status-badge')
       assert.ok(badge.includes('Approved'), `Badge should say Approved, got: ${badge}`)
     })
@@ -204,20 +211,21 @@ describe('Gate + Speed features', () => {
       })
 
       await page.goto(`${BASE}/#dashboard`)
-      await page.waitForTimeout(2000)
+      await reach(page.locator('.dashboard-header h2'))
       const heading = await page.textContent('.dashboard-header h2')
       assert.equal(heading, 'Pending Reviews')
     })
 
     it('shows pending sessions', async () => {
       const cards = page.locator('.session-card')
+      await reach(cards.first())
       const count = await cards.count()
       assert.ok(count > 0, `Should show at least 1 pending session, got: ${count}`)
     })
 
     it('clicking a session navigates to review', async () => {
       await page.locator('.session-card').first().click()
-      await page.waitForTimeout(2000)
+      await page.waitForURL((u) => /\/d\/[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(u.pathname), { timeout: 5000 }).catch(() => {})
       // #4: the doc URL is path-based — /d/<slug or id>, no #shared= fragment.
       const pathname = await page.evaluate(() => window.location.pathname)
       assert.match(pathname, /\/d\/[a-zA-Z0-9][a-zA-Z0-9-]*$/, `Should navigate to /d/<slug or id>, got: ${pathname}`)

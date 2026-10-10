@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from '@/composables/useRouter'
-
-const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
+import { PASTE_API } from '@/composables/pasteApi'
 
 interface SessionItem {
   id: string

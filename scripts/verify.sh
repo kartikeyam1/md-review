@@ -6,11 +6,15 @@
 # Steps (default: all, run-all-and-report):
 #   typecheck  vue-tsc -b --noEmit
 #   unit       vitest run
-#   build      vite build (into .verify/dist, the repo's dist/ is left alone),
-#              then check:lazy-editor on it (#6)
-#   e2e        throwaway backend + vite dev on free ports, then every
+#   build      vite build (into .verify/runs/<id>/dist, the repo's dist/ is
+#              left alone; removed when the run ends), then check:lazy-editor
+#              on it (#6)
+#   e2e        throwaway backend + the app on free ports, then every
 #              tests/e2e/*.test.mjs and tests/e2e/items/*.test.mjs serially,
-#              one node --test run per file, under the shared browser lock
+#              one node --test run per file, under the shared browser lock.
+#              The app is the build step's output served by `vite preview`
+#              (built here if the build step didn't run); STACK_MODE=dev
+#              uses the vite dev server instead
 #   server     a second throwaway backend (REVISIONS_MAX=5, so the retention
 #              test runs), then server/test*.mjs and
 #              server/test-items/*.test.mjs against it
@@ -23,6 +27,11 @@
 #   VERIFY_E2E_FILE_TIMEOUT  seconds per e2e file before it is killed (900)
 #   VERIFY_BROWSER_LOCK      browser slot lock prefix (/tmp/md-review-viewshare-browser.lock)
 #   BROWSER_SLOTS            concurrent browser runs allowed across worktrees (3)
+#   STACK_MODE=dev           e2e against the vite dev server, not the build
+#   VERIFY_KEEP_DIST=1       keep the run's build (.verify/runs/<id>/dist)
+#   E2E_DEV_FILES="06-lazy-editor"  e2e files written against the dev server's
+#                            per-module URLs; they get a vite dev server (same
+#                            backend) even in prod mode, started only if one runs
 #   VERIFY_ITEMS=04,02       backlog items whose acceptance tests run in addition
 #                            to the landed ones listed in docs/build/LANDED.
 #                            Item tests are files named NN-*.test.* under
@@ -45,6 +54,9 @@ VERIFY_DIR="$ROOT/.verify"
 VERIFY_RUN_ID="${VERIFY_RUN_ID:-$(date +%Y%m%d-%H%M%S)-$$}"
 RUN_DIR="$VERIFY_DIR/runs/$VERIFY_RUN_ID"
 LOG_DIR="$RUN_DIR/logs"
+# Per run, like the logs: a concurrent run's --emptyOutDir must never pull the
+# files out from under this run's e2e server.
+DIST_DIR="$RUN_DIR/dist"
 export STACK_LOG_DIR="$LOG_DIR"
 # shellcheck source=lib/stack.sh
 source "$ROOT/scripts/lib/stack.sh"
@@ -56,8 +68,12 @@ FAIL_FAST="${VERIFY_FAIL_FAST:-0}"
 ONLY="${VERIFY_ONLY:-}"
 LOCK="${VERIFY_BROWSER_LOCK:-/tmp/md-review-viewshare-browser.lock}"
 E2E_FILE_TIMEOUT="${VERIFY_E2E_FILE_TIMEOUT:-900}"
+# 06-lazy-editor asserts on dev module URLs (/src/components/EditorPane.vue,
+# ?type=style, /node_modules/.vite/deps/...) and blocks them by those URLs;
+# its build-mode twin is 06-lazy-editor-build.
+E2E_DEV_FILES="${E2E_DEV_FILES-06-lazy-editor}"
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
 while (( $# )); do
   case "$1" in
     --fail-fast) FAIL_FAST=1 ;;
@@ -154,12 +170,14 @@ step_unit() {
 step_build() {
   local t0 log="$LOG_DIR/build.log" rc
   t0=$(now)
-  node_modules/.bin/vite build --outDir "$VERIFY_DIR/dist" --emptyOutDir >"$log" 2>&1; rc=$?
+  node_modules/.bin/vite build --outDir "$DIST_DIR" --emptyOutDir >"$log" 2>&1; rc=$?
   # #6: CodeMirror must stay out of the entry graph (npm run check:lazy-editor).
   if [[ $rc == 0 ]]; then
-    node scripts/check-lazy-editor.mjs --dist "$VERIFY_DIR/dist" >>"$log" 2>&1; rc=$?
+    node scripts/check-lazy-editor.mjs --dist "$DIST_DIR" >>"$log" 2>&1; rc=$?
   fi
-  local n; n=$(find "$VERIFY_DIR/dist/assets" -name '*.js' 2>/dev/null | wc -l)
+  # A failed build must not be served to e2e (stack_start_preview rebuilds).
+  [[ $rc == 0 ]] || rm -f "$DIST_DIR/index.html"
+  local n; n=$(find "$DIST_DIR/assets" -name '*.js' 2>/dev/null | wc -l)
   record build "$([[ $rc == 0 ]] && echo PASS || echo FAIL)" "$n js chunks" "$(elapsed "$t0")"
 }
 
@@ -188,13 +206,14 @@ step_e2e() {
   if ! resolve_e2e_files; then record e2e FAIL "bad E2E_FILES" "$(elapsed "$t0")"; return; fi
 
   t1=$(now)
-  if ! { stack_start_backend e2e && stack_start_vite "$STACK_API_URL"; } 2>>"$LOG_DIR/stack.log"; then
+  if ! { stack_start_backend e2e && stack_start_app "$STACK_API_URL" "$DIST_DIR"; } 2>>"$LOG_DIR/stack.log"; then
     record "e2e:stack" FAIL "startup failed (see logs/stack.log)" "$(elapsed "$t1")"
     record e2e FAIL "not run" "$(elapsed "$t0")"
     stack_stop_all; return
   fi
-  record "e2e:stack" PASS "api :$STACK_API_PORT  app :$STACK_VITE_PORT" "$(elapsed "$t1")"
+  record "e2e:stack" PASS "api :$STACK_API_PORT  app :$STACK_VITE_PORT ($STACK_MODE)" "$(elapsed "$t1")"
   local api="$STACK_API_URL" base="$STACK_BASE_URL" data="$STACK_DATA_DIR"
+  local dev_base="" fbase fmode
 
   t1=$(now)
   if ! browser_slot_acquire 3600; then
@@ -207,11 +226,21 @@ step_e2e() {
     name="$(basename "$f" .test.mjs)"
     log="$LOG_DIR/e2e-$name.log"
     t1=$(now)
-    E2E_BASE_URL="$base" E2E_API_URL="$api" E2E_DATA_DIR="$data" MDR_BROWSER_LOCK_HELD=1 \
+    fbase="$base"; fmode="$STACK_MODE"
+    if [[ "$STACK_MODE" != dev && " ${E2E_DEV_FILES//,/ } " == *" $name "* ]]; then
+      if [[ -z "$dev_base" ]]; then
+        if stack_start_vite "$api" 2>>"$LOG_DIR/stack.log"; then dev_base="$STACK_BASE_URL"
+        else record "e2e/$name" FAIL "dev server startup failed (see logs/stack.log)" "$(elapsed "$t1")"; status=FAIL; continue
+        fi
+      fi
+      fbase="$dev_base"; fmode=dev
+    fi
+    E2E_BASE_URL="$fbase" E2E_API_URL="$api" E2E_DATA_DIR="$data" E2E_STACK_MODE="$fmode" MDR_BROWSER_LOCK_HELD=1 \
       timeout --kill-after=10 "$E2E_FILE_TIMEOUT" \
       node --test --test-concurrency=1 --test-reporter=spec "$f" >"$log" 2>&1; rc=$?
     node_counts "$log"; counts="$T_COUNTS"
     (( rc == 124 || rc == 137 )) && counts="$counts, TIMEOUT"
+    [[ "$fmode" != "$STACK_MODE" ]] && counts="$counts ($fmode)"
     record "e2e/$name" "$([[ $rc == 0 ]] && echo PASS || echo FAIL)" "$counts" "$(elapsed "$t1")"
     [[ $rc == 0 ]] || status=FAIL
     sum_t=$((sum_t + T_TESTS)); sum_p=$((sum_p + T_PASS)); sum_f=$((sum_f + T_FAIL)); sum_s=$((sum_s + T_SKIP))
@@ -258,6 +287,7 @@ done
 
 # Teardown check: nothing we started may survive.
 stack_stop_all
+[[ "${VERIFY_KEEP_DIST:-0}" == 1 ]] || rm -rf -- "$DIST_DIR"
 LEFT=$(stack_leaked_count)
 record teardown "$([[ $LEFT == 0 ]] && echo PASS || echo FAIL)" "$LEFT stray processes" 0
 

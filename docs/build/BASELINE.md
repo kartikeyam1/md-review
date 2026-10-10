@@ -14,7 +14,7 @@ node scripts/screens.mjs                # screenshot matrix -> .verify/screens/
 ```
 
 The summary goes to stdout and `.verify/last-summary.txt`, and per-step logs go to `.verify/logs/`. The exit code is non-zero if any step fails.
-e2e runs against a throwaway backend and vite dev server on free ports, with the backend on a fresh temp data dir. The server tests get a second throwaway backend with `REVISIONS_MAX=5`, so the retention test runs instead of skipping.
+e2e runs against a throwaway backend and the app on free ports, with the backend on a fresh temp data dir. The app is the build step's production output served by `vite preview`, with the backend URL injected at serve time (`window.__MDREVIEW_API__`); `STACK_MODE=dev` runs the vite dev server instead. Files listed in `E2E_DEV_FILES` (default `06-lazy-editor`, which asserts on dev per-module URLs) always get a dev server on the same backend. The server tests get a second throwaway backend with `REVISIONS_MAX=5`, so the retention test runs instead of skipping.
 Browser steps hold `flock /tmp/md-review-viewshare-browser.lock`.
 
 ## Results: two consecutive full runs, both green

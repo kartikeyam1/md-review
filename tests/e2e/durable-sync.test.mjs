@@ -53,6 +53,43 @@ async function typeAtEnd(text) {
   await page.keyboard.type(text)
 }
 
+/**
+ * Wait until this browser's local draft (IndexedDB md-review/drafts "state",
+ * or the localStorage fallback) contains `text` — i.e. the 500 ms local
+ * persist has run. Quiet on timeout; the caller's assertions decide.
+ */
+async function waitForLocalDraft(text, timeout = 5000) {
+  await page.waitForFunction(async (needle) => {
+    try {
+      const db = await new Promise((res, rej) => { const r = indexedDB.open('md-review'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error) })
+      try {
+        if (db.objectStoreNames.contains('drafts')) {
+          const v = await new Promise((res, rej) => { const r = db.transaction('drafts').objectStore('drafts').get('state'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error) })
+          if (typeof v === 'string' && v.includes(needle)) return true
+        }
+      } finally { db.close() }
+    } catch { /* fall back to localStorage */ }
+    for (let i = 0; i < localStorage.length; i++) {
+      if ((localStorage.getItem(localStorage.key(i)) || '').includes(needle)) return true
+    }
+    return false
+  }, text, { timeout, polling: 100 }).catch(() => {})
+}
+
+/** Resolve after `n` poll requests (GET /paste/<id>) complete from now on. */
+function pollCycles(id, n, timeout = 15000) {
+  return new Promise((resolve) => {
+    let seen = 0
+    const onResponse = (r) => {
+      if (r.request().method() !== 'GET' || new URL(r.url()).pathname !== `/paste/${id}`) return
+      if (++seen >= n) done()
+    }
+    const done = () => { page.off('response', onResponse); clearTimeout(timer); resolve(seen) }
+    const timer = setTimeout(done, timeout)
+    page.on('response', onResponse)
+  })
+}
+
 const saveState = () => page.locator('[data-testid="save-state"]')
 // #2 rule 5: save-state only shows while not idle/saved — "saved" means it is gone.
 const SAVED = () => !document.querySelector('[data-testid="save-state"]')
@@ -77,7 +114,8 @@ describe('shared mode: edits survive Edit → Preview → comment', () => {
     await page.locator('.cm-content').click()
     await page.keyboard.press('Control+End')
     await page.keyboard.type('\n\nEDITED LINE XYZ')
-    await page.waitForTimeout(300)
+    // The edit has reached the doc state once the header reports it unsaved.
+    await saveState().waitFor({ timeout: 3000 })
 
     // Preview, then comment on the first paragraph (no explicit Save).
     await page.click('[data-testid="view-toggle-read"]')
@@ -93,8 +131,11 @@ describe('shared mode: edits survive Edit → Preview → comment', () => {
     await page.locator('.popover .btn-primary').click()
     await page.locator('.comment-body').first().waitFor({ timeout: 3000 })
 
-    // The poll cycle is 5 s; give it two cycles to (wrongly) clobber.
-    await page.waitForTimeout(11000)
+    // The poll cycle is 5 s; give it two full poll round-trips to (wrongly)
+    // clobber, then let the applied state render. (Negative check: bounded by
+    // the poll cadence, not a fixed sleep.)
+    await pollCycles(id, 2)
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
 
     const after = await page.locator('.preview-pane').textContent()
     assert.ok(after.includes('EDITED LINE XYZ'), `local edit was lost after commenting; preview now: ${after.slice(0, 200)}`)
@@ -170,8 +211,8 @@ describe('shared mode: save state and conflicts', () => {
 
     await typeAtEnd(' DRAFT')
     // Reload immediately: idle autosave (2 s) has not fired yet, only the
-    // 500 ms localStorage persist has.
-    await page.waitForTimeout(700)
+    // 500 ms local draft persist has.
+    await waitForLocalDraft(' DRAFT')
     assert.ok(!(await serverMarkdown(id)).includes('DRAFT'), 'precondition: not yet autosaved')
     // The edit view is in the URL (?view=edit, #2), so the reload reopens the editor.
     await page.reload()
@@ -215,7 +256,7 @@ describe('shared mode: large drafts and signed comments', () => {
     await page.keyboard.press('End') // end of the "# Big" heading line — keep it a heading
     await page.keyboard.type(' BIGDRAFT')
     // Let the 500 ms local persist run, but reload before the 2 s server autosave.
-    await page.waitForTimeout(900)
+    await waitForLocalDraft('BIGDRAFT')
     assert.ok(!(await serverMarkdown(id)).includes('BIGDRAFT'), 'precondition: not yet autosaved')
     const persistErr = await page.locator('[data-testid="persist-error"]').count()
     assert.equal(persistErr, 0, 'local draft persistence must not report an error for a large document')
@@ -298,9 +339,14 @@ describe('revision history: what changed since I last looked', () => {
     await page.waitForFunction(() => !document.querySelector('[data-testid="changes-banner"]'), null, { timeout: 3000 })
 
     // The acknowledgement survives a reload: no banner for the same version.
+    // The banner is decided once the revision list for the doc has been
+    // fetched (initSeen → refreshRevisions), so wait for that response and
+    // let it render before checking that nothing appeared. (Negative check.)
+    const revisionsFetched = page.waitForResponse((r) => new URL(r.url()).pathname === `/paste/${id}/revisions`, { timeout: 10000 }).catch(() => {})
     await page.reload()
     await page.locator('.preview-pane').waitFor({ timeout: 5000 })
-    await page.waitForTimeout(1500)
+    await revisionsFetched
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
     assert.equal(await page.locator('[data-testid="changes-banner"]').count(), 0, 'no banner after acknowledging and reloading')
   })
 

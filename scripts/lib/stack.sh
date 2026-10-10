@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# Throwaway md-review stack: paste backend (server/server.cjs) + vite dev server,
-# each on a free port, the backend on a fresh temp data dir. Never touches the
-# live service (3100 / 3200) or its data dir.
+# Throwaway md-review stack: paste backend (server/server.cjs) + the app, each
+# on a free port, the backend on a fresh temp data dir. Never touches the live
+# service (3100 / 3200) or its data dir.
+#
+# The app is served one of two ways (STACK_MODE):
+#   prod (default)  a production build served by `vite preview`: no per-request
+#                   module transforms, so parallel stacks stay cheap. The backend
+#                   URL is injected at serve time (window.__MDREVIEW_API__, see
+#                   src/composables/pasteApi.ts), so one build serves any port.
+#                   The ?filePath= loader works (vite.config.ts localFileApi).
+#   dev             the vite dev server (unbundled /src/... modules, HMR off).
 #
 # Two ways to use it:
 #
@@ -9,23 +17,26 @@
 #        source scripts/lib/stack.sh
 #        stack_init                       # registers the cleanup trap
 #        stack_start_backend e2e          # -> STACK_API_URL, STACK_DATA_DIR_e2e ...
-#        stack_start_vite "$STACK_API_URL" # -> STACK_BASE_URL
+#        stack_start_app "$STACK_API_URL" [dist] # -> STACK_BASE_URL
 #        ...
 #        # stack_stop_all runs on EXIT/INT/TERM
 #
 #   2. Run a command against a fresh stack:
 #        scripts/lib/stack.sh run -- node scripts/screens.mjs
-#      The command sees E2E_BASE_URL / E2E_API_URL / E2E_DATA_DIR; the stack is
+#      The command sees E2E_BASE_URL / E2E_API_URL / E2E_DATA_DIR /
+#      E2E_STACK_MODE; the stack is
 #      torn down when it exits, and its exit code is propagated.
 #
 # Env knobs:
 #   STACK_LOG_DIR       where backend/vite logs go     (default <repo>/.verify/logs)
 #   STACK_READY_TIMEOUT seconds to wait for readiness   (default 90)
 #   STACK_KEEP_DATA=1   keep the temp data dirs on teardown (path is logged)
+#   STACK_MODE          prod (default) or dev — see above
 
 STACK_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STACK_LOG_DIR="${STACK_LOG_DIR:-$STACK_REPO_ROOT/.verify/logs}"
 STACK_READY_TIMEOUT="${STACK_READY_TIMEOUT:-90}"
+STACK_MODE="${STACK_MODE:-prod}"
 # Test stacks share a box with the live md-review service. Make everything
 # started from here the OOM killer's first choice (inherited by children;
 # raising the score needs no privileges), so memory pressure from a test run
@@ -96,7 +107,7 @@ stack_start_backend() {
 }
 
 # stack_start_vite <api_url>
-# Starts the vite dev server (needed for the ?filePath= loader) on a free port
+# Starts the vite dev server (STACK_MODE=dev) on a free port
 # with VITE_PASTE_API_URL pointing at <api_url>. Sets STACK_BASE_URL,
 # STACK_VITE_PORT, STACK_VITE_PID.
 stack_start_vite() {
@@ -125,6 +136,60 @@ stack_start_vite() {
   STACK_BASE_URL="http://127.0.0.1:$port"
   STACK_VITE_PID="$pid"
   _stack_log "vite $STACK_BASE_URL -> api $api pid=$pid log=$log"
+}
+
+# stack_build_app <out_dir> <log> — production build into <out_dir>.
+stack_build_app() {
+  local out="$1" log="$2"
+  ( cd "$STACK_REPO_ROOT" && unset PORT && \
+    node node_modules/vite/bin/vite.js build --outDir "$out" --emptyOutDir ) >"$log" 2>&1
+}
+
+# stack_start_preview <api_url> [dist_dir]
+# Serves a production build with `vite preview` on a free port, pointed at
+# <api_url> at serve time. Builds into a temp dir first unless [dist_dir] holds
+# a build. Sets STACK_BASE_URL, STACK_VITE_PORT, STACK_VITE_PID.
+stack_start_preview() {
+  local api="$1" dist="${2:-}" port log pid
+  mkdir -p "$STACK_LOG_DIR"
+  if [[ -z "$dist" || ! -f "$dist/index.html" ]]; then
+    [[ -n "$dist" ]] || { dist="$(mktemp -d "${TMPDIR:-/tmp}/md-review-verify-dist.XXXXXX")"; STACK_TMP_DIRS+=("$dist"); }
+    _stack_log "building app into $dist"
+    if ! stack_build_app "$dist" "$STACK_LOG_DIR/stack-build.log"; then
+      tail -20 "$STACK_LOG_DIR/stack-build.log" >&2; return 1
+    fi
+  fi
+  port="$(stack_free_port)" || { _stack_log "no free port"; return 1; }
+  log="$STACK_LOG_DIR/vite-preview.log"
+  (
+    cd "$STACK_REPO_ROOT" || exit 1
+    unset PORT
+    MDREVIEW_RUNTIME_API="$api" exec setsid node node_modules/vite/bin/vite.js preview \
+      --outDir "$dist" --host 127.0.0.1 --port "$port" --strictPort
+  ) >"$log" 2>&1 < /dev/null &
+  pid=$!
+  STACK_PGIDS+=("$pid"); STACK_ALL_PGIDS+=("$pid")
+  if ! stack_wait_http "http://127.0.0.1:$port/" "$pid" "vite preview"; then
+    tail -20 "$log" >&2; return 1
+  fi
+  # The injected backend URL must be in the served page, or every API call
+  # would silently go to the wrong origin.
+  if ! curl -s --max-time 5 "http://127.0.0.1:$port/" | grep -qF "__MDREVIEW_API__=\"$api\""; then
+    _stack_log "vite preview at :$port does not inject the backend URL"; return 1
+  fi
+  STACK_VITE_PORT="$port"
+  STACK_BASE_URL="http://127.0.0.1:$port"
+  STACK_VITE_PID="$pid"
+  _stack_log "vite preview $STACK_BASE_URL ($dist) -> api $api pid=$pid log=$log"
+}
+
+# stack_start_app <api_url> [dist_dir] — the app in STACK_MODE (prod|dev).
+stack_start_app() {
+  case "$STACK_MODE" in
+    prod) stack_start_preview "$@" ;;
+    dev) stack_start_vite "$1" ;;
+    *) _stack_log "unknown STACK_MODE '$STACK_MODE' (prod|dev)"; return 1 ;;
+  esac
 }
 
 # Kill every process group we started, then remove temp data dirs.
@@ -161,13 +226,13 @@ stack_init() { trap 'stack_stop_all' EXIT; trap 'exit 130' INT; trap 'exit 143' 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -uo pipefail
   if [[ "${1:-}" != run ]]; then
-    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2
+    sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 2
   fi
   shift; [[ "${1:-}" == -- ]] && shift
   (( $# )) || { echo "usage: $0 run -- <command...>" >&2; exit 2; }
   stack_init
   stack_start_backend app || exit 1
-  stack_start_vite "$STACK_API_URL" || exit 1
-  E2E_BASE_URL="$STACK_BASE_URL" E2E_API_URL="$STACK_API_URL" E2E_DATA_DIR="$STACK_DATA_DIR" "$@"
+  stack_start_app "$STACK_API_URL" || exit 1
+  E2E_BASE_URL="$STACK_BASE_URL" E2E_API_URL="$STACK_API_URL" E2E_DATA_DIR="$STACK_DATA_DIR" E2E_STACK_MODE="$STACK_MODE" "$@"
   exit $?
 fi

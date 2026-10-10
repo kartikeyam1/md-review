@@ -38,7 +38,7 @@ describe('shared mode', () => {
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } })
     const page = await context.newPage()
     await page.goto(`${BASE}/#shared=${id}`)
-    await page.waitForTimeout(2000)
+    await page.locator('.preview-pane', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
 
     // Filename and sync indicator live in the editor header (#2): switch to edit view.
     await page.click('[data-testid="view-toggle-edit"]')
@@ -57,7 +57,9 @@ describe('shared mode', () => {
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } })
     const page = await context.newPage()
     await page.goto(`${BASE}/#shared=${id}`)
-    await page.waitForTimeout(2000)
+    // The document (and its empty comment list) is on screen before the agent
+    // comments, so the comment can only arrive through a poll.
+    await page.locator('.preview-pane', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
 
     // Add a comment via API (simulating an agent)
     await fetch(`${PASTE_API}/paste/${id}/comments`, {
@@ -73,8 +75,9 @@ describe('shared mode', () => {
       }),
     })
 
-    // Wait for poll cycle (5s + buffer)
-    await page.waitForTimeout(6000)
+    // Wait for the next poll cycle (5 s) to bring it in — within the same
+    // 6 s budget the fixed sleep used to allow.
+    await page.locator('.comment-body', { hasText: 'Consider a more descriptive title' }).waitFor({ timeout: 6000 }).catch(() => {})
 
     // Comment should now appear in the sidebar
     const commentBody = await page.locator('.comment-body').textContent()

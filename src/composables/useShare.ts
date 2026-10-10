@@ -3,8 +3,8 @@ import type { Comment, Reply, ApprovalInfo, ContentType, DocMode } from '@/types
 import type { TextDelta } from '@/composables/useDelta'
 import { docShareUrl, encodeFilePath } from '@/composables/useRouter'
 import { editHeaders, settleAccess, checkWriteStatus, saveToken, type DocAccess } from '@/composables/useEditToken'
+import { PASTE_API } from '@/composables/pasteApi'
 
-const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 /** Identifies content writes from the browser UI in the revision history. */
 const CLIENT_HEADER = { 'X-MdReview-Client': 'ui' }
 

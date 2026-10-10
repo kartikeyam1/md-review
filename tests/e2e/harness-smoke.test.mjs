@@ -74,13 +74,21 @@ describe('harness helpers', () => {
       await page.goto(FILE_URL, { waitUntil: 'networkidle' })
       assert.ok(rec.urls().length > 0)
       assert.ok(rec.loaded('/src/main.ts') || rec.loaded(/\/assets\/index-/), rec.summary())
-      // #6: the editor is lazy — the read view of a local doc loads no CodeMirror…
-      assert.ok(!rec.loaded(/codemirror/i), rec.summary())
-      // …and switching to Edit loads it.
+      // #6: the editor is lazy — the read view of a local doc loads no
+      // CodeMirror, and switching to Edit loads it. The dev server serves it as
+      // its own modules (/codemirror/ in the URL); a production build bundles
+      // it into chunks named after their importers (EditorPane-<hash>.js), so
+      // also look for @codemirror/view's base-theme string in what loaded.
+      const EDITOR_RE = /codemirror|EditorPane/i
+      const cmCodeLoaded = async () => (await Promise.all(rec.urls().map((u) => context.request.get(u).then((r) => r.text()))))
+        .some((src) => src.includes('&light .cm-content'))
+      assert.ok(!rec.loaded(EDITOR_RE), rec.summary())
+      assert.ok(!(await cmCodeLoaded()), `CodeMirror code in the read view's scripts:\n${rec.summary()}`)
       await page.locator('[data-testid="view-toggle-edit"]').click()
       await page.locator('.cm-editor:visible .cm-content').first().waitFor({ state: 'visible', timeout: 20000 })
       rec.stop()
-      assert.ok(rec.loaded(/codemirror/i), rec.summary())
+      assert.ok(rec.loaded(EDITOR_RE), rec.summary())
+      assert.ok(await cmCodeLoaded(), rec.summary())
       assert.ok(rec.chunks().every((c) => !c.includes('/')))
     } finally { await context.close() }
   })

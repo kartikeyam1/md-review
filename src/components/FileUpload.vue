@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { detectContentType, defaultFilename } from '@/composables/useContentType'
+import { PASTE_API } from '@/composables/pasteApi'
 
 const emit = defineEmits<{
   'file-loaded': [content: string, filename: string]
@@ -24,7 +25,6 @@ async function submitGithub() {
   githubError.value = ''
 
   try {
-    const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
     const res = await fetch(`${PASTE_API}/github?url=${encodeURIComponent(url)}`)
     if (!res.ok) {
       const data = await res.json().catch(() => ({ error: `Server error (${res.status})` }))
