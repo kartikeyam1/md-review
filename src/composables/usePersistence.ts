@@ -16,7 +16,7 @@ const LOCAL_RECORD = 'local'
 const THEME_KEY = 'md-review-theme'
 const DEBOUNCE_MS = 500
 
-interface PersistedState {
+export interface PersistedState {
   markdown: string
   filename: string
   comments: Comment[]

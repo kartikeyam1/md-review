@@ -1,0 +1,103 @@
+<script setup lang="ts">
+import { useToast, type ToastItem } from '@/composables/useToast'
+
+const { toasts, dismiss } = useToast()
+
+function runAction(t: ToastItem) {
+  t.action?.onClick?.()
+  dismiss(t.id)
+}
+</script>
+
+<template>
+  <div class="app-toasts">
+    <div
+      v-for="t in toasts"
+      :key="t.id"
+      class="app-toast"
+      :class="t.kind"
+      data-testid="app-toast"
+      :data-kind="t.kind"
+      :data-toast="t.key"
+      :role="t.kind === 'error' ? 'alert' : 'status'"
+    >
+      <span class="app-toast-text">{{ t.text }}</span>
+      <template v-if="t.action">
+        <a v-if="t.action.href" class="app-toast-action" :href="t.action.href" @click="dismiss(t.id)">{{ t.action.label }}</a>
+        <button v-else type="button" class="app-toast-action" @click="runAction(t as ToastItem)">{{ t.action.label }}</button>
+      </template>
+      <button type="button" class="app-toast-close" data-testid="app-toast-close" aria-label="Dismiss" @click="dismiss(t.id)">×</button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.app-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+
+.app-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 8px 8px 8px 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  overflow-wrap: anywhere;
+}
+
+.app-toast.error {
+  border-color: rgba(220, 38, 38, 0.45);
+  background: color-mix(in srgb, var(--bg-surface) 92%, #dc2626);
+}
+
+.app-toast.success {
+  border-color: rgba(22, 163, 74, 0.45);
+}
+
+.app-toast-action {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+  text-decoration: none;
+}
+
+.app-toast-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.app-toast-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-page);
+}
+</style>
