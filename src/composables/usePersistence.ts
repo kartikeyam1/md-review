@@ -2,6 +2,7 @@ import { ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import type { Comment, ThemeMode, ContentType, DocMode } from '@/types'
 import { payloadMode } from '@/composables/docMeta'
+import { stripPendingPlaceholders } from '@/composables/attachments'
 import { applyTheme, isValidTheme } from '@/composables/useTheme'
 import { detectContentType } from '@/composables/useContentType'
 import { openDraftStore, createMemoryStore, type DraftStore } from '@/composables/draftStore'
@@ -188,8 +189,10 @@ export function usePersistence(
   let writing: Promise<void> | null = null
 
   function snapshot(): PersistedState {
+    // Placeholders of images still uploading never reach the draft (#10 rule 13).
+    const text = stripPendingPlaceholders(markdown.value)
     const state: PersistedState = {
-      markdown: markdown.value,
+      markdown: text,
       filename: filename.value,
       comments: comments.value,
       contentType: contentType.value,
@@ -199,7 +202,7 @@ export function usePersistence(
     }
     const base = options.serverMarkdown?.value ?? null
     if (base === null) state.serverMarkdown = null
-    else if (base === markdown.value) state.baselineEqualsLocal = true
+    else if (base === text) state.baselineEqualsLocal = true
     else state.serverMarkdown = base
     if (state.pasteId) {
       state.baseHash = options.baseHash?.value ?? null

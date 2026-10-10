@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, onMounted, watch } from 'vue'
+import { ref, computed, defineAsyncComponent, onMounted, onBeforeUnmount, watch } from 'vue'
 import type { RevisionEntry } from '@/composables/useShare'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
 import { markExternalChange } from '@/composables/useExternalChange'
+import { setAttachmentHost } from '@/composables/attachments'
+import { docIdOf } from '@/composables/useEditToken'
 import DocHeader from '@/components/DocHeader.vue'
 import DocBanners from '@/components/DocBanners.vue'
 import CommentsLayer from '@/components/CommentsLayer.vue'
@@ -17,6 +19,7 @@ import TocPanel from '@/components/TocPanel.vue'
 import { provideToc } from '@/composables/useToc'
 import { useActiveHeading } from '@/composables/useActiveHeading'
 import { useBreakpoint } from '@/composables/useBreakpoint'
+import ShareRequiredDialog from '@/components/ShareRequiredDialog.vue'
 
 // The doc layout (00 §4.2): header, the below-header stack (DocBanners), the
 // body, and the modals. App.vue is the router shell; this renders the
@@ -66,6 +69,36 @@ function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null)
   const when = entry ? new Date(entry.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'an earlier version'
   notice.value = `Restored the version from ${when} as unsaved edits — it will autosave shortly. Use History again to go back.`
 }
+
+// #10: the editor's image paste/drop asks this layout for the doc it uploads
+// to, and — for a never-shared doc — to share it first (rule 14).
+const currentDoc = () => (pasteId.value ? { key: pasteId.value, id: docIdOf(pasteId.value) } : null)
+/** The open share-required prompt's answer callback (null when closed). */
+const shareAsk = ref<((ok: boolean) => void) | null>(null)
+const stopHost = setAttachmentHost({
+  doc: currentDoc,
+  contentType: () => contentType.value,
+  requestShare: () => new Promise((resolve) => {
+    shareAsk.value?.(false)
+    shareAsk.value = async (ok) => {
+      shareAsk.value = null
+      if (!ok) return resolve(null)
+      // Share keeps the author in the editor they pasted into (the share URL has no `view`).
+      const wasEditing = paneMode.value === 'edit'
+      try {
+        await actions.handleShare()
+      } catch {
+        return resolve(null)
+      }
+      const shared = currentDoc()
+      if (shared && wasEditing) actions.setView('edit')
+      resolve(shared)
+    }
+  }),
+})
+onBeforeUnmount(() => { shareAsk.value?.(false); stopHost() })
+// Another doc while the prompt is open: nothing is inserted anywhere.
+watch(docKey, () => shareAsk.value?.(false))
 
 function scrollToLine(line: number) {
   if (paneMode.value === 'edit') editorRef.value?.scrollToLine(line)
@@ -179,6 +212,8 @@ const embedOpenHref = computed(() => {
       @restore="handleRestoreRevision"
       @acknowledged="acknowledge"
     />
+
+    <ShareRequiredDialog v-if="shareAsk" @confirm="shareAsk?.(true)" @cancel="shareAsk?.(false)" />
 
     <ShareModal
       :visible="showShareModal"

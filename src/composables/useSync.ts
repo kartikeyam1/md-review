@@ -2,6 +2,7 @@ import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
 import type { Comment, Reply } from '@/types'
 import { useShare, type SharedPayload } from '@/composables/useShare'
 import { computeDelta, deltaSize } from '@/composables/useDelta'
+import { stripPendingPlaceholders } from '@/composables/attachments'
 import { markExternalChange, historyBarrier } from '@/composables/useExternalChange'
 
 type NewComment = Omit<Comment, 'id' | 'createdAt' | 'replies'>
@@ -458,7 +459,8 @@ export function useSync(
 
   async function doSave(opts: { force?: boolean; keepalive?: boolean; filename?: string }): Promise<boolean> {
     const id = pasteId.value!
-    const snapshotMarkdown = markdown.value
+    // Placeholders of images still uploading never reach the server (#10 rule 13).
+    const snapshotMarkdown = stripPendingPlaceholders(markdown.value)
     const snapshotFilename = opts.filename ?? filenameRef?.value
     const sendFilename = snapshotFilename && snapshotFilename !== serverFilename.value ? snapshotFilename : undefined
 
