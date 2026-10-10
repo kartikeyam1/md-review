@@ -11,7 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const {
-  DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, DB_PATH, REVISIONS_MAX, REVISION_COALESCE_MS,
+  DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, COVERS_DIR, DB_PATH, REVISIONS_MAX, REVISION_COALESCE_MS,
 } = require('./config.cjs');
 const { HttpError, getMime } = require('./http-util.cjs');
 const { openDb, tx } = require('./db.cjs');
@@ -283,7 +283,7 @@ function savePaste(id, data, ctx = {}, opts = {}) {
   });
 }
 
-/** Delete a session: rows (cascade), search row, its slug, then its files on disk. */
+/** Delete a session: rows (cascade), search row, its slug, then its files and cached covers on disk. */
 function deleteSession(id, meta) {
   tx(db, () => {
     rows.deleteSearchRow(db, id);
@@ -292,6 +292,18 @@ function deleteSession(id, meta) {
   });
   const fdir = filesDir(id);
   if (fs.existsSync(fdir)) { try { fs.rmSync(fdir, { recursive: true, force: true }); } catch {} }
+  removeCovers(id);
+}
+
+/** Delete DATA_DIR/covers/{id}-*.png (#22), except `keep` (a file name). */
+function removeCovers(id, keep = null) {
+  let names;
+  try { names = fs.readdirSync(COVERS_DIR); } catch { return; }
+  for (const n of names) {
+    if (n !== keep && n.startsWith(`${id}-`) && n.endsWith('.png')) {
+      try { fs.unlinkSync(path.join(COVERS_DIR, n)); } catch {}
+    }
+  }
 }
 
 /** Every session with the per-session counts /paste/list reports. */
@@ -409,7 +421,7 @@ module.exports = {
   generateSlug, uniqueSlug, isExpired, resolveId, sessionExists,
   getSite, listSites, resolveSiteId, createSite, deleteSite,
   filesDir, hashContent, currentContentHash, contentHashMismatch, loadContent, loadMeta, loadPaste, sessionEtag,
-  listRevisions, readRevisionBlob, revisionSummary, savePaste, deleteSession, listSessionsForList,
+  listRevisions, readRevisionBlob, revisionSummary, savePaste, deleteSession, removeCovers, listSessionsForList,
   listSessionFiles, saveSessionFile, deleteSessionFile, getSessionFile,
   chunkDir, saveChunk, assembleChunks,
 };

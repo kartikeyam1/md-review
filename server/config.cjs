@@ -20,5 +20,16 @@ const REVISIONS_MAX = parseInt(process.env.REVISIONS_MAX || '100', 10);
 const REVISION_COALESCE_MS = parseInt(process.env.REVISION_COALESCE_MS || String(5 * 60 * 1000), 10);
 const MAX_BODY_BYTES = 50 * 1024 * 1024; // 50 MB (raised from 10 MB)
 const MAX_SITE_BYTES = 50 * 1024 * 1024; // 50 MB for site uploads
+// Rendered /d/:x/cover.png images (#22), one file per doc: {id}-{cover_key}.png.
+const COVERS_DIR = path.join(DATA_DIR, 'covers');
+// Links (#22, 00 §6): the SPA lives at FRONTEND_URL; PUBLIC_BASE_URL is this
+// backend's externally reachable origin (the /d/ meta pages and covers).
+// Trailing slashes are ignored. Handed-out links use PUBLIC_BASE_URL only when
+// it is set explicitly — the localhost default is for the meta page's own tags.
+const trimSlash = (s) => String(s).replace(/\/+$/, '');
+const FRONTEND_URL = trimSlash(process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/md-review');
+const PUBLIC_BASE_URL_SET = !!process.env.PUBLIC_BASE_URL;
+const PUBLIC_BASE_URL = trimSlash(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`);
 
-module.exports = { PORT, DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, DB_PATH, ALLOW_EMPTY_DB, REVISIONS_MAX, REVISION_COALESCE_MS, MAX_BODY_BYTES, MAX_SITE_BYTES };
+module.exports = { PORT, DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, DB_PATH, ALLOW_EMPTY_DB, REVISIONS_MAX, REVISION_COALESCE_MS, MAX_BODY_BYTES, MAX_SITE_BYTES,
+  COVERS_DIR, FRONTEND_URL, PUBLIC_BASE_URL, PUBLIC_BASE_URL_SET };

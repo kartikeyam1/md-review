@@ -6,6 +6,7 @@ const {
   generateSlug, uniqueSlug, savePaste,
 } = require('../storage.cjs');
 const { validMode } = require('../session-rows.cjs');
+const { handedOutUrl } = require('../links.cjs');
 
 module.exports = async function pasteCreate(req, res) {
   // POST /paste — create
@@ -64,6 +65,7 @@ module.exports = async function pasteCreate(req, res) {
     savePaste(id, parsed, { by: createdBy, client: clientOf(req) }, { claimSlugs: slug ? [slug] : [], createdBy });
     const result = { id };
     if (slug) result.slug = slug;
+    result.url = handedOutUrl(slug || id); // #22 rule 1 / 00 §6
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(result));
   }

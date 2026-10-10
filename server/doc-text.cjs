@@ -374,7 +374,7 @@ function firstH1(body) {
     if (AGENT_OPEN.test(line)) { inAgent = true; continue; }
     const h = atxH1Content(line);
     if (h !== null) {
-      const t = collapse(stripInlineMarkdown(h));
+      const t = plainInline(h);
       if (t) return t;
     }
   }
@@ -433,6 +433,278 @@ function markdownToPlain(md) {
 
 const isHtml = (contentType) => contentType === 'html';
 
+// ── #22 meta page: bounded text helpers ────────────────────────────────────
+
+/** Longest start tag whose attributes are parsed. */
+const TAG_CAP = 2048;
+/** How much of a document the #22 meta page and cover look at. */
+const SCAN_CAP = 256 * 1024;
+
+/** `s` cut to at most `n` UTF-16 units, never splitting a surrogate pair. */
+function capText(s, n) {
+  s = String(s);
+  if (s.length <= n) return s;
+  const c = s.charCodeAt(n - 1);
+  return s.slice(0, c >= 0xd800 && c <= 0xdbff ? n - 1 : n);
+}
+
+/** Attributes of a start tag's source (`<meta a="b" …>`), names lower-cased. */
+function tagAttrs(tagSrc) {
+  const attrs = {};
+  for (const a of capText(tagSrc, TAG_CAP).matchAll(/([^\s"'<>\/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g)) {
+    const k = a[1].toLowerCase();
+    if (!(k in attrs)) attrs[k] = a[2] ?? a[3] ?? a[4] ?? '';
+  }
+  return attrs;
+}
+
+/** The first non-space character of a line within its first 4 columns ('' if none). */
+function leadChar(line) {
+  for (let i = 0; i < 4 && i < line.length; i++) if (line[i] !== ' ') return line[i];
+  return line.length > 4 ? line[4] : '';
+}
+
+// ── #22 meta-page text: length cap and description ─────────────────────────
+
+/**
+ * Cap `s` at `max` code points (never splitting a surrogate pair). A longer
+ * text is cut at the last word boundary that leaves room for `…` (a hard cut
+ * when there is none), trailing whitespace dropped.
+ */
+function truncateText(s, max = 200) {
+  const cps = Array.from(capText(s, max * 4 + 8));
+  if (cps.length <= max) return cps.join('');
+  let cut = cps.slice(0, max - 1);
+  let i = cut.length; // the code point after the kept prefix is cps[i]
+  while (i > 0 && !/\s/.test(cps[i])) i--;
+  if (i > 0) cut = cps.slice(0, i);
+  return `${cut.join('').trimEnd()}…`;
+}
+
+/**
+ * Plain text of inline markdown (a paragraph or heading): backslash escapes
+ * honoured, autolinks keep their text, images dropped, inline syntax
+ * stripped, entities decoded, whitespace collapsed.
+ */
+function plainInline(src) {
+  const t = capText(String(src), LINE_CAP)
+    // Escaped punctuation is parked in the private-use area so no later rule sees it.
+    .replace(/\\([!-/:-@[-`{-~])/g, (m, c) => String.fromCharCode(0xe000 + c.charCodeAt(0)))
+    .replace(/<([a-z][a-z0-9+.-]{1,31}:[^\s<>]*)>/gi, '$1')
+    .replace(/<([^\s<>@]+@[^\s<>@]+\.[^\s<>@]+)>/g, '$1')
+    .replace(/!\[[^\]\n]*\]\([^)\n]*\)/g, ' ')
+    .replace(/!\[[^\]\n]*\]\[[^\]\n]*\]/g, ' ')
+    .replace(/\\$/gm, '');
+  return collapse(decodeEntities(stripInlineMarkdown(t)).replace(/[-]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xe000)));
+}
+
+/** How many leading blocks rule 4c looks through for a paragraph with visible text. */
+const FIRST_PARA_SCAN = 500;
+const TLDR_HEADING = /^tl;?dr\b/i;
+/** Cheap pre-check on raw markdown: could this block be (or label) a TL;DR? */
+const TLDR_HINT = /tl;?dr/i;
+// A paragraph that opens with a TL;DR label, bold or not: "**TL;DR:** x", "TL;DR – x", "__tldr__: x".
+const TLDR_LABEL = /^(?:\*\*|__)?\s*tl;?dr\b\s*(?:\*\*|__)?\s*[:\-–—]?\s*(?:\*\*|__)?\s*/i;
+
+/** Remove HTML comments (not agent markers) from markdown, keeping line structure; linear. */
+function stripMarkdownComments(md) {
+  let out = ''; let i = 0;
+  for (;;) {
+    const j = md.indexOf('<!--', i);
+    if (j === -1) return out + md.slice(i);
+    out += md.slice(i, j);
+    const end = md.indexOf('-->', j + 4);
+    if (/^<!--\s*\/?agent\b/i.test(md.slice(j, j + 64))) {
+      // agent markers stay for the block scanner
+      const stop = end === -1 ? md.length : end + 3;
+      out += md.slice(j, stop); i = stop;
+      continue;
+    }
+    if (end === -1) return out; // unterminated: the rest is comment
+    out += md.slice(j, end + 3).replace(/[^\n]/g, '');
+    i = end + 3;
+  }
+}
+
+/** A markdown block; its plain text is computed by blockText only when asked for (most never are). */
+const lazyBlock = (kind, raw) => ({ kind, raw, plain: null });
+/** Plain text of a block from either scanner. */
+function blockText(b) {
+  if (b.plain === null) b.plain = plainInline(b.raw);
+  return b.plain;
+}
+
+/**
+ * Markdown body → [{ kind: 'heading' | 'para', raw }] in document order
+ * (plain text via blockText). Skipped: code fences, indented code, tables, HTML comments,
+ * (top-level) agent sections, thematic breaks; front matter is removed first.
+ */
+function markdownBlocks(md) {
+  const { body } = splitFrontMatter(md);
+  const lines = stripMarkdownComments(body).split(/\r?\n/);
+  const blocks = [];
+  // Past the first FIRST_PARA_SCAN blocks only TL;DR candidates (and the block
+  // right after one) matter, so the rest are not even built.
+  let keepNext = false;
+  const push = (kind, raw) => {
+    const candidate = TLDR_HINT.test(raw.slice(0, 64));
+    if (blocks.length < FIRST_PARA_SCAN || candidate || keepNext) blocks.push(lazyBlock(kind, raw));
+    keepNext = candidate;
+  };
+  let para = []; let paraLen = 0;
+  const flush = () => {
+    if (!para.length) return;
+    const raw = para; para = []; paraLen = 0;
+    // A pipe table: header row with |, then a delimiter row.
+    if (raw.length >= 2 && raw[0].includes('|') && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(raw[1].slice(0, 1000))) return;
+    if (raw.every((l) => /^\s*\|/.test(l))) return;
+    // Setext heading: text lines underlined with === or ---.
+    if (raw.length >= 2 && /^ {0,3}(=+|-+)\s*$/.test(raw[raw.length - 1])) {
+      push('heading', raw.slice(0, -1).join(' '));
+      return;
+    }
+    if (blocks.length >= FIRST_PARA_SCAN && !keepNext && !TLDR_HINT.test(raw[0].slice(0, 64))) { keepNext = false; return; }
+    // Paragraph text without quote markers and list bullets.
+    push('para', raw.map((l) => l.replace(/^ {0,3}(?:>\s?)+/, '').replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?/, '')).join('\n'));
+  };
+  let fence = null; let inAgent = false;
+  for (const fullLine of lines) {
+    const line = fullLine.length > LINE_CAP ? fullLine.slice(0, LINE_CAP) : fullLine;
+    const c = leadChar(line);
+    if (fence) { if (c === fence[0] && new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(line)) fence = null; continue; }
+    if (inAgent) { if (c === '<' && AGENT_CLOSE.test(line)) inAgent = false; continue; }
+    if (c === '`' || c === '~') {
+      const f = FENCE.exec(line);
+      if (f) { flush(); fence = f[1]; continue; }
+    }
+    if (c === '<' && AGENT_OPEN.test(line)) { flush(); inAgent = true; continue; }
+    if (!line.trim()) { flush(); continue; }
+    if (c === '#') {
+      const h = /^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/.exec(line);
+      if (h) { flush(); push('heading', h[1] || ''); continue; }
+    }
+    if (!para.length && (c === '-' || c === '*' || c === '_') && /^ {0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) continue;
+    if (!para.length && /^( {4}|\t)/.test(line)) continue; // indented code
+    if (paraLen < LINE_CAP) { para.push(line); paraLen += line.length + 1; }
+  }
+  flush();
+  return blocks;
+}
+
+const TAG_START = /<(\/?)([a-z][a-z0-9-]{0,40})/y;
+const HTML_RAW_TEXT = new Set(['script', 'style', 'template', 'noscript', 'textarea', 'title', 'iframe', 'object']);
+
+/**
+ * HTML → a block list (<h1>…<h6> headings and <p> paragraphs with text, in
+ * order, plain text precomputed) plus the first `<meta name="description">` content. One linear
+ * indexOf scan: comments, scripts and styles skipped, unclosed tags end it.
+ */
+function htmlBlocks(src) {
+  const lower = asciiLower(src);
+  const blocks = [];
+  let metaDescription = null;
+  let cur = null;
+  const add = (s) => { if (cur && cur.len < LINE_CAP) { cur.parts.push(s); cur.len += s.length; } };
+  const finish = () => {
+    if (!cur) return;
+    const { kind } = cur;
+    const raw = cur.parts.join('');
+    cur = null;
+    if (/\S/.test(raw)) blocks.push({ kind, raw: undefined, plain: collapse(decodeEntities(capText(raw, LINE_CAP))) });
+  };
+  let i = 0;
+  while (i < src.length) {
+    const lt = src.indexOf('<', i);
+    if (lt === -1) { add(src.slice(i)); break; }
+    add(src.slice(i, lt));
+    if (lower.startsWith('<!--', lt)) {
+      const end = src.indexOf('-->', lt + 4);
+      if (end === -1) break;
+      i = end + 3;
+      continue;
+    }
+    TAG_START.lastIndex = lt;
+    const m = TAG_START.exec(lower);
+    const c1 = lower[lt + 1];
+    if (!m && c1 !== '!' && c1 !== '?') { add('<'); i = lt + 1; continue; } // a literal "<"
+    const gt = src.indexOf('>', lt + 1);
+    if (gt === -1) break;
+    i = gt + 1;
+    if (!m) continue; // <!doctype …>, <?xml …?>
+    const [, slash, name] = m;
+    if (!slash && HTML_RAW_TEXT.has(name)) {
+      const close = closingTagEnd(lower, name, i);
+      if (!close) break;
+      i = close.end;
+      continue;
+    }
+    if (!slash && name === 'meta' && metaDescription === null) {
+      const a = tagAttrs(src.slice(lt, gt + 1));
+      if ((a.name || '').toLowerCase() === 'description' && a.content) metaDescription = collapse(decodeEntities(a.content));
+      continue;
+    }
+    if (name === 'p' || /^h[1-6]$/.test(name)) {
+      finish();
+      if (!slash) cur = { kind: name === 'p' ? 'para' : 'heading', parts: [], len: 0 };
+      continue;
+    }
+    add(' ');
+  }
+  finish();
+  return { blocks, metaDescription };
+}
+
+/** The text of a TL;DR section (rule 4a) or '' — on block lists from either format. */
+function tldrText(blocks) {
+  const nextPara = (i) => { const n = blocks[i + 1]; return n && n.kind === 'para' ? blockText(n) : ''; };
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    // `raw` (markdown) is checked first so only candidate blocks are converted to plain text.
+    if (b.raw !== undefined && !TLDR_HINT.test(b.raw.slice(0, 64))) continue;
+    if (b.kind === 'heading' && TLDR_HEADING.test(blockText(b))) {
+      const t = nextPara(i);
+      if (t) return t;
+      continue;
+    }
+    if (b.kind === 'para' && TLDR_HEADING.test(blockText(b).replace(/^(\*\*|__)/, ''))) {
+      // "**TL;DR:** text", or the label alone on its own line with the text in the next paragraph
+      const rest = collapse(blockText(b).replace(TLDR_LABEL, ''));
+      if (rest) return rest;
+      const t = nextPara(i);
+      if (t) return t;
+    }
+  }
+  return '';
+}
+
+/** 'html' or 'markdown': the stored contentType, else inferred from a .html/.htm filename. */
+function effectiveContentType({ contentType, filename } = {}) {
+  if (contentType === 'html' || contentType === 'markdown') return contentType;
+  return typeof filename === 'string' && /\.html?$/i.test(filename) ? 'html' : 'markdown';
+}
+
+/**
+ * The #22 meta description (rule 4), ≤`max` chars: TL;DR paragraph → HTML
+ * <meta name=description> → first body paragraph → a generic line. Looks at
+ * the first SCAN_CAP of the source only; linear time.
+ */
+function docDescription(meta = {}, source = '', max = 200) {
+  const src = capText(typeof source === 'string' ? source : '', SCAN_CAP).replace(/^﻿/, '');
+  const html = effectiveContentType(meta) === 'html';
+  let blocks; let metaDescription = null;
+  if (html) ({ blocks, metaDescription } = htmlBlocks(src));
+  else blocks = markdownBlocks(src);
+  let text = tldrText(blocks);
+  if (!text && metaDescription) text = metaDescription;
+  if (!text) {
+    // The first paragraph with visible text, among the first FIRST_PARA_SCAN blocks.
+    const first = blocks.slice(0, FIRST_PARA_SCAN).find((b) => b.kind === 'para' && blockText(b));
+    text = first ? blockText(first) : '';
+  }
+  if (!text) text = `${html ? 'HTML' : 'Markdown'} document shared on md-review`;
+  return truncateText(text, max);
+}
+
 /**
  * docTitle per 00 §5 (server, line-based): sessionName → front matter title /
  * HTML <title> → first H1 / HTML <h1> → filename without extension → Untitled.
@@ -440,7 +712,7 @@ const isHtml = (contentType) => contentType === 'html';
 function docTitle({ sessionName, filename, contentType } = {}, markdown = '') {
   const candidates = [];
   candidates.push(() => (typeof sessionName === 'string' ? sessionName : ''));
-  const src = typeof markdown === 'string' ? markdown : '';
+  const src = (typeof markdown === 'string' ? markdown : '').replace(/^\uFEFF/, '');
   if (isHtml(contentType)) {
     const inner = (name) => { const t = firstElementInner(src, name); return t === null ? '' : htmlToText(t); };
     candidates.push(() => inner('title'));
@@ -468,4 +740,7 @@ function snippetText(contentType, markdown) {
   return isHtml(contentType) ? htmlToText(markdown || '').replace(/\s+/g, ' ').trim() : markdownToPlain(markdown || '');
 }
 
-module.exports = { docTitle, htmlToText, markdownToPlain, searchContent, snippetText, decodeEntities };
+module.exports = {
+  docTitle, htmlToText, markdownToPlain, searchContent, snippetText, decodeEntities,
+  truncateText, docDescription, effectiveContentType, capText, SCAN_CAP,
+};

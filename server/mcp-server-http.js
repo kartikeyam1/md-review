@@ -10,6 +10,8 @@ const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
 // Public URL that clients use in shell commands (curl). Falls back to PASTE_API_URL.
 const PASTE_PUBLIC_URL = process.env.PASTE_PUBLIC_URL || 'http://10.0.99.151:3100';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/md-review';
+// The backend's public origin (#22): when set, share links point at its /d/ meta pages.
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
 const MCP_PORT = parseInt(process.env.MCP_PORT || '3200', 10);
 // Idle sessions are closed after this long; the registry never holds more than MCP_MAX_SESSIONS.
 const MCP_SESSION_TTL_MS = parseInt(process.env.MCP_SESSION_TTL_MS || String(30 * 60 * 1000), 10);
@@ -425,7 +427,7 @@ async function createTransport() {
 // HTTP transport: agents connect remotely, so filePath would read from server, not agent.
 // Disable local file access — agents must send content directly.
 // pasteApiUrl = internal (server-to-server), pastePublicUrl = for shell commands (client-side curl).
-const handlers = createHandlers({ pasteApiUrl: PASTE_API_URL, pastePublicUrl: PASTE_PUBLIC_URL, frontendUrl: FRONTEND_URL, allowLocalFiles: false });
+const handlers = createHandlers({ pasteApiUrl: PASTE_API_URL, pastePublicUrl: PASTE_PUBLIC_URL, frontendUrl: FRONTEND_URL, publicBaseUrl: PUBLIC_BASE_URL, allowLocalFiles: false });
 
 const httpServer = http.createServer(async (req, res) => {
   // CORS headers

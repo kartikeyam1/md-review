@@ -114,7 +114,14 @@ async function chunkedUpload(sessionId, content, opts = {}) {
 
 async function cmdCreate(filePath, flags) {
   const apiUrl = flags.api || API;
-  const frontend = flags.frontend || FRONTEND;
+  // #22 rule 1: the backend's `url` (its /d/ meta page when PUBLIC_BASE_URL is
+  // set there); an explicit --frontend wins, and an older backend falls back
+  // to PUBLIC_BASE_URL / FRONTEND_URL from this env.
+  const frontend = flags.frontend || process.env.PUBLIC_BASE_URL || FRONTEND;
+  // Explicit local configuration (the flag, or FRONTEND_URL / PUBLIC_BASE_URL
+  // set for this CLI) wins over the backend's canonical url.
+  const localBase = flags.frontend || process.env.PUBLIC_BASE_URL || process.env.FRONTEND_URL;
+  const linkOf = (result, shareId) => (!localBase && result.url) || `${String(frontend).replace(/\/+$/, '')}/d/${shareId}`;
   const encoding = flags.encoding || 'utf-8';
   const content = await readFile(filePath, encoding === 'base64' ? null : 'utf-8');
   const filename = flags.filename || basename(filePath);
@@ -146,7 +153,7 @@ async function cmdCreate(filePath, flags) {
     console.log(JSON.stringify({
       id: result.id,
       slug: result.slug || null,
-      url: `${String(frontend).replace(/\/+$/, '')}/d/${shareId}`,
+      url: linkOf(result, shareId),
       size,
     }));
     return;
@@ -183,7 +190,7 @@ async function cmdCreate(filePath, flags) {
   console.log(JSON.stringify({
     id: result.id,
     slug: result.slug || null,
-    url: `${String(frontend).replace(/\/+$/, '')}/d/${shareId}`,
+    url: linkOf(result, shareId),
     size,
   }));
 }

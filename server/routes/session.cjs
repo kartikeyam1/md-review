@@ -5,6 +5,7 @@ const {
   generateSlug, uniqueSlug, isExpired, resolveId, loadContent, loadMeta, savePaste, deleteSession, sessionEtag,
   revisionSummary, listSessionFiles,
 } = require('../storage.cjs');
+const { handedOutUrl } = require('../links.cjs');
 
 module.exports = async function session(req, res) {
   // DELETE /paste/:id — delete a session and all its data
@@ -110,7 +111,7 @@ module.exports = async function session(req, res) {
       result = {};
       if (wanted.has('meta')) {
         const { comments, content_hash, revisions, ...rest } = meta;
-        Object.assign(result, rest, revisionSummary(resolvedId));
+        Object.assign(result, rest, revisionSummary(resolvedId), { url: handedOutUrl(meta.slug || resolvedId) });
       }
       if (wanted.has('content')) {
         result.markdown = loadContent(resolvedId) || '';
@@ -125,7 +126,7 @@ module.exports = async function session(req, res) {
       // Full response (backward compatible) — includes file list if any
       const markdown = loadContent(resolvedId) || '';
       const { revisions, ...metaRest } = meta;
-      result = { ...metaRest, markdown, ...revisionSummary(resolvedId) };
+      result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId) };
       const sessionFiles = listSessionFiles(resolvedId);
       if (sessionFiles.length > 0) result.files = sessionFiles;
     }

@@ -6,6 +6,8 @@ import { basename } from 'node:path';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/md-review';
+// The backend's public origin (#22): when set, handed-out links are its /d/ meta pages (link unfurls).
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || '';
 const CHUNK_SIZE = 512 * 1024; // 512 KB chunks for large files
 
 // ── Handler factory (exported for testing) ──────────────────────────────────
@@ -15,9 +17,13 @@ export function docUrl(frontendUrl, key) {
   return `${String(frontendUrl || '').replace(/\/+$/, '')}/d/${key}`;
 }
 
-export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetchFn = fetch, allowLocalFiles = true }) {
+export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publicBaseUrl, fetchFn = fetch, allowLocalFiles = true }) {
   // pastePublicUrl = URL clients use in shell commands (curl). Defaults to pasteApiUrl.
   const shellApiUrl = pastePublicUrl || pasteApiUrl;
+  // Share links (#22 rule 1, 00 §6): the backend hands out the canonical `url`
+  // (its /d/ meta page when PUBLIC_BASE_URL is set, else the SPA route); an
+  // older backend without it falls back to the same rule from this env.
+  const shareBase = publicBaseUrl || frontendUrl;
 
   function escapeShell(s) {
     // Wrap in single quotes, escape existing single quotes
@@ -118,14 +124,14 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       });
       if (result.error) return result;
       const shareId = result.slug || result.id;
-      return { id: result.id, slug: result.slug || null, shareUrl: docUrl(frontendUrl, shareId) };
+      return { id: result.id, slug: result.slug || null, shareUrl: result.url || docUrl(shareBase, shareId) };
     },
 
     async get_session({ sessionId, fields }) {
       const qs = fields ? `?fields=${fields}` : '';
       const result = await apiCall(`/paste/${sessionId}${qs}`);
       if (result.error) return result;
-      return { ...result, shareUrl: docUrl(frontendUrl, result.slug || sessionId) };
+      return { ...result, shareUrl: result.url || docUrl(shareBase, result.slug || sessionId) };
     },
 
     async list_comments({ sessionId }) {
@@ -349,7 +355,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
       const cmd = `jq -n --rawfile content ${escapeShell(filePath)} '${jqExpr}' | curl -s -X POST ${shellApiUrl}/paste -H 'Content-Type: application/json' -d @-`;
       return {
         command: cmd,
-        instruction: `Run this command in your shell. It reads ${basename(filePath)} and uploads it directly to the paste service — the file content never enters this conversation. Returns JSON with {id, slug}. View at: ${docUrl(frontendUrl, '<slug-or-id>')}`,
+        instruction: `Run this command in your shell. It reads ${basename(filePath)} and uploads it directly to the paste service — the file content never enters this conversation. Returns JSON with {id, slug}. View at: ${docUrl(shareBase, '<slug-or-id>')}`,
       };
     },
 
@@ -381,7 +387,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, fetch
 // ── MCP Server Setup (only when run directly) ───────────────────────────────
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const handlers = createHandlers({ pasteApiUrl: PASTE_API_URL, frontendUrl: FRONTEND_URL });
+  const handlers = createHandlers({ pasteApiUrl: PASTE_API_URL, frontendUrl: FRONTEND_URL, publicBaseUrl: PUBLIC_BASE_URL });
 
   const server = new McpServer({ name: 'md-review', version: '1.0.0' });
 

@@ -43,6 +43,7 @@ const ROUTES = [
   require('./routes/github.cjs'),
   require('./routes/sites.cjs'),
   require('./routes/health.cjs'),
+  require('./routes/meta.cjs'),
   require('./routes/site-assets.cjs'),
 ];
 
