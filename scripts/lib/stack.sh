@@ -214,9 +214,29 @@ stack_stop_all() {
 }
 
 # Number of process groups ever started that are still alive.
+# Groups we started that still have a live member. Zombies (state Z) do not
+# count: where PID 1 does not reap (a CI container without --init) a killed
+# process stays <defunct>, and `kill -0 -- -pgid` would still succeed on it.
+# Reads /proc directly (no procps in minimal images); without /proc, falls
+# back to kill -0.
+stack_live_pgids() {
+  local f line rest
+  for f in /proc/[0-9]*/stat; do
+    { read -r line <"$f"; } 2>/dev/null || continue
+    rest=${line##*) }          # fields after "(comm)": state ppid pgrp ...
+    set -- $rest
+    [[ "$1" == Z ]] || printf '%s\n' "$3"
+  done
+}
 stack_leaked_count() {
-  local g n=0
-  for g in "${STACK_ALL_PGIDS[@]}"; do kill -0 -- "-$g" 2>/dev/null && n=$((n + 1)); done
+  local g n=0 live
+  (( ${#STACK_ALL_PGIDS[@]} )) || { echo 0; return; }
+  if [[ -r /proc/self/stat ]]; then
+    live=" $(stack_live_pgids | sort -u | tr '\n' ' ') "
+    for g in "${STACK_ALL_PGIDS[@]}"; do [[ "$live" == *" $g "* ]] && n=$((n + 1)); done
+  else
+    for g in "${STACK_ALL_PGIDS[@]}"; do kill -0 -- "-$g" 2>/dev/null && n=$((n + 1)); done
+  fi
   echo "$n"
 }
 

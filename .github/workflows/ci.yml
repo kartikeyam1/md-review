@@ -6,55 +6,124 @@ on:
   pull_request:
     branches: [master]
 
+# Every job runs in the official Playwright image: Chromium and its system
+# libraries are preinstalled, so there is no `playwright install --with-deps`
+# step. The image tag (every job below) must match the playwright version
+# in package-lock.json.
+
 jobs:
-  build-and-test:
+  check:
+    name: Typecheck, unit, build
     runs-on: ubuntu-latest
-    # Chromium and its system libraries come preinstalled in the official
-    # Playwright image (tag must match the playwright version in package-lock),
-    # so there is no multi-minute `playwright install --with-deps` step.
     container:
       image: mcr.microsoft.com/playwright:v1.58.2-noble
-      options: --user 1001
-
+      options: --user 1001 --init
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 26
           cache: npm
-
       - run: npm ci
-
-      - name: Install server dependencies
-        run: npm ci --prefix server
-
       - name: Type check
         run: npx vue-tsc -b --noEmit
-
       - name: Unit tests
         run: npm run test
-
       - name: Build
         run: npm run build
-
-      - name: E2E and server tests (throwaway backend + production build)
-        run: scripts/verify.sh --only e2e,server
-        env:
-          VERIFY_E2E_FILE_TIMEOUT: 1200
-
-      - name: Upload test logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-logs
-          path: .verify/runs/
-          retention-days: 7
-
       - name: Upload build artifact
         if: github.ref == 'refs/heads/master'
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          retention-days: 7
+
+  # The functional e2e files, split into 8 shards by scripts/verify.sh
+  # (E2E_SHARD, balanced by file size). The screenshot/axe-heavy files are left
+  # to the `visual` job below: keep the two file lists in sync.
+  e2e:
+    name: E2E (shard ${{ matrix.shard }}/8)
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
+      options: --user 1001 --init
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix server
+      - name: E2E tests (throwaway backend + production build)
+        run: scripts/verify.sh --only e2e
+        env:
+          E2E_SHARD: ${{ matrix.shard }}/8
+          E2E_EXCLUDE: 01-locus-theme,qa-polish-contrast
+          VERIFY_E2E_FILE_TIMEOUT: 1200
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs-e2e-${{ matrix.shard }}
+          path: .verify/runs/
+          retention-days: 7
+
+  # Screenshot matrix and axe scans: the files the e2e shards exclude.
+  visual:
+    name: E2E visual (screenshots, axe)
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
+      options: --user 1001 --init
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix server
+      - name: Visual e2e tests (throwaway backend + production build)
+        run: scripts/verify.sh --only e2e
+        env:
+          E2E_FILES: 01-locus-theme,qa-polish-contrast
+          VERIFY_E2E_FILE_TIMEOUT: 1200
+      - name: Upload test logs and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs-visual
+          path: |
+            .verify/runs/
+            .verify/screens/
+          retention-days: 7
+
+  server:
+    name: Server and MCP tests
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
+      options: --user 1001 --init
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix server
+      - name: Server tests (throwaway backend)
+        run: scripts/verify.sh --only server
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs-server
+          path: .verify/runs/
           retention-days: 7

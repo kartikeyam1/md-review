@@ -29,6 +29,11 @@
 #   BROWSER_SLOTS            concurrent browser runs allowed across worktrees (3)
 #   STACK_MODE=dev           e2e against the vite dev server, not the build
 #   VERIFY_KEEP_DIST=1       keep the run's build (.verify/runs/<id>/dist)
+#   E2E_SHARD=2/4            run only shard 2 of 4 of the e2e files (CI matrix).
+#                            Files are balanced by size (largest first onto the
+#                            lightest shard), so the split is deterministic.
+#   E2E_EXCLUDE=a,b          drop these e2e files (names as in E2E_FILES),
+#                            before sharding (CI: the visual job runs them).
 #   E2E_DEV_FILES="06-lazy-editor"  e2e files written against the dev server's
 #                            per-module URLs; they get a vite dev server (same
 #                            backend) even in prod mode, started only if one runs
@@ -188,15 +193,60 @@ resolve_e2e_files() {
     local item; for item in tests/e2e/items/*.test.mjs; do [[ -f "$item" ]] && item_enabled "$item" && E2E_LIST+=("$item"); done
     return 0
   fi
-  local x
+  local x f
   for x in ${E2E_FILES//,/ }; do
-    if [[ -f "$x" ]]; then E2E_LIST+=("$x")
-    elif [[ -f "tests/e2e/$x" ]]; then E2E_LIST+=("tests/e2e/$x")
-    elif [[ -f "tests/e2e/$x.test.mjs" ]]; then E2E_LIST+=("tests/e2e/$x.test.mjs")
-    elif [[ -f "tests/e2e/items/$x.test.mjs" ]]; then E2E_LIST+=("tests/e2e/items/$x.test.mjs")
-    else echo "unknown e2e file: $x" >&2; return 1
-    fi
+    f=$(e2e_file_path "$x") || return 1
+    E2E_LIST+=("$f")
   done
+}
+
+# One E2E_FILES / E2E_EXCLUDE name -> its path: a path, a name under tests/e2e
+# or tests/e2e/items, with or without .test.mjs.
+e2e_file_path() {
+  local x="$1"
+  if [[ -f "$x" ]]; then echo "$x"
+  elif [[ -f "tests/e2e/$x" ]]; then echo "tests/e2e/$x"
+  elif [[ -f "tests/e2e/$x.test.mjs" ]]; then echo "tests/e2e/$x.test.mjs"
+  elif [[ -f "tests/e2e/items/$x.test.mjs" ]]; then echo "tests/e2e/items/$x.test.mjs"
+  else echo "unknown e2e file: $x" >&2; return 1
+  fi
+}
+
+# E2E_EXCLUDE=a,b: drop these files (same names as E2E_FILES). Applied before
+# sharding, so CI's shards and its separate visual job split the files cleanly.
+exclude_e2e_files() {
+  [[ -n "${E2E_EXCLUDE:-}" ]] || return 0
+  local x f k drop=()
+  for x in ${E2E_EXCLUDE//,/ }; do
+    f=$(e2e_file_path "$x") || return 1
+    drop+=("$f")
+  done
+  local -a keep=()
+  for f in "${E2E_LIST[@]}"; do
+    local skip=0
+    for k in "${drop[@]}"; do [[ "$f" -ef "$k" ]] && skip=1; done
+    (( skip )) || keep+=("$f")
+  done
+  E2E_LIST=("${keep[@]}")
+}
+
+# E2E_SHARD=i/n: keep this shard's files. Greedy longest-first by file size,
+# so every shard gets a similar amount of test code.
+shard_e2e_files() {
+  [[ -n "${E2E_SHARD:-}" ]] || return 0
+  local i="${E2E_SHARD%/*}" n="${E2E_SHARD#*/}"
+  [[ "$i" =~ ^[0-9]+$ && "$n" =~ ^[0-9]+$ && "$i" -ge 1 && "$i" -le "$n" ]] || { echo "bad E2E_SHARD=$E2E_SHARD (want i/n)" >&2; return 1; }
+  local -a load mine=() sorted
+  local k f best size
+  for ((k = 0; k < n; k++)); do load[k]=0; done
+  mapfile -t sorted < <(for f in "${E2E_LIST[@]}"; do printf '%s %s\n' "$(stat -c %s "$f")" "$f"; done | sort -k1,1nr -k2,2)
+  for line in "${sorted[@]}"; do
+    size="${line%% *}"; f="${line#* }"; best=0
+    for ((k = 1; k < n; k++)); do (( load[k] < load[best] )) && best=$k; done
+    load[best]=$(( load[best] + size ))
+    (( best == i - 1 )) && mine+=("$f")
+  done
+  E2E_LIST=("${mine[@]}")
 }
 
 step_e2e() {
@@ -204,6 +254,8 @@ step_e2e() {
   local sum_t=0 sum_p=0 sum_f=0 sum_s=0 status=PASS
   t0=$(now)
   if ! resolve_e2e_files; then record e2e FAIL "bad E2E_FILES" "$(elapsed "$t0")"; return; fi
+  if ! exclude_e2e_files; then record e2e FAIL "bad E2E_EXCLUDE" "$(elapsed "$t0")"; return; fi
+  if ! shard_e2e_files; then record e2e FAIL "bad E2E_SHARD" "$(elapsed "$t0")"; return; fi
 
   t1=$(now)
   if ! { stack_start_backend e2e && stack_start_app "$STACK_API_URL" "$DIST_DIR"; } 2>>"$LOG_DIR/stack.log"; then

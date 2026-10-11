@@ -10,6 +10,7 @@ Decisions made autonomously while the owner was AFK. Each line: decision — rea
 
 ## Owner-approved (2026-10-11)
 - Fonts are self-hosted (speed, offline use, privacy): every family the app used to load from Google Fonts (Montserrat 300/400/500/600/800 + italic 400, JetBrains Mono 400, Crimson Pro 400/500/600, DM Sans 400/500/700) comes from `@fontsource/*` via `src/styles/fonts.css`, bundled by Vite as woff2/woff assets with `font-display: swap`; the Google Fonts link and preconnects are gone and the app makes no request to fonts.googleapis.com / fonts.gstatic.com. This supersedes #1 rule 8's "Google Fonts link with display=swap" wording: the frozen rule 8 test now checks the same weights + italic 400 as self-hosted faces, `font-display: swap`, Montserrat 400/600 loaded, and no Google font request (tests/e2e/self-hosted-fonts.test.mjs guards doc, library and landing pages). The #19 HTML export stays font-URL-free (fonts.css is kept out of the inlined style.css); the server cover renderer already bundles its Montserrat TTFs.
+- CI: e2e runs as 8 parallel shards; the screenshot/axe-heavy files run in a separate `visual` job (`E2E_EXCLUDE` on the shards, `E2E_FILES` on the visual job). `scripts/verify-fast.sh [N]` (default 4) runs the whole gate locally in parallel, with no exclusions.
 
 ## Defaults applied
 - Named readers = self-declared reviewer name (no auth exists).
