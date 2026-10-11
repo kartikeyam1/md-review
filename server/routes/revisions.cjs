@@ -9,7 +9,9 @@ const { modeOf } = require('../mode.cjs');
 module.exports = async function revisions(req, res) {
   // GET /paste/:id/revisions — content history (oldest first)
   // GET /paste/:id/revisions/:hash — one stored revision ('current' = live content)
-  const revisionsMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/revisions(?:\/([a-f0-9]{32}|current))?$/);
+  // Any last segment is this route's: a malformed or unknown hash is a JSON 404
+  // "unknown revision" (not an empty 404 that reads like a missing doc).
+  const revisionsMatch = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)\/revisions(?:\/([^/?]+))?$/);
   if (req.method === 'GET' && revisionsMatch) {
     const pasteId = resolveId(revisionsMatch[1]);
     if (!pasteId) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
@@ -24,7 +26,7 @@ module.exports = async function revisions(req, res) {
       return res.end(JSON.stringify({ current: meta.content_hash || null, revisions }));
     }
 
-    const hash = which === 'current' ? (meta.content_hash || null) : which;
+    const hash = which === 'current' ? (meta.content_hash || null) : (/^[a-f0-9]{32}$/.test(which) ? which : null);
     const entry = revisions.find(r => r.hash === hash) || null;
     if (!hash || (!entry && hash !== meta.content_hash)) {
       res.writeHead(404, { 'Content-Type': 'application/json' });

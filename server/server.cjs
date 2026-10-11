@@ -57,7 +57,7 @@ async function handleRequest(req, res) {
   // 00 §9: the full shared header list (PATCH is for #26/#27).
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, If-Match, X-MdReview-Client, Authorization, X-Edit-Token, X-MdReview-Reader');
-  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Agent-Sections');
+  res.setHeader('Access-Control-Expose-Headers', 'ETag, X-Agent-Sections, X-MdReview-Warning, X-MdReview-Visible');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);

@@ -6,8 +6,29 @@ const crypto = require('crypto');
 const { NEXT, readBody, clientOf } = require('../http-util.cjs');
 const {
   resolveId, sessionExists, loadPaste, savePaste, saveSessionFile, chunkDir, saveChunk, assembleChunks,
+  loadMeta, loadContent, contentHashMismatch,
 } = require('../storage.cjs');
 const { requireEdit } = require('./edit-tokens.cjs');
+
+/**
+ * The content hash a markdown upload must still find on complete (If-Match on
+ * start, or `base_hash` / `expectedContentHash` in the start body), else null.
+ */
+function expectedHashOf(req, body) {
+  const v = req.headers['if-match'] || body.base_hash || body.expectedContentHash;
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
+/** 412 body for a stale chunked markdown upload (same shape as PUT /paste/:id/markdown). */
+function sendStale(res, id, current) {
+  const meta = loadMeta(id) || {};
+  res.writeHead(412, { 'Content-Type': 'application/json', ETag: `"${current}"` });
+  return res.end(JSON.stringify({
+    error: 'Content changed on server since your last read',
+    content_hash: current,
+    filename: meta.filename,
+  }));
+}
 
 /** The staged upload's _meta.json (null when unreadable). */
 function readUploadMeta(uploadId) {
@@ -33,8 +54,23 @@ module.exports = async function uploads(req, res) {
     let parsed = {};
     try { parsed = JSON.parse(rawBody); } catch {}
     if (!requireEdit(req, res, pasteId)) return;
+    const target = parsed.target || 'markdown';
+    // Optimistic concurrency for a large markdown write: checked now (fail fast,
+    // before any chunk is sent) and again on complete, where the write happens.
+    const expectedHash = target === 'markdown' ? expectedHashOf(req, parsed) : null;
+    if (expectedHash) {
+      const meta = loadMeta(pasteId);
+      const current = contentHashMismatch(expectedHash, meta, loadContent(pasteId));
+      if (current) return sendStale(res, pasteId, current);
+    }
     const uploadId = crypto.randomBytes(8).toString('hex');
-    const uploadMeta = { pasteId, totalChunks: parsed.totalChunks || null, filename: parsed.filename || null, target: parsed.target || 'markdown', author: typeof parsed.author === 'string' ? parsed.author : null, client: clientOf(req) };
+    const uploadMeta = {
+      pasteId, totalChunks: parsed.totalChunks || null, filename: parsed.filename || null, target,
+      author: typeof parsed.author === 'string' && parsed.author.trim() ? parsed.author.trim().slice(0, 80) : null,
+      client: clientOf(req), expectedHash,
+      // A file upload's chunks are pieces of one string: base64 text for a binary file.
+      encoding: parsed.encoding === 'base64' ? 'base64' : 'utf-8',
+    };
     fs.mkdirSync(chunkDir(uploadId), { recursive: true });
     fs.writeFileSync(path.join(chunkDir(uploadId), '_meta.json'), JSON.stringify(uploadMeta));
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -101,18 +137,25 @@ module.exports = async function uploads(req, res) {
 
     if (uploadMeta.target === 'file' && uploadMeta.filename) {
       // Save as session file
-      const info = saveSessionFile(pasteId, uploadMeta.filename, assembled, 'utf-8');
+      let info;
+      try { info = saveSessionFile(pasteId, uploadMeta.filename, assembled, uploadMeta.encoding || 'utf-8'); }
+      catch (e) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: e.message })); }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, file: info }));
     } else {
       // Save as primary markdown content
       const data = loadPaste(pasteId);
       if (!data) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'not found' })); }
+      const current = contentHashMismatch(uploadMeta.expectedHash, data, data.markdown);
+      if (current) return sendStale(res, pasteId, current);
       data.markdown = assembled;
       if (uploadMeta.filename) data.filename = uploadMeta.filename;
-      savePaste(pasteId, data, { by: uploadMeta.author || null, client: uploadMeta.client || clientOf(req) });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ ok: true, size: assembled.length }));
+      const saved = savePaste(pasteId, data, { by: uploadMeta.author || null, client: uploadMeta.client || clientOf(req) });
+      // Same result as PUT /paste/:id/markdown (content_hash chains the next guarded write); size in bytes.
+      res.writeHead(200, { 'Content-Type': 'application/json', ETag: `"${saved.content_hash}"` });
+      return res.end(JSON.stringify({
+        ok: true, content_hash: saved.content_hash, size: Buffer.byteLength(assembled, 'utf-8'),
+      }));
     }
   }
 

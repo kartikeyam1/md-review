@@ -92,7 +92,7 @@ test('get_session — returns error for nonexistent session', async () => {
 
   const result = await h.get_session({ sessionId: 'nonexistent' });
 
-  assert.equal(result.error, 'Session not found');
+  assert.match(result.error, /^Session not found/);
 });
 
 // ── list_comments ───────────────────────────────────────────────────────────
@@ -269,7 +269,7 @@ test('error handling — 404 returns descriptive error', async () => {
 
   const result = await h.list_comments({ sessionId: 'nonexistent' });
 
-  assert.equal(result.error, 'Session not found');
+  assert.match(result.error, /^Session not found/);
 });
 
 // ── Revision history tools ──────────────────────────────────────────────────

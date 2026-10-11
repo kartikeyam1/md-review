@@ -22,7 +22,7 @@ const {
   generateSlug, uniqueSlug, isExpired, loadPaste, savePaste, currentContentHash, contentHashMismatch,
   hashContent, sessionByKey, tx,
 } = require('../storage.cjs');
-const { readMode, defaultMode } = require('../mode.cjs');
+const { readMode, defaultMode, modeOf } = require('../mode.cjs');
 const { handedOutUrl, appUrl } = require('../links.cjs');
 const { newToken, hashToken, editUrlFor, editAccess } = require('./edit-tokens.cjs');
 const { normalizeExpiryDays, expiresAtFor, DEFAULT_EXPIRY_DAYS } = require('../../shared/expiry.mjs');
@@ -94,7 +94,7 @@ function create(req, key, body) {
   const saved = savePaste(id, data, { by, client: clientOf(req), note: noteOf(body), noCoalesce: true },
     { claimSlugs: [slug], createdBy: by, editTokenHash: hashToken(editToken), upsertKey: key });
   return reply(201, {
-    id, slug, key, created: true, changed: true, revision: saved.content_hash,
+    id, slug, key, created: true, changed: true, revision: saved.content_hash, mode: data.mode,
     ...links(id, slug), editToken, editUrl: editUrlFor(slug, editToken),
   }, { ETag: `"${saved.content_hash}"`, 'Cache-Control': 'no-store' }); // the body carries the raw token
 }
@@ -134,7 +134,7 @@ function update(req, key, id, body) {
     revision = savePaste(id, data, { by: authorOf(body), client: clientOf(req), note: noteOf(body), noCoalesce: true }).content_hash;
   }
   return reply(200, {
-    id, slug: data.slug || null, key, created: false, changed: contentChanged || metaChanged, revision,
+    id, slug: data.slug || null, key, created: false, changed: contentChanged || metaChanged, revision, mode: modeOf(data),
     ...links(id, data.slug),
   }, { ETag: `"${revision}"` });
 }
@@ -150,7 +150,7 @@ module.exports = async function byKey(req, res) {
     const meta = row && loadPaste(row.id);
     if (!meta) return send(res, 404, { error: 'not found' });
     const out = {
-      id: row.id, slug: meta.slug || null, key, revision: currentContentHash(meta, meta.markdown),
+      id: row.id, slug: meta.slug || null, key, revision: currentContentHash(meta, meta.markdown), mode: modeOf(meta),
       updated_at: row.updated_at, ...links(row.id, meta.slug),
     };
     if (isExpired(meta)) out.expired = true; // rule 6: the next upsert revives it

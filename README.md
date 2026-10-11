@@ -1,8 +1,11 @@
 # md-review
 
-Review markdown **and HTML** files with Google Docs-style inline comments, then generate structured prompts for any AI agent.
+Share Markdown **and HTML** documents by link: a clean reading page for humans, the full source for agents,
+and an optional review mode with Google Docs-style inline comments, approval and structured prompts for any AI agent.
 
-A static SPA that runs entirely in the browser. No backend, no accounts, no tracking.
+The frontend is a Vue SPA; it works on its own in the browser (local files, no accounts, no tracking). Shared
+links, revisions, comments, reactions and view counts live in a small Node backend (`server/`, SQLite), which
+agents drive through an MCP server or a CLI — see [Agents: MCP server and CLI](#agents-mcp-server-and-cli).
 
 ## Features
 
@@ -55,6 +58,28 @@ Use the arrow buttons in the sidebar header to:
 - **Import** a previously exported `.comments.json` file
 
 This lets you save reviews, share them with teammates, or resume later.
+
+## Agents: MCP server and CLI
+
+Agents publish and read documents through the backend (`PASTE_API_URL`, default `http://localhost:3100`).
+`GET /llms.txt` on the backend is the agent-facing guide.
+
+- **MCP server** — `node server/mcp-server.js` (stdio) or `node server/mcp-server-http.js` (streamable HTTP at
+  `/mcp` on `MCP_PORT`, default 3200). Tools cover documents (`create_session`, `get_session`, `update_markdown`,
+  `patch_markdown`, `upsert_session` for recurring docs, `update_session_meta`, `delete_session`, `list_sessions`),
+  history (`list_revisions`, `get_revision`), review comments and approval, files (`add_file`, `get_file` — binary
+  files as base64), readers (`get_reactions`, `get_views`) and shell-command generators for large files
+  (`create_via_shell`, `upload_via_shell`, `add_file_via_shell`). A failed call returns `isError: true` with an
+  `error` that says what to do next. `sessionId` takes a doc id, slug (old slugs of renamed docs too) or upsert key.
+- **Edit tokens** — every new doc gets an edit token (`mre_…`); reads never need it, writes do. The MCP servers
+  remember the tokens of docs they created or edited in a token store: `MCP_TOKEN_STORE` (a file path, or a
+  directory → `<dir>/edit-tokens.json`; default `server/mcp-state/edit-tokens.json`). The servers refuse to start
+  when the store cannot be written. For shell commands and the CLI, export `MDREVIEW_EDIT_TOKEN`.
+- **CLI** — `node server/cli.mjs` (`md-review`): `create`, `upload`, `add-file`, `patch`, and
+  `publish <key> <file>` (recurring docs: same URL, one revision per run, `--note` per run). `--mode review`
+  creates a review doc; `--token` / `MDREVIEW_EDIT_TOKEN` carry the edit token. Run `md-review --help`.
+- **Doc modes** — `publish` (default) is a read-only page; `review` adds comments and approval. Approval follows
+  the content: changing an approved doc puts it back to pending.
 
 ## Tech Stack
 

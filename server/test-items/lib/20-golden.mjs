@@ -503,6 +503,14 @@ function cmp(g, a, at, diffs, strict = false, depth = 0) {
   if (g !== a) diffs.push(`${at}: got ${JSON.stringify(a)?.slice(0, 160)}, legacy ${JSON.stringify(g)?.slice(0, 160)}`);
 }
 
+// Legacy behaviours a later fix changed on purpose, by entry name → check of the new answer
+// (null = as intended). Justified in docs/build/reports/fix-api.md.
+const INTENDED_CHANGES = {
+  // persona-agent #5: a renamed doc keeps its old slug as an alias, so links already handed out keep working.
+  'meta A: old slug gone': (a) => (a.status === 200 && a.body?.json?.slug === 'golden-renamed'
+    ? null : `expected the old slug to resolve to the renamed doc (200, slug golden-renamed), got ${a.status} ${JSON.stringify(a.body)?.slice(0, 120)}`),
+};
+
 /** Compare normalised entry lists; returns human-readable diffs (empty = equal). */
 export function compareEntries(golden, actual) {
   const diffs = [];
@@ -511,6 +519,11 @@ export function compareEntries(golden, actual) {
     const g = golden[i]; const a = actual[i];
     const where = `#${i} ${g.name}`;
     if (g.name !== a.name || g.method !== a.method || g.path !== a.path) { diffs.push(`${where}: request mismatch (${a.method} ${a.path} vs ${g.method} ${g.path})`); continue; }
+    if (INTENDED_CHANGES[g.name]) {
+      const problem = INTENDED_CHANGES[g.name](a);
+      if (problem) diffs.push(`${where}: ${problem}`);
+      continue;
+    }
     if (g.lenient === 'invalid-regex') {
       if (![400, 500].includes(a.status)) diffs.push(`${where}: status ${a.status}, expected 400 (or legacy 500)`);
       continue;

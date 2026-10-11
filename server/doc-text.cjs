@@ -304,7 +304,11 @@ function stripUnderscoreEmphasis(s) {
 
 /** Plain text of inline markdown (headings, titles, snippets), in linear time. */
 function stripInlineMarkdown(s) {
-  let t = String(s);
+  // RAG status badges (`:rag-green[On track]`) read as their label; a GitHub
+  // alert marker (`[!NOTE]`, after the quote marker is gone) is not text.
+  let t = String(s)
+    .replace(/:rag-(?:green|amber|red)\[([^\]\n]*)\]/g, '$1')
+    .replace(/(^|\s)\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?=\s|$)/gi, '$1');
   t = replaceBracketed(t, '![', '(', ')');
   t = replaceBracketed(t, '[', '(', ')');
   t = replaceBracketed(t, '[', '[', ']');

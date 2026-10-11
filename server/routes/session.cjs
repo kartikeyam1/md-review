@@ -55,15 +55,18 @@ module.exports = async function session(req, res) {
       else meta.expires_at = expiresAtFor(expiryDays);
     }
 
-    // Update slug (the old one is released first, so it may be chosen again)
+    // Update slug. A rename keeps the old slug as an alias of this doc, so every
+    // link already handed out (/d/<old>, /d/<old>.md, /paste/<old>) keeps working
+    // and the meta page points at the new canonical URL. Removing the slug ("")
+    // releases it (an explicit "unlink this name").
     const slugs = { releaseSlugs: [], claimSlugs: [] };
     if (parsed.slug !== undefined) {
-      if (meta.slug) slugs.releaseSlugs.push(meta.slug);
       if (parsed.slug) {
         const newSlug = uniqueSlug(generateSlug(parsed.slug), { releasing: meta.slug, selfId: pasteId });
         meta.slug = newSlug;
         slugs.claimSlugs.push(newSlug);
       } else {
+        if (meta.slug) slugs.releaseSlugs.push(meta.slug);
         delete meta.slug;
       }
     }
@@ -75,6 +78,7 @@ module.exports = async function session(req, res) {
       slug: meta.slug || null,
       expires_at: meta.expires_at || null,
       mode: modeOf(meta),
+      url: handedOutUrl(meta.slug || pasteId),
       ...(expiryDays !== undefined ? { expiry_days: expiryDays } : {}),
     }));
   }

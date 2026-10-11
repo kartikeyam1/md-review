@@ -3,7 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
-import { createTokenStore } from './mcp-token-store.js';
+import { createTokenStore, checkTokenStore } from './mcp-token-store.js';
 import { stripAgentSections } from '../shared/agentSections.mjs';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
@@ -16,6 +16,51 @@ const UPSERT_MAX_BYTES = 10 * 1024 * 1024;
 
 /** #23 rule 11: what a write tool returns on 401/403. */
 export const EDIT_PROTECTED_MESSAGE = 'This document is edit-protected. Pass editToken (returned when it was created) or ask the owner for its edit link.';
+/** A token was given (or remembered) but it belongs to another doc, or was rotated. */
+export const WRONG_TOKEN_MESSAGE = 'The edit token does not match this document: edit tokens are per document, and the one given (or remembered for it) is not this document\'s (or was rotated). Pass the editToken returned when this document was created, or ask the owner for its edit link.';
+
+/** Upsert keys (#21 rule 1): ids and slugs never contain ':', '.' or '_', so a key is unambiguous. */
+const KEY_RE = /^[a-z0-9][a-z0-9._:-]{0,127}$/;
+const ID_OR_SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9-]*$/;
+/** The `sessionId` argument's description (every tool that takes one). */
+export const SESSION_ID_DESC = 'The document: its id or slug (as returned by create_session / upsert_session / list_sessions; an old slug of a renamed doc works too), or its upsert key (e.g. "team:weekly-status").';
+
+/** add_comment's description (both servers). */
+export const ADD_COMMENT_DESC = 'Add a review comment anchored to a line range of the document source. Lines follow the app: startLine is the 0-based first line, '
+  + 'endLine the line after the last (exclusive), so the 5th line alone is startLine 4, endLine 5. Lines outside the document are refused; '
+  + 'a selectedText that is not in the source is accepted with a warning. On a publish-mode doc the comment is stored but nobody can see it '
+  + '(the result says visible:false with a warning) until the doc is switched to review with update_session_meta mode "review".';
+
+/** add_comment's line arguments (both servers). */
+export const LINE_ARGS = () => ({
+  startLine: z.number().int().describe('0-based first line of the commented range'),
+  endLine: z.number().int().describe('The line after the last commented line (exclusive; startLine + 1 for one line)'),
+});
+
+/** MCP result for a handler result: errors are flagged isError (scripted clients branch on it). */
+export const toolResult = (result) => {
+  const out = { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  if (result && typeof result === 'object' && !Array.isArray(result) && typeof result.error === 'string') out.isError = true;
+  return out;
+};
+
+/** Split a string into chunks of at most `size` UTF-16 units, never inside a surrogate pair. */
+export function splitChunks(content, size) {
+  const chunks = [];
+  for (let i = 0; i < content.length;) {
+    let end = Math.min(i + size, content.length);
+    const c = content.charCodeAt(end - 1);
+    if (end < content.length && end - i > 1 && c >= 0xd800 && c <= 0xdbff) end--;
+    chunks.push(content.slice(i, end));
+    i = end;
+  }
+  return chunks.length ? chunks : [''];
+}
+
+/** curl flags for the generated shell commands: quiet, but errors shown and HTTP errors exit non-zero (with the error body). */
+const CURL_FLAGS = '-sS --fail-with-body';
+
+const TEXT_MIME = /^(text\/|application\/(json|xml|javascript|x-yaml|yaml|toml|x-sh)\b)|\+(json|xml)\b|^image\/svg\+xml/i;
 
 /**
  * #28 rule 19: the agent-only marker syntax, appended to the descriptions of
@@ -75,6 +120,36 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
     return "'" + s.replace(/'/g, "'\\''") + "'";
   }
 
+  /** The doc segment of an API path (/paste/<x>/…), for error messages. */
+  const docOf = (path) => {
+    const m = /^\/paste\/(?!by-key\/)([^/?]+)/.exec(path);
+    return m ? decodeURIComponent(m[1]) : null;
+  };
+
+  /** A 404 body → an actionable not-found result (what is missing, and how to find the right id). */
+  function notFound(path, body) {
+    const what = String(body.error || '').toLowerCase();
+    const x = docOf(path);
+    const seg = (re) => { const m = re.exec(path); return m ? decodeURIComponent(m[1]) : '?'; };
+    if (what.includes('reply')) return { error: `Reply not found: comment ${seg(/\/comments\/([^/]+)/)} has no reply ${seg(/\/replies\/([^/?]+)/)}. list_comments shows each comment's replies with their ids.`, status: 404, code: 'reply_not_found' };
+    if (what.includes('comment')) return { error: `Comment not found: document ${x} has no comment ${seg(/\/comments\/([^/?]+)/)}. list_comments shows the comment ids.`, status: 404, code: 'comment_not_found' };
+    if (what.includes('file')) return { error: `File not found: document ${x} has no file ${seg(/\/files\/(.+)$/)}. list_files shows its files.`, status: 404, code: 'file_not_found' };
+    if (what.includes('revision')) return { error: `Revision not found: document ${x} has no stored revision ${seg(/\/revisions\/([^/?]+)/)}. list_revisions shows the revision hashes (or pass 'current').`, status: 404, code: 'revision_not_found' };
+    if (what.includes('upload')) return { error: 'Upload not found: the chunked upload expired or belongs to another document. Start the upload again.', status: 404, code: 'upload_not_found' };
+    return {
+      error: `Session not found: no document has the id or slug "${x}". Use the id or slug returned by create_session / upsert_session (list_sessions lists them; an upsert key such as "team:weekly" works too). It may also have been deleted.`,
+      status: 404, code: 'not_found',
+    };
+  }
+
+  /** What to do next, per error status (added as `hint`). */
+  const HINTS = {
+    409: 'The patch or delta no longer matches the current content. Re-read the document (get_session) and rebuild the patch, or send the full markdown.',
+    410: 'The document has expired. update_session_meta with expiryDays (or another upsert_session run) brings it back.',
+    412: 'The document changed since you read it. Re-read it (get_session), merge your change, and retry with expectedContentHash set to the content_hash in this result (also in a full get_session).',
+    413: 'The request is too large. Publish large files from disk instead: create_via_shell / upload_via_shell (shell command), or the CLI (md-review create/upload/publish).',
+  };
+
   async function apiCall(path, opts = {}) {
     let res;
     try {
@@ -89,15 +164,13 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
     }
     if (res.status === 404) {
       const body = await res.json().catch(() => ({}));
-      if (body.error?.includes('comment')) return { error: 'Comment not found' };
-      return { error: 'Session not found' };
+      return notFound(path, body || {});
     }
     if ((res.status === 401 || res.status === 403)) {
       // #23: an edit-protected doc refused the write (no token / wrong token).
       const body = await res.json().catch(() => ({}));
-      if (body.code === 'edit_token_required' || body.code === 'edit_token_invalid') {
-        return { error: EDIT_PROTECTED_MESSAGE, status: res.status, code: body.code };
-      }
+      if (body.code === 'edit_token_required') return { error: EDIT_PROTECTED_MESSAGE, status: res.status, code: body.code };
+      if (body.code === 'edit_token_invalid') return { error: WRONG_TOKEN_MESSAGE, status: res.status, code: body.code, hint: EDIT_PROTECTED_MESSAGE };
       return { error: body.error || `Paste service returned ${res.status}`, status: res.status };
     }
     if (!res.ok) {
@@ -108,10 +181,21 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       const out = { error: body.error || `Paste service returned ${res.status}`, status: res.status };
       if (body.content_hash) out.content_hash = body.content_hash;
       if (typeof body.code === 'string') out.code = body.code; // e.g. invalid_key (#21)
+      if (Array.isArray(body.unresolved_comment_ids)) out.unresolved_comment_ids = body.unresolved_comment_ids;
+      if (HINTS[res.status]) out.hint = HINTS[res.status];
       return out;
     }
-    if (res.status === 204) return {};
-    return res.json();
+    // Server-side warnings (e.g. a comment on a publish-mode doc) ride in headers.
+    const header = (n) => (res.headers && typeof res.headers.get === 'function' ? res.headers.get(n) : null);
+    const warning = header('x-mdreview-warning');
+    const hidden = header('x-mdreview-visible') === 'false';
+    if (res.status === 204) return warning ? { warning } : {};
+    const out = await res.json();
+    if (out && typeof out === 'object' && !Array.isArray(out)) {
+      if (hidden) out.visible = false;
+      if (warning) out.warning = warning;
+    }
+    return out;
   }
 
   async function resolveFile(markdown, filePath, defaultName) {
@@ -119,8 +203,9 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
     if (!filePath) throw new Error('Either markdown or filePath must be provided');
     if (!allowLocalFiles) {
       throw new Error(
-        'filePath is not supported over HTTP transport — the MCP server cannot access your local filesystem. ' +
-        'Please read the file yourself and pass the content via the "markdown" parameter instead.'
+        'filePath is not supported over the HTTP transport: this MCP server cannot read files on your machine. '
+        + 'For a file on disk use create_via_shell (new document) or upload_via_shell (existing document): they return a shell command '
+        + 'that streams the file straight to the service. Or pass the content itself as "markdown".'
       );
     }
     const content = await readFile(filePath, 'utf-8');
@@ -130,6 +215,21 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
   // ── Edit tokens (#23 rule 11): tool argument → persistent store → none ─────
   const tokenFor = (sessionId, editToken) => editToken || tokenStore.get(sessionId);
   const tokenHeaders = (token, headers) => (token ? { ...(headers || {}), 'X-Edit-Token': token } : headers);
+
+  /**
+   * Remember `token` for a doc under every name it answers to: the identifier
+   * the caller used, plus its id and slug (one meta read, only when the token
+   * is new here), so a later call by id finds a token first given by slug.
+   */
+  async function rememberToken(sessionId, token) {
+    if (!token) return;
+    const known = tokenStore.get(sessionId) === token;
+    tokenStore.save([sessionId], token); // no write when unchanged; migrates a pre-scoping bare key
+    if (known) return;
+    const meta = await apiCall(`/paste/${sessionId}?fields=meta`, { headers: tokenHeaders(token) });
+    if (meta && !meta.error) tokenStore.save([meta.id, meta.slug], token);
+  }
+
   /**
    * Run a protected write with the token for `sessionId`; a successful call
    * with an explicit editToken remembers it (a refused one never overwrites
@@ -138,27 +238,35 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
   async function withToken(sessionId, editToken, run) {
     const token = tokenFor(sessionId, editToken);
     const result = await run(token);
-    if (editToken && result && !result.error) tokenStore.save([sessionId], editToken);
+    if (editToken && result && !result.error) await rememberToken(sessionId, editToken);
     return result;
   }
 
-  // Chunked upload for large content (>1MB)
-  async function uploadLargeContent(sessionId, content, filename, target = 'markdown', token = null) {
-    // Start upload
+  /**
+   * Chunked upload for large content (>1 MB). `expectedContentHash` guards a
+   * markdown write exactly like PUT /markdown's If-Match (checked on start and
+   * on complete); `author` is recorded on the revision; `encoding` tells the
+   * server a file's chunks are base64 text.
+   */
+  async function uploadLargeContent(sessionId, content, filename, target = 'markdown', token = null, { expectedContentHash, author, encoding } = {}) {
+    const chunks = splitChunks(content, CHUNK_SIZE);
+    const startHeaders = tokenHeaders(token, expectedContentHash && target === 'markdown' ? { 'If-Match': expectedContentHash } : undefined);
+    const startBody = { totalChunks: chunks.length, filename, target };
+    if (author) startBody.author = author;
+    if (encoding) startBody.encoding = encoding;
     const startResult = await apiCall(`/paste/${sessionId}/upload/start`, {
       method: 'POST',
-      headers: tokenHeaders(token),
-      body: JSON.stringify({ totalChunks: Math.ceil(content.length / CHUNK_SIZE), filename, target }),
+      headers: startHeaders,
+      body: JSON.stringify(startBody),
     });
     if (startResult.error) return startResult;
 
     // Send chunks
-    for (let i = 0; i * CHUNK_SIZE < content.length; i++) {
-      const chunk = content.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    for (let i = 0; i < chunks.length; i++) {
       const chunkResult = await apiCall(`/paste/${sessionId}/upload/chunk`, {
         method: 'POST',
         headers: tokenHeaders(token),
-        body: JSON.stringify({ uploadId: startResult.uploadId, index: i, data: chunk }),
+        body: JSON.stringify({ uploadId: startResult.uploadId, index: i, data: chunks[i] }),
       });
       if (chunkResult.error) return chunkResult;
     }
@@ -187,9 +295,10 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
     }
     const resolved = await resolveFile(markdown, filePath, filename);
     const content = resolved.content;
-    // Use chunked upload for large content (>1 MB)
+    // Use chunked upload for large content (>1 MB): same guard, author and result shape as a direct write.
     if (content.length > 1024 * 1024) {
-      return uploadLargeContent(sessionId, content, filename || resolved.name, 'markdown', token);
+      // The display filename changes only when given (as for a direct write).
+      return uploadLargeContent(sessionId, content, filename ?? null, 'markdown', token, { expectedContentHash, author: by });
     }
     const payload = { markdown: content, author: by };
     if (filename !== undefined) payload.filename = filename;
@@ -210,7 +319,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
     };
   }
 
-  return {
+  const handlers = {
     async create_session({ markdown, filePath, filename, comments, sessionName, callbackUrl, slug, expiryDays, contentType, author, mode }) {
       const resolved = await resolveFile(markdown, filePath, filename);
       const resolvedFilename = filename ?? resolved.name;
@@ -237,12 +346,13 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       if (result.error) return result;
       const shareId = result.slug || result.id;
       const url = result.url || docUrl(shareBase, shareId);
-      const out = { id: result.id, slug: result.slug || null, mode: result.mode ?? null, shareUrl: url, url };
+      // One shape for every create (MCP / REST / CLI): id, slug, mode, url (+ viewUrl/shareUrl aliases), app_url, editToken, editUrl.
+      const appUrl = result.app_url || docUrl(frontendUrl, shareId);
+      const out = { id: result.id, slug: result.slug || null, mode: result.mode ?? null, shareUrl: url, url, viewUrl: url, app_url: appUrl };
       if (result.editToken) {
         // #23 rule 11: remember the token for every later call (any connection, any restart).
         tokenStore.save([result.id, result.slug], result.editToken);
-        const appUrl = result.app_url || docUrl(frontendUrl, shareId);
-        Object.assign(out, { app_url: appUrl, editToken: result.editToken, editUrl: result.editUrl || `${appUrl}?edit=${result.editToken}` });
+        Object.assign(out, { editToken: result.editToken, editUrl: result.editUrl || `${appUrl}?edit=${result.editToken}` });
       }
       return out;
     },
@@ -396,11 +506,11 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
 
     // ── New: chunked upload for large files ──────────────────────────────────
 
-    async upload_chunk({ sessionId, filePath, filename, markdown, target, editToken }) {
+    async upload_chunk({ sessionId, filePath, filename, markdown, target, editToken, author }) {
       const resolved = await resolveFile(markdown, filePath, filename);
       const content = resolved.content;
       const resolvedFilename = filename || resolved.name;
-      return withToken(sessionId, editToken, (token) => uploadLargeContent(sessionId, content, resolvedFilename, target || 'markdown', token));
+      return withToken(sessionId, editToken, (token) => uploadLargeContent(sessionId, content, resolvedFilename, target || 'markdown', token, { author: author || 'agent' }));
     },
 
     // ── New: patch markdown with a unified diff ──────────────────────────────
@@ -432,7 +542,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       return withToken(sessionId, editToken, (token) => {
         // Use chunked upload for large files
         if (fileContent.length > 1024 * 1024) {
-          return uploadLargeContent(sessionId, fileContent, name, 'file', token);
+          return uploadLargeContent(sessionId, fileContent, name, 'file', token, { encoding: encoding === 'base64' ? 'base64' : undefined });
         }
         return apiCall(`/paste/${sessionId}/files`, {
           method: 'POST',
@@ -457,15 +567,32 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       });
     },
 
+    /**
+     * A session file: text (UTF-8) files as `content` with encoding "utf-8";
+     * anything else (images, PDFs, invalid UTF-8) as base64 with encoding
+     * "base64" — the same encoding add_file takes, so files round-trip.
+     */
     async get_file({ sessionId, name }) {
-      const res = await fetchFn(`${pasteApiUrl}/paste/${sessionId}/files/${encodeURIComponent(name)}`);
-      if (!res.ok) return { error: `File not found or error: ${res.status}` };
-      const text = await res.text();
-      return { name, content: text };
+      const path = `/paste/${sessionId}/files/${encodeURIComponent(name)}`;
+      let res;
+      try { res = await fetchFn(`${pasteApiUrl}${path}`, { headers: { 'X-MdReview-Client': 'mcp' } }); }
+      catch { return { error: `Could not reach paste service at ${pasteApiUrl}` }; }
+      if (res.status === 404) return notFound(path, await res.json().catch(() => ({})) || {});
+      if (!res.ok) return { error: `Could not read file ${name}: paste service returned ${res.status}`, status: res.status };
+      const buf = Buffer.from(await res.arrayBuffer());
+      const mime = String((res.headers && res.headers.get && res.headers.get('content-type')) || 'application/octet-stream').split(';')[0].trim();
+      let text = null;
+      if (TEXT_MIME.test(mime) || mime === 'application/octet-stream') {
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { text = null; }
+        // An "octet-stream" file is text only when it decodes and has no NUL bytes.
+        if (text !== null && mime === 'application/octet-stream' && text.includes('\u0000')) text = null;
+      }
+      if (text !== null) return { name, mime, encoding: 'utf-8', size: buf.length, content: text };
+      return { name, mime, encoding: 'base64', size: buf.length, content: buf.toString('base64') };
     },
 
     // ── Upsert by key (#21): one stable URL per recurring doc ────────────────
-    async upsert_session({ key, markdown, filename, contentType, sessionName, slug, expiryDays, changeNote, author, expectedContentHash, editToken }) {
+    async upsert_session({ key, markdown, filename, contentType, sessionName, slug, expiryDays, changeNote, author, expectedContentHash, editToken, mode }) {
       if (typeof markdown !== 'string') return { error: 'markdown (string) is required' };
       if (Buffer.byteLength(markdown, 'utf-8') > UPSERT_MAX_BYTES) {
         return { error: 'Content is larger than 10 MB. Publish it from disk instead: md-review publish <key> <file> (CLI), or create_via_shell.' };
@@ -480,6 +607,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       if (slug !== undefined) payload.slug = slug;
       if (expiryDays !== undefined) payload.expiry_days = expiryDays;
       if (changeNote !== undefined) payload.changeNote = changeNote;
+      if (mode !== undefined) payload.mode = mode; // #21: applies when the doc is created
       const result = await apiCall(`/paste/by-key/${encodeURIComponent(key)}`, {
         method: 'PUT',
         headers: tokenHeaders(token, expectedContentHash ? { 'If-Match': expectedContentHash } : undefined),
@@ -493,14 +621,23 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       }
       const known = result.editToken || (editToken ? editToken : null);
       if (known) tokenStore.save([storeKey, result.id, result.slug], known);
-      return { ...result, shareUrl: result.url };
+      const out = { ...result, shareUrl: result.url, viewUrl: result.url };
+      if (mode !== undefined && !result.created && result.mode && result.mode !== mode) {
+        out.warning = `mode applies only when the doc is created: this doc stays in ${result.mode} mode. Call update_session_meta with mode "${mode}" to switch it.`;
+      }
+      return out;
     },
 
     // ── Reactions (#24): an agent-friendly summary keyed by emoji ────────────
     async get_reactions({ sessionId }) {
       const r = await apiCall(`/paste/${sessionId}/reactions`);
       if (r.error) return r;
-      return reactionsForAgent(r);
+      const out = reactionsForAgent(r);
+      // The emoji → reaction code map (REST GET /reactions is keyed by code).
+      const codes = {};
+      for (const g of [...(r.doc || []), ...Object.values(r.sections || {}).flat()]) if (g && g.emoji && g.code) codes[g.emoji] = g.code;
+      out.codes = codes;
+      return out;
     },
 
     // ── View counts (#25): readers too when this server holds the edit token ──
@@ -510,6 +647,8 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       // Reads never fail on a token; say so when the one given (or remembered) did not unlock the reader list.
       if (!result.error && token && !Array.isArray(result.readers)) {
         result.warning = 'The edit token was not accepted for this document, so only the counts are shown (named readers need its valid edit token).';
+      } else if (!result.error && !token && !Array.isArray(result.readers)) {
+        result.note = 'Only the counts are shown: named readers (readers, anonymous_readers) are listed with the document\'s edit token (pass editToken).';
       }
       return result;
     },
@@ -520,15 +659,16 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       // Build a JSON payload using jq to read the file, so the content never enters the conversation
       const fname = basename(filePath);
       const ctype = contentType || (/\.html?$/i.test(fname) ? 'html' : 'markdown');
-      const jqParts = [`.markdown = $content`, `.filename = "${fname}"`, `.contentType = ${JSON.stringify(ctype)}`, `.sharedAt = (now | todate)`, `.comments = []`];
+      const jqParts = [`.markdown = $content`, '.filename = $fname', `.contentType = ${JSON.stringify(ctype)}`, `.sharedAt = (now | todate)`, `.comments = []`];
       if (sessionName) jqParts.push(`.sessionName = ${JSON.stringify(sessionName)}`);
       if (slug) jqParts.push(`.slug = ${JSON.stringify(slug)}`);
       if (callbackUrl) jqParts.push(`.callback_url = ${JSON.stringify(callbackUrl)}`);
       if (mode !== undefined) jqParts.push(`.mode = ${JSON.stringify(mode)}`);
       if (expiryDays !== undefined) jqParts.push(`.expiry_days = ${expiryDays === null ? 'null' : expiryDays}`);
-      const jqExpr = `{} | ${jqParts.join(' | ')}`;
+      // The filename goes in as --arg; a ' in any other value is shell-escaped inside the single-quoted jq program.
+      const jqExpr = `{} | ${jqParts.join(' | ')}`.replace(/'/g, `'\\''`);
 
-      const cmd = `jq -n --rawfile content ${escapeShell(filePath)} '${jqExpr}' | curl -s -X POST ${shellApiUrl}/paste -H 'Content-Type: application/json' -d @-`;
+      const cmd = `jq -n --rawfile content ${escapeShell(filePath)} --arg fname ${escapeShell(fname)} '${jqExpr}' | curl ${CURL_FLAGS} -X POST ${shellApiUrl}/paste -H 'Content-Type: application/json' --data-binary @-`;
       return {
         command: cmd,
         instruction: `Run this command in your shell. It reads ${basename(filePath)} and uploads it directly to the paste service — the file content never enters this conversation. Returns JSON with {id, slug, url, editToken, editUrl}. View at: ${docUrl(shareBase, '<slug-or-id>')}. `
@@ -537,35 +677,73 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
     },
 
     async upload_via_shell({ sessionId, filePath, filename, editToken }) {
-      const fname = filename || basename(filePath);
       const auth = shellTokenHeader(sessionId, editToken);
-      const cmd = `jq -n --rawfile content ${escapeShell(filePath)} '{markdown: $content, filename: ${JSON.stringify(fname)}}' | curl -s -X PUT ${shellApiUrl}/paste/${sessionId}/markdown -H 'Content-Type: application/json' ${auth.header} -d @-`;
+      // The display filename changes only when `filename` is given (a temp file's name must not replace it).
+      const jqArgs = filename ? `--arg filename ${escapeShell(filename)} ` : '';
+      const body = filename ? '{markdown: $content, filename: $filename, author: "agent"}' : '{markdown: $content, author: "agent"}';
+      const cmd = `jq -n --rawfile content ${escapeShell(filePath)} ${jqArgs}'${body}' | curl ${CURL_FLAGS} -X PUT ${shellApiUrl}/paste/${sessionId}/markdown -H 'Content-Type: application/json' -H 'X-MdReview-Client: mcp' ${auth.header} --data-binary @-`;
       return {
         command: cmd,
-        instruction: `Run this command to replace the session content with the file. Returns JSON {ok: true}.${auth.note}`,
+        instruction: `Run this command to replace the session content with the file. Returns JSON {ok: true, content_hash, filename}; on an HTTP error it prints the error JSON and exits non-zero.${auth.note}`,
       };
     },
 
     async add_file_via_shell({ sessionId, filePath, encoding, editToken }) {
       const auth = shellTokenHeader(sessionId, editToken);
       const fname = basename(filePath);
+      const curl = `curl ${CURL_FLAGS} -X POST ${shellApiUrl}/paste/${sessionId}/files -H 'Content-Type: application/json' ${auth.header} --data-binary @-`;
       let cmd;
       if (encoding === 'base64') {
-        cmd = `jq -n --arg content "$(base64 -w0 ${escapeShell(filePath)})" '{name: ${JSON.stringify(fname)}, content: $content, encoding: "base64"}' | curl -s -X POST ${shellApiUrl}/paste/${sessionId}/files -H 'Content-Type: application/json' ${auth.header} -d @-`;
+        // The base64 text streams through a pipe (no argument-length limit), and `base64 < file | tr -d`
+        // works with GNU and BSD/macOS base64 alike (GNU wraps lines, BSD does not).
+        cmd = `base64 < ${escapeShell(filePath)} | tr -d '\\n\\r' | jq -Rs --arg name ${escapeShell(fname)} '{name: $name, content: ., encoding: "base64"}' | ${curl}`;
       } else {
-        cmd = `jq -n --rawfile content ${escapeShell(filePath)} '{name: ${JSON.stringify(fname)}, content: $content}' | curl -s -X POST ${shellApiUrl}/paste/${sessionId}/files -H 'Content-Type: application/json' ${auth.header} -d @-`;
+        cmd = `jq -n --rawfile content ${escapeShell(filePath)} --arg name ${escapeShell(fname)} '{name: $name, content: $content}' | ${curl}`;
       }
       return {
         command: cmd,
-        instruction: `Run this command to add the file to the session collection. Returns JSON {name, size, type}.${auth.note}`,
+        instruction: `Run this command to add the file to the session collection. Returns JSON {name, size, type}; on an HTTP error it prints the error JSON and exits non-zero.${auth.note}`,
       };
     },
   };
+
+  /**
+   * A tool's `sessionId` → what the API takes. An id or slug passes through; an
+   * upsert key (#21: it contains ':', '.' or '_', which ids and slugs never do)
+   * is looked up; anything else is refused with guidance (it would otherwise be
+   * spliced into an API path or a shell command).
+   */
+  async function resolveSessionId(sessionId) {
+    if (typeof sessionId !== 'string' || ID_OR_SLUG_RE.test(sessionId)) return { id: sessionId };
+    if (KEY_RE.test(sessionId)) {
+      const r = await apiCall(`/paste/by-key/${encodeURIComponent(sessionId)}`);
+      if (r && !r.error && r.id) return { id: r.id };
+      if (r && r.status === 404) {
+        return { error: `Session not found: no document has the upsert key "${sessionId}". Use the id or slug returned by create_session / upsert_session (list_sessions lists them).`, status: 404, code: 'not_found' };
+      }
+      return r && r.error ? r : { error: `Could not look up upsert key "${sessionId}"` };
+    }
+    return {
+      error: `Invalid sessionId "${sessionId}": pass a document id or slug (letters, digits and "-"), or its upsert key (lowercase, e.g. "team:weekly-status").`,
+      code: 'invalid_session_id',
+    };
+  }
+
+  for (const [name, fn] of Object.entries(handlers)) {
+    handlers[name] = async (args = {}) => {
+      if (args && args.sessionId !== undefined) {
+        const r = await resolveSessionId(args.sessionId);
+        if (r.error) return r;
+        if (r.id !== args.sessionId) args = { ...args, sessionId: r.id };
+      }
+      return fn(args);
+    };
+  }
+  return handlers;
 }
 
 // ── Tools registered identically by both servers (stdio here, HTTP in mcp-server-http.js) ──
 
-const toolResult = (result) => ({ content: [{ type: 'text', text: JSON.stringify(result) }] });
 
 /** Register the tools added by the view-and-share items: #21 upsert_session, #24 get_reactions, #25 get_views. */
 export function registerSharedTools(server, handlers) {
@@ -585,6 +763,7 @@ export function registerSharedTools(server, handlers) {
       changeNote: z.string().optional().describe('What changed in this run (shown in the revision history, max 500 chars)'),
       author: z.string().optional().describe('Who is writing (recorded on the revision). Default "agent"'),
       expectedContentHash: z.string().optional().describe('Only update if the current content still has this hash (412 otherwise)'),
+      mode: z.enum(['publish', 'review']).optional().describe('Doc mode when the doc is created: publish = read-only page for humans (default); review = comments and approval. Later runs never change it (use update_session_meta).'),
       editToken: editTokenArg(),
     }),
   }, async (args) => toolResult(await handlers.upsert_session(args)));
@@ -594,7 +773,7 @@ export function registerSharedTools(server, handlers) {
     description: 'Who reacted to a doc and to which sections: emoji counts with reader names for the whole doc, '
       + 'and per section (heading id), most reacted section first. Read-only.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
     }),
   }, async (args) => toolResult(await handlers.get_reactions(args)));
 
@@ -604,7 +783,7 @@ export function registerSharedTools(server, handlers) {
       + "With the doc's edit token (remembered for docs this server created) it also lists the named readers: "
       + 'when each last looked and whether they saw the latest version. The author\'s own views are not counted. Read-only.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
     }),
   }, async (args) => toolResult(await handlers.get_views(args)));
@@ -613,6 +792,8 @@ export function registerSharedTools(server, handlers) {
 // ── MCP Server Setup (only when run directly) ───────────────────────────────
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // A token store that cannot be written would silently forget every edit token: refuse to start.
+  try { checkTokenStore(); } catch (e) { console.error(`[md-review mcp] ${e.message}`); process.exit(1); }
   // Shell commands (curl) use PASTE_PUBLIC_URL when set, else PASTE_API_URL — never a hard-coded host.
   const handlers = createHandlers({ pasteApiUrl: PASTE_API_URL, pastePublicUrl: process.env.PASTE_PUBLIC_URL || PASTE_API_URL, frontendUrl: FRONTEND_URL, publicBaseUrl: PUBLIC_BASE_URL });
 
@@ -640,116 +821,115 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }),
   }, async (args) => {
     const result = await handlers.create_session(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('get_session', {
     title: 'Get Review Session',
     description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions. view: 'human' returns the Markdown without its agent-only sections; the default 'agent' returns the full source. rawUrl is the raw Markdown (GET, no auth).",
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       fields: z.string().optional().describe('Comma-separated fields to load: meta,content,comments,files. Omit for full response.'),
       view: viewArg(),
     }),
   }, async (args) => {
     const result = await handlers.get_session(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('list_comments', {
     title: 'List Comments',
     description: 'Get just the comments for a session.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
     }),
   }, async (args) => {
     const result = await handlers.list_comments(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('add_comment', {
     title: 'Add Comment',
-    description: 'Add a comment to a specific line range.',
+    description: ADD_COMMENT_DESC,
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
-      startLine: z.number().describe('0-indexed line start'),
-      endLine: z.number().describe('0-indexed line end'),
-      selectedText: z.string().describe('The text being commented on'),
-      body: z.string().describe('The comment content'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
+      ...LINE_ARGS(),
+      selectedText: z.string().min(1).describe('The text being commented on (non-empty)'),
+      body: z.string().min(1).describe('The comment content (non-empty)'),
       category: CATEGORY_ENUM.describe('Comment category'),
       author: z.string().optional().describe('Agent identifier, e.g. "claude-code"'),
     }),
   }, async (args) => {
     const result = await handlers.add_comment(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('edit_comment', {
     title: 'Edit Comment',
     description: "Update a comment's body or category. At least one must be provided.",
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       commentId: z.string().describe('The comment ID'),
       body: z.string().optional().describe('New comment body'),
       category: CATEGORY_ENUM.optional().describe('New category'),
     }),
   }, async (args) => {
     const result = await handlers.edit_comment(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('delete_comment', {
     title: 'Delete Comment',
     description: 'Remove a comment.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       commentId: z.string().describe('The comment ID'),
     }),
   }, async (args) => {
     const result = await handlers.delete_comment(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('add_reply', {
     title: 'Add Reply',
     description: 'Reply to an existing comment. Replies are plain text, single-level (no nesting).',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       commentId: z.string().describe('The parent comment ID'),
       body: z.string().describe('The reply text'),
       author: z.string().optional().describe('Agent identifier, e.g. "claude-code"'),
     }),
   }, async (args) => {
     const result = await handlers.add_reply(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('edit_reply', {
     title: 'Edit Reply',
     description: 'Update the body of an existing reply.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       commentId: z.string().describe('The parent comment ID'),
       replyId: z.string().describe('The reply ID'),
       body: z.string().describe('New reply body'),
     }),
   }, async (args) => {
     const result = await handlers.edit_reply(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('delete_reply', {
     title: 'Delete Reply',
     description: 'Remove a reply from a comment.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       commentId: z.string().describe('The parent comment ID'),
       replyId: z.string().describe('The reply ID'),
     }),
   }, async (args) => {
     const result = await handlers.delete_reply(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('update_markdown', {
@@ -757,7 +937,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     description: 'Update the markdown content of a session. Provide markdown, filePath, or patch (unified diff). For large files (>1MB), content is automatically uploaded in chunks.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       markdown: z.string().optional().describe('New markdown content (provide this OR filePath OR patch)'),
       filePath: z.string().optional().describe('Absolute path to a markdown file to read (provide this OR markdown OR patch)'),
@@ -769,43 +949,44 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }),
   }, async (args) => {
     const result = await handlers.update_markdown(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('get_approval_status', {
     title: 'Get Approval Status',
-    description: 'Get the approval status of a review session.',
+    description: 'Get the approval status of a review doc: approval_status (pending|approved|changes_requested), approved_by, approved_at, '
+      + 'approved_revision (the content hash the approval covers). Approval follows the content: any content change after an approval puts the doc back to pending (approval_reset_at says when).',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
     }),
   }, async (args) => {
     const result = await handlers.get_approval_status(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('resolve_comment', {
     title: 'Resolve Comment',
     description: 'Mark a comment as resolved.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       commentId: z.string().describe('The comment ID'),
       resolvedBy: z.string().optional().describe('Who resolved it (e.g. "claude-code")'),
     }),
   }, async (args) => {
     const result = await handlers.resolve_comment(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('unresolve_comment', {
     title: 'Unresolve Comment',
     description: 'Mark a comment as unresolved.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       commentId: z.string().describe('The comment ID'),
     }),
   }, async (args) => {
     const result = await handlers.unresolve_comment(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   // ── Session management tools ─────────────────────────────────────────────
@@ -814,28 +995,28 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     title: 'List Revisions',
     description: "Content history of a session, oldest first: who changed the document, when, and the content hash of each revision. Consecutive writes by the same author within a few minutes are folded into one revision. Use get_revision to read an older version, or diff two hashes to see what changed since you last read it.",
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
     }),
   }, async (args) => {
     const result = await handlers.list_revisions(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('get_revision', {
     title: 'Get Revision',
-    description: "Read one stored revision of a session's content by hash (from list_revisions), or 'current' for the live content. Returns 410 if that version is no longer stored.",
+    description: "Read one stored revision of a session's content by hash (from list_revisions), or 'current' for the live content. An unknown hash is a 'Revision not found' error; a known one whose content is no longer stored is a 410 error.",
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       hash: z.string().optional().describe("Revision content hash, or 'current' (default)"),
     }),
   }, async (args) => {
     const result = await handlers.get_revision(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('list_sessions', {
     title: 'List Sessions',
-    description: 'List all sessions; each item carries its doc `mode` (publish|review). Filter by approval status, session/file name pattern, or limit results. Use this to find sessions created earlier.',
+    description: 'List all sessions, newest first; each item has id, slug, url (the doc link), mode (publish|review), approval status, counts and, for docs published with upsert_session, upsert_key. Filter by approval status, session/file name pattern, or limit results. Use this to find sessions created earlier.',
     inputSchema: z.object({
       status: z.enum(['pending', 'approved', 'changes_requested']).optional().describe('Filter by approval status'),
       namePattern: z.string().optional().describe('Regex to match against sessionName or filename (case-insensitive)'),
@@ -843,35 +1024,35 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }),
   }, async (args) => {
     const result = await handlers.list_sessions(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('delete_session', {
     title: 'Delete Session',
     description: 'Permanently delete a review session and all its files.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
     }),
   }, async (args) => {
     const result = await handlers.delete_session(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('update_session_meta', {
     title: 'Update Session Metadata',
     description: 'Update session name, slug, expiry or doc mode (publish|review). Use this to rename sessions, extend their lifetime or switch a doc between a reading page and a review.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID or slug'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       sessionName: z.string().optional().describe('New session name'),
-      slug: z.string().optional().describe('New URL slug (set to "" to remove)'),
+      slug: z.string().optional().describe('New URL slug. The old slug keeps working as an alias (links already shared keep resolving, to the new URL); "" removes the slug (and releases it).'),
       expiryDays: z.number().nullable().optional().describe('New expiry in days (1, 7, 30, 90, or null for never), counted from now'),
       mode: z.enum(['publish', 'review']).optional().describe('Doc mode. publish = read-only page for humans; review = comments and approval.'),
     }),
   }, async (args) => {
     const result = await handlers.update_session_meta(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   // ── Content tools ───────────────────────────────────────────────────────
@@ -881,7 +1062,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     description: 'Apply a unified diff patch to the session markdown. Much more efficient than re-sending the entire file for small changes.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       patch: z.string().describe('Unified diff format patch to apply'),
       expectedContentHash: z.string().optional().describe('Optimistic-concurrency guard: the content_hash you last read (from get_session). The write is rejected with 412 if the document changed since, so you never overwrite someone else\'s edits.'),
@@ -889,14 +1070,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }),
   }, async (args) => {
     const result = await handlers.patch_markdown(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('add_file', {
     title: 'Add File to Session',
-    description: 'Add a file to the session file collection. Supports text and binary (base64-encoded) files. For files >1MB, automatically uses chunked upload.',
+    description: 'Add a file to the session file collection. Supports text and binary (base64-encoded, encoding "base64") files; get_file returns binary files in the same base64 form. For files >1MB, automatically uses chunked upload.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       name: z.string().optional().describe('File name/path within the collection (e.g. "src/main.ts")'),
       content: z.string().optional().describe('File content (text or base64-encoded). Provide this OR filePath.'),
@@ -907,43 +1088,43 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }),
   }, async (args) => {
     const result = await handlers.add_file(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('list_files', {
     title: 'List Session Files',
     description: 'List all files in a session file collection.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
     }),
   }, async (args) => {
     const result = await handlers.list_files(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('remove_file', {
     title: 'Remove File from Session',
     description: 'Remove a file from the session file collection.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       name: z.string().describe('File name/path to remove'),
     }),
   }, async (args) => {
     const result = await handlers.remove_file(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('get_file', {
     title: 'Get File Content',
-    description: 'Get the content of a file from the session file collection.',
+    description: 'Get a file from the session file collection: {name, mime, encoding, size, content}. Text files come back as UTF-8 (encoding "utf-8"); binary files (images, PDFs, …) as base64 (encoding "base64", the same form add_file takes).',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       name: z.string().describe('File name/path to retrieve'),
     }),
   }, async (args) => {
     const result = await handlers.get_file(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   // ── Shell command tools (file content never enters conversation) ──────────
@@ -962,35 +1143,35 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }),
   }, async (args) => {
     const result = await handlers.create_via_shell(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('upload_via_shell', {
     title: 'Upload File via Shell',
     description: 'Returns a shell command that uploads a local file to an existing session. The file content is streamed directly — never enters this conversation.',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       filePath: z.string().describe('Absolute path to the file'),
       filename: z.string().optional().describe('Override display filename'),
     }),
   }, async (args) => {
     const result = await handlers.upload_via_shell(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   server.registerTool('add_file_via_shell', {
     title: 'Add File via Shell',
     description: 'Returns a shell command that adds a local file to a session\'s file collection. The file is uploaded directly — never enters this conversation. Use --encoding base64 for binary files (images, PDFs).',
     inputSchema: z.object({
-      sessionId: z.string().describe('The session ID'),
+      sessionId: z.string().describe(SESSION_ID_DESC),
       editToken: editTokenArg(),
       filePath: z.string().describe('Absolute path to the file'),
       encoding: z.enum(['utf-8', 'base64']).optional().describe('"utf-8" for text (default), "base64" for binary'),
     }),
   }, async (args) => {
     const result = await handlers.add_file_via_shell(args);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    return toolResult(result);
   });
 
   registerSharedTools(server, handlers);

@@ -5,6 +5,7 @@ const {
   isExpired, listSessionsForList,
 } = require('../storage.cjs');
 const { modeOf } = require('../mode.cjs');
+const { handedOutUrl } = require('../links.cjs');
 
 module.exports = async function list(req, res) {
   // GET /paste/list — list sessions (filter by status, name pattern, limit)
@@ -41,6 +42,9 @@ module.exports = async function list(req, res) {
         updated_at: s.updated_at || data.sharedAt || null,
         revision_count: s.revision_count,
         mode: modeOf(data),
+        // The doc's link (00 §6), and its upsert key (#21) when it was published by key.
+        url: handedOutUrl(data.slug || s.id),
+        ...(s.upsert_key ? { upsert_key: s.upsert_key } : {}),
       });
     }
     results.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));

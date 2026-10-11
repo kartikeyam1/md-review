@@ -13,7 +13,7 @@ const zlib = require('zlib');
 const {
   DATA_DIR, SITES_DIR, FILES_DIR, CHUNKS_DIR, COVERS_DIR, DB_PATH, REVISIONS_MAX, REVISION_COALESCE_MS,
 } = require('./config.cjs');
-const { HttpError, getMime } = require('./http-util.cjs');
+const { HttpError, getMime, fireWebhook } = require('./http-util.cjs');
 const { openDb, tx } = require('./db.cjs');
 const rows = require('./session-rows.cjs');
 
@@ -38,8 +38,10 @@ const RESERVED_SLUGS = new Set(['list', 'by-key']);
 function slugTaken(slug, { releasing = null, selfId = null } = {}) {
   // A legacy session that already owns a reserved slug may keep it (PUT /meta re-submitting it).
   if (RESERVED_SLUGS.has(slug)) return !(selfId && db.prepare('SELECT 1 FROM sessions WHERE id = ? AND slug = ?').get(selfId, slug));
-  const row = db.prepare('SELECT target_id FROM slugs WHERE slug = ?').get(slug);
-  if (row && !(slug === releasing && row.target_id === selfId)) return true;
+  const row = db.prepare('SELECT target_id, kind FROM slugs WHERE slug = ?').get(slug);
+  // The caller's own slug rows (its current slug, or an alias kept from a rename) never block it.
+  const own = row && selfId && row.kind === 'session' && row.target_id === selfId;
+  if (row && !own && !(slug === releasing && row.target_id === selfId)) return true;
   return !!db.prepare('SELECT 1 FROM sessions WHERE slug = ? AND id IS NOT ?').get(slug, selfId);
 }
 function uniqueSlug(base, opts = {}) {
@@ -281,7 +283,8 @@ const strOrNull = (v) => (typeof v === 'string' ? v : null);
  */
 function savePaste(id, data, ctx = {}, opts = {}) {
   const { markdown, revisions: _legacyRevisions, ...meta } = data;
-  return tx(db, () => {
+  let approvalReset = false;
+  const saved = tx(db, () => {
     for (const s of opts.releaseSlugs || []) db.prepare('DELETE FROM slugs WHERE slug = ? AND target_id = ?').run(s, id);
     for (const s of opts.claimSlugs || []) db.prepare("INSERT OR REPLACE INTO slugs (slug, kind, target_id) VALUES (?, 'session', ?)").run(s, id);
     const slugOwned = (s) => !!db.prepare("SELECT 1 FROM slugs WHERE slug = ? AND kind = 'session' AND target_id = ?").get(s, id)
@@ -290,6 +293,19 @@ function savePaste(id, data, ctx = {}, opts = {}) {
     const prevRow = db.prepare('SELECT session_name, filename, content_type, fts_rowid FROM sessions WHERE id = ?').get(id);
     const prevContent = db.prepare('SELECT markdown, content_hash, hashless FROM contents WHERE session_id = ?').get(id);
     const prevHash = prevContent && !prevContent.hashless ? prevContent.content_hash : null;
+
+    // Approval follows the content (review-tool semantics): changing an approved
+    // doc's content puts it back to pending, so an approval never covers
+    // changes nobody reviewed. The reset is recorded as approval_reset_at.
+    if (markdown !== undefined && prevContent && meta.approval_status === 'approved'
+      && hashContent(Buffer.from(markdown, 'utf-8')) !== prevHash) {
+      approvalReset = true;
+      meta.approval_status = 'pending';
+      meta.approved_by = null;
+      meta.approved_at = null;
+      delete meta.approved_revision;
+      meta.approval_reset_at = new Date().toISOString();
+    }
 
     rows.upsertSessionRow(db, id, meta, { mode: meta.mode, slugOwned, createdBy: opts.createdBy ?? null });
     if (opts.editTokenHash) db.prepare('UPDATE sessions SET edit_token_hash = ? WHERE id = ?').run(opts.editTokenHash, id);
@@ -327,6 +343,15 @@ function savePaste(id, data, ctx = {}, opts = {}) {
     rows.refreshUpdatedAt(db, id);
     return meta;
   });
+  // An approval webhook hears about the reset like any other status change.
+  if (approvalReset && saved.callback_url) {
+    try {
+      fireWebhook(saved.callback_url, {
+        sessionId: id, approval_status: 'pending', approved_by: null, approved_at: null, reason: 'content_changed',
+      });
+    } catch (e) { console.error(`[md-review] approval webhook for ${id} failed: ${e.message}`); }
+  }
+  return saved;
 }
 
 /** Delete a session: rows (cascade), search row, its slug, then its files and cached covers on disk. */
@@ -371,6 +396,7 @@ function listSessionsForList() {
       comment_count: extraComments ? (meta.comments || []).length : r.comment_count,
       must_fix_unresolved: extraComments ? 0 : r.must_fix_unresolved,
       file_count: r.file_count, revision_count: r.revision_count, updated_at: r.updated_at,
+      upsert_key: r.upsert_key ?? null,
     };
   });
 }

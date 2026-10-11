@@ -77,10 +77,10 @@ function notModified(req, etag) {
 
 // ── the meta page ───────────────────────────────────────────────────────────
 
-function renderPage({ title, description, shareHref, rawHref, imageHref, modified, target, bot, notice }) {
+function renderPage({ title, description, shareHref, rawHref, imageHref, modified, target, bot, notice, pageTitle }) {
   const head = [
     '<meta charset="utf-8">',
-    `<title>${esc(title)} · md-review</title>`,
+    `<title>${esc(pageTitle || title)} · md-review</title>`,
     `<meta name="description" content="${esc(description)}">`,
     '<meta name="robots" content="noindex, nofollow">',
   ];
@@ -118,7 +118,7 @@ function renderPage({ title, description, shareHref, rawHref, imageHref, modifie
     const js = JSON.stringify(target).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16)}`);
     head.push(`<script>location.replace(${js} + location.hash)</script>`);
   }
-  const heading = notice || title;
+  const heading = notice || pageTitle || title;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -218,12 +218,14 @@ function metaPage(req, res, { x, rev, file, query }) {
   const target = appUrl(`${cx}${suffix}`) + query;
   const shareHref = shareUrl(`${cx}${suffix}`);
   const { title, description } = text;
-  // #28: the live markdown doc's raw source (pinned revisions and session files have no raw route).
-  const rawHref = !rev && !file && doc.typed.contentType !== 'html' ? `${PUBLIC_BASE_URL}/d/${cx}.md` : null;
+  // #28: the markdown doc's raw source, live or pinned (/d/x@rev.md); session files have no raw /d/ route.
+  const rawHref = !file && doc.typed.contentType !== 'html' ? `${PUBLIC_BASE_URL}/d/${cx}${rev ? `@${rev}` : ''}.md` : null;
+  // A pinned earlier revision says so in the tab/page title (og:title stays the revision's own title).
+  const pageTitle = rev && rev !== meta.content_hash ? `${title} (earlier revision)` : null;
 
   // Rule 7: the ETag covers everything the page shows, per bot/human variant.
-  const etag = `"${md5(JSON.stringify([title, description, imageHref ? doc.cover.key : '', bot ? 'bot' : 'human', modified, target, shareHref, rawHref]))}"`;
-  const html = renderPage({ title, description, shareHref, rawHref, imageHref, modified, target, bot });
+  const etag = `"${md5(JSON.stringify([title, pageTitle, description, imageHref ? doc.cover.key : '', bot ? 'bot' : 'human', modified, target, shareHref, rawHref]))}"`;
+  const html = renderPage({ title, description, shareHref, rawHref, imageHref, modified, target, bot, pageTitle });
   return sendHtml(req, res, 200, html, etag);
 }
 

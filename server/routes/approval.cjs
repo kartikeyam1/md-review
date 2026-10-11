@@ -22,11 +22,16 @@ module.exports = async function approval(req, res) {
 
     if (req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
+      const out = {
         approval_status: data.approval_status || 'pending',
         approved_by: data.approved_by || null,
         approved_at: data.approved_at || null,
-      }));
+      };
+      // Which content the approval covers (approvals made since content changes reset it), and when
+      // a content change last put an approved doc back to pending.
+      if (out.approval_status === 'approved' && typeof data.approved_revision === 'string') out.approved_revision = data.approved_revision;
+      if (typeof data.approval_reset_at === 'string') out.approval_reset_at = data.approval_reset_at;
+      return res.end(JSON.stringify(out));
     }
 
     // PUT — transition approval status
@@ -57,12 +62,15 @@ module.exports = async function approval(req, res) {
     }
 
     data.approval_status = next;
+    delete data.approval_reset_at; // a reviewer has acted since
     if (next === 'approved') {
       data.approved_by = parsed.approved_by || null;
       data.approved_at = new Date().toISOString();
+      if (data.content_hash) data.approved_revision = data.content_hash;
     } else if (next === 'changes_requested') {
       data.approved_by = null;
       data.approved_at = null;
+      delete data.approved_revision;
     }
     savePaste(pasteId, data);
 
