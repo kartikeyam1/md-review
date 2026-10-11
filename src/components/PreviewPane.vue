@@ -5,7 +5,7 @@ import { useMarkdown } from '@/composables/useMarkdown'
 import { isGithub, isDark, themeStyle } from '@/composables/useTheme'
 import { findLineRange } from '@/composables/useHtmlSource'
 import '@/styles/preview.css'
-import { useRouter, scrollToAnchorElement, findAnchorIn } from '@/composables/useRouter'
+import { useRouter, scrollToAnchorElement, findAnchorIn, encodeFilePath } from '@/composables/useRouter'
 import { DOC_STATE } from '@/composables/useDocState'
 import { copyText } from '@/composables/useCopyLink'
 import { toast } from '@/composables/useToast'
@@ -88,7 +88,9 @@ let enhancerCleanup: (() => void) | null = null
 function sectionLink(id: string): string {
   const frag = `#${encodeURIComponent(id)}`
   const shared = docState?.docLink.value
-  if (shared) return shared + frag
+  const r = docState?.route.value
+  // #26: on a file route the section is in that file — /d/<doc>/<file>#<id>
+  if (shared) return (r?.kind === 'file' ? `${shared}/${encodeFilePath(r.file)}` : shared) + frag
   const u = new URL(window.location.href)
   u.searchParams.delete('edit')
   u.searchParams.delete('view')

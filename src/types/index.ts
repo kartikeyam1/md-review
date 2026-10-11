@@ -57,7 +57,7 @@ export interface ApprovalInfo {
 export type ContentType = 'markdown' | 'html'
 
 /** Whether a document is open ('doc') — not to be confused with the per-doc mode (DocMode). */
-export type AppMode = 'upload' | 'doc' | 'dashboard'
+export type AppMode = 'upload' | 'doc'
 /** Per-doc mode (#2): a reading page, or comments + approval. */
 export type DocMode = 'publish' | 'review'
 /** Which panes are on screen: the editor, the preview, or both side by side (#7 split view). */

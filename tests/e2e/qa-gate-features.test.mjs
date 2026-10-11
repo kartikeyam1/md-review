@@ -197,9 +197,9 @@ describe('Gate + Speed features', () => {
   })
 
   describe('dashboard', () => {
-    it('loads dashboard at /#dashboard', async () => {
-      // Create a pending session for dashboard
-      await fetch(`${API}/paste`, {
+    // #26 (00 §11): the dashboard is the library; /#dashboard redirects to /library?mode=review.
+    it('loads the library at /#dashboard', async () => {
+      const res = await fetch(`${API}/paste`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -209,22 +209,24 @@ describe('Gate + Speed features', () => {
           mode: 'review',
         }),
       })
+      assert.equal(res.status, 200)
 
       await page.goto(`${BASE}/#dashboard`)
-      await reach(page.locator('.dashboard-header h2'))
-      const heading = await page.textContent('.dashboard-header h2')
-      assert.equal(heading, 'Pending Reviews')
+      assert.ok(await reach(page.locator('[data-testid="library-page"]'), 'visible', 10000), 'library-page renders')
+      const url = new URL(page.url())
+      assert.equal(url.pathname, '/library')
+      assert.equal(url.searchParams.get('mode'), 'review')
     })
 
-    it('shows pending sessions', async () => {
-      const cards = page.locator('.session-card')
-      await reach(cards.first())
-      const count = await cards.count()
-      assert.ok(count > 0, `Should show at least 1 pending session, got: ${count}`)
+    it('shows review sessions', async () => {
+      const rows = page.locator('[data-testid="library-row"]')
+      assert.ok(await reach(rows.filter({ hasText: 'Dashboard Pending Session' }).first(), 'visible', 10000), 'the review session is listed')
+      const modes = await rows.locator('[data-mode]').evaluateAll((els) => els.map((e) => e.getAttribute('data-mode')))
+      assert.ok(modes.length > 0 && modes.every((m) => m.trim() === 'review'), `only review docs: ${modes}`)
     })
 
     it('clicking a session navigates to review', async () => {
-      await page.locator('.session-card').first().click()
+      await page.locator('[data-testid="library-row"]').filter({ hasText: 'Dashboard Pending Session' }).first().click()
       await page.waitForURL((u) => /\/d\/[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(u.pathname), { timeout: 5000 }).catch(() => {})
       // #4: the doc URL is path-based — /d/<slug or id>, no #shared= fragment.
       const pathname = await page.evaluate(() => window.location.pathname)

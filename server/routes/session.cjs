@@ -3,14 +3,18 @@
 const { NEXT, readJsonBody } = require('../http-util.cjs');
 const {
   generateSlug, uniqueSlug, isExpired, resolveId, loadContent, loadMeta, savePaste, deleteSession, sessionEtag,
-  revisionSummary, listSessionFiles,
+  revisionSummary, listSessionFiles, db,
 } = require('../storage.cjs');
 const { handedOutUrl } = require('../links.cjs');
 const { readMode, modeOf } = require('../mode.cjs');
 const { requireEdit, accessInfo } = require('./edit-tokens.cjs');
+const { libraryFields } = require('./library.cjs');
 const { normalizeExpiryDays, expiresAtFor } = require('../../shared/expiry.mjs');
 const { readView, viewEtag, viewOf, VIEW_ERROR } = require('../agent-view.cjs');
 const { effectiveContentType } = require('../doc-text.cjs');
+
+/** The creator's `author` (#20/#26 created_by), or null. */
+const createdByOf = (id) => db.prepare('SELECT created_by FROM sessions WHERE id = ?').get(id)?.created_by ?? null;
 
 module.exports = async function session(req, res) {
   // DELETE /paste/:id — delete a session and all its data
@@ -83,7 +87,7 @@ module.exports = async function session(req, res) {
     }));
   }
 
-  // GET /paste/:id — read full paste (supports ?fields=meta,content,comments,files)
+  // GET /paste/:id — read full paste (supports ?fields=meta,content,comments,files,library)
   // GET /paste/:id/comments — read comments only
   // GET /paste/:id/markdown — read markdown only
   // #28 rule 17: /markdown and GET /paste/:id take ?view=agent|human (default
@@ -145,7 +149,7 @@ module.exports = async function session(req, res) {
       result = {};
       if (wanted.has('meta')) {
         const { comments, content_hash, revisions, ...rest } = meta;
-        Object.assign(result, rest, revisionSummary(resolvedId), { url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta), id: resolvedId, access });
+        Object.assign(result, rest, revisionSummary(resolvedId), { url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta), id: resolvedId, access, created_by: createdByOf(resolvedId) });
       }
       if (wanted.has('content')) {
         result.markdown = loadContent(resolvedId) || '';
@@ -156,11 +160,14 @@ module.exports = async function session(req, res) {
       if (wanted.has('files')) {
         result.files = listSessionFiles(resolvedId);
       }
+      if (wanted.has('library')) {
+        Object.assign(result, libraryFields(resolvedId)); // #26: title, collection, tags
+      }
     } else {
       // Full response (backward compatible) — includes file list if any
       const markdown = loadContent(resolvedId) || '';
       const { revisions, ...metaRest } = meta;
-      result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta), id: resolvedId, access };
+      result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta), id: resolvedId, access, created_by: createdByOf(resolvedId) };
       const sessionFiles = listSessionFiles(resolvedId);
       if (sessionFiles.length > 0) result.files = sessionFiles;
     }

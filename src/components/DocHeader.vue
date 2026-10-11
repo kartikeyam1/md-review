@@ -42,7 +42,7 @@ const desktop = computed(() => bp.value === 'desktop')
 const sharing = computed(() => doc.share.sharing.value)
 /** #29 rule 1: Present — reader variant of a markdown doc in the read or agent view, not on a file route. */
 const canPresent = computed(() => onScreen.value && variant.value === 'reader' && contentType.value === 'markdown'
-  && (view.value === 'read' || view.value === 'agent') && doc.routeKind.value !== 'file' && doc.routeKind.value !== 'embed' && !doc.fileView.value)
+  && (view.value === 'read' || view.value === 'agent') && doc.routeKind.value !== 'file' && doc.routeKind.value !== 'embed')
 
 /** reviewer-name sits in the bar on desktop only (00 §2.2). */
 const reviewerInBar = computed(() => desktop.value)
@@ -190,7 +190,8 @@ function onLibraryClick(e: MouseEvent) {
       :auto-edit="!reviewerInBar"
       @done="editingNameFromMenu = false"
     />
-    <ViewToggle v-if="onScreen && editor" :compact="phone" @change="actions.setView($event)" />
+    <!-- #26: a file route has the doc's capability but only the read view (00 §1.3). -->
+    <ViewToggle v-if="onScreen && editor && doc.routeKind.value !== 'file'" :compact="phone" @change="actions.setView($event)" />
     <SlidesEnterButton v-if="canPresent && desktop" />
     <button
       v-if="onScreen && editor && !phone"

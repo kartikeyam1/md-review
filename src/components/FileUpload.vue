@@ -2,10 +2,20 @@
 import { ref } from 'vue'
 import { detectContentType, defaultFilename } from '@/composables/useContentType'
 import { PASTE_API } from '@/composables/pasteApi'
+import { useRouter } from '@/composables/useRouter'
 
 const emit = defineEmits<{
   'file-loaded': [content: string, filename: string]
 }>()
+
+const router = useRouter()
+const libraryHref = `${router.base}library`
+/** #26 rule 1: the landing page links to the library (in-app navigation, no reload). */
+function goLibrary(e: MouseEvent) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  router.push(libraryHref)
+}
 
 const isDragging = ref(false)
 const showPaste = ref(false)
@@ -117,6 +127,9 @@ function submitPaste() {
         <span class="alt-divider">or</span>
         <button class="btn btn-ghost" @click.stop="startBlank">Start blank</button>
       </div>
+      <p class="library-link-row">
+        <a class="library-link" :href="libraryHref" data-testid="nav-library" @click="goLibrary">Browse the library →</a>
+      </p>
     </template>
 
     <div v-else-if="showPaste" class="paste-area">
@@ -284,5 +297,20 @@ function submitPaste() {
   color: var(--accent);
   font-size: 13px;
   margin-top: 8px;
+}
+
+.library-link-row {
+  margin: 20px 0 0;
+  text-align: center;
+}
+.library-link {
+  font-size: 13px;
+  color: var(--text-meta);
+  text-decoration: none;
+}
+.library-link:hover,
+.library-link:focus-visible {
+  color: var(--text-primary);
+  text-decoration: underline;
 }
 </style>

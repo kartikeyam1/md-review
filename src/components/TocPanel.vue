@@ -225,11 +225,12 @@ onUnmounted(() => {
 /* Desktop rail (rule 10): a 240px column, sticky under the header, scrolling itself. */
 .toc-rail {
   position: sticky;
-  top: var(--header-h);
+  /* + the rows between the header and the body (DocView's --doc-stack-h): it sticks where it starts */
+  top: calc(var(--header-h) + var(--doc-stack-h, 0px));
   z-index: 90;
   width: 240px;
-  max-height: calc(100vh - var(--header-h));
-  max-height: calc(100dvh - var(--header-h));
+  max-height: calc(100vh - var(--header-h) - var(--doc-stack-h, 0px));
+  max-height: calc(100dvh - var(--header-h) - var(--doc-stack-h, 0px));
   border-right: 1px solid var(--border);
 }
 

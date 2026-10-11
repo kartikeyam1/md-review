@@ -8,8 +8,10 @@ const crypto = require('crypto');
 const { isDocMode } = require('../mode.cjs');
 const { NEXT } = require('../http-util.cjs');
 const { db } = require('../storage.cjs');
-const { snippetText } = require('../doc-text.cjs');
+const { snippetText, markdownToPlain } = require('../doc-text.cjs');
 const { ftsQuery, queryTerms, excerpt } = require('../search-query.cjs');
+const { readerKeyOf } = require('./library.cjs');
+const { compareTags } = require('../../shared/tags.mjs');
 
 const SORTS = new Set(['updated', 'created', 'title', 'views', 'relevance']);
 const DEFAULT_LIMIT = 50;
@@ -40,6 +42,13 @@ const hitForms = (segs) => new Set(segs.filter((x) => x.hit).map((x) => x.text.t
  * opening words, unmarked.
  */
 function matchFor(row, terms) {
+  // #26: the best-ranked index row is a document file's → the snippet comes from that file
+  const best = row.fts_rowid != null ? db.prepare('SELECT file_name, content FROM doc_fts WHERE rowid = ?').get(row.fts_rowid) : null;
+  if (best && best.file_name) {
+    const text = capped(best.content || '');
+    const plain = /\.(md|markdown)$/i.test(best.file_name) ? markdownToPlain(text, { keepTags: true }) : text.replace(/\s+/g, ' ').trim();
+    return { field: 'file', file: best.file_name, snippet: excerpt(plain, terms) || excerpt(plain, terms, { fallback: true }) };
+  }
   const md = db.prepare('SELECT markdown FROM contents WHERE session_id = ?').get(row.id);
   const body = snippetText(row.content_type, capped(md ? md.markdown : ''));
   const content = excerpt(body, terms);
@@ -62,6 +71,8 @@ function decodeCursor(s) {
 }
 
 function libraryDocs(req, res) {
+  const reader = readerKeyOf(req); // #26: decides `pinned` only
+  if (reader.error) return send(res, 400, { error: 'invalid reader' });
   const params = new URL(req.url, 'http://x').searchParams;
   const get = (k) => (params.get(k) ?? '').trim();
   const q = get('q') || null;
@@ -75,17 +86,21 @@ function libraryDocs(req, res) {
   if (updatedAfter && Number.isNaN(Date.parse(updatedAfter))) return send(res, 400, { error: 'invalid updated_after' });
   const collection = get('collection');
   const tag = get('tag');
+  // #26: pinned=1 keeps only the X-MdReview-Reader reader's pins (ordered by pin time unless a sort is given)
+  const pinnedParam = get('pinned');
+  if (pinnedParam && pinnedParam !== '1' && pinnedParam !== '0') return send(res, 400, { error: 'invalid pinned' });
+  const pinnedOnly = pinnedParam === '1';
   let limit = parseInt(get('limit'), 10);
   if (!Number.isFinite(limit)) limit = DEFAULT_LIMIT;
   limit = Math.min(MAX_LIMIT, Math.max(1, limit));
 
   // relevance needs q (00 §8); views sorts by view_count (#25)
-  let sort = sortParam || (q ? 'relevance' : 'updated');
+  let sort = sortParam || (q ? 'relevance' : pinnedOnly ? 'pinned' : 'updated');
   if (sort === 'relevance' && !q) sort = 'updated';
 
   // the cursor is bound to everything that decides the result set and its order
   const fingerprint = crypto.createHash('sha1')
-    .update(JSON.stringify([q, collection, tag, mode, type, updatedAfter, sort])).digest('hex').slice(0, 16);
+    .update(JSON.stringify([q, collection, tag, mode, type, updatedAfter, sort, pinnedOnly, pinnedOnly ? reader.key : null])).digest('hex').slice(0, 16);
   let offset = 0;
   const cursorParam = get('cursor');
   if (cursorParam) {
@@ -109,6 +124,11 @@ function libraryDocs(req, res) {
     where.push('EXISTS (SELECT 1 FROM collection_items ci WHERE ci.session_id = s.id AND ci.collection_id = ?)');
     args.push(col.id);
   }
+  if (pinnedOnly) {
+    if (!reader.key) return empty();
+    where.push('EXISTS (SELECT 1 FROM pins p WHERE p.reader_key = ? AND p.session_id = s.id)');
+    args.push(reader.key);
+  }
   if (tag) {
     const t = db.prepare('SELECT id FROM tags WHERE name = ? COLLATE NOCASE').get(tag);
     if (!t) return empty();
@@ -130,7 +150,10 @@ function libraryDocs(req, res) {
             JOIN sessions s ON s.id = m.session_id`;
     fromArgs.push(expr);
   }
+  const orderArgs = sort === 'pinned' ? [reader.key, reader.key] : [];
   const order = {
+    pinned: `(SELECT p.pinned_at FROM pins p WHERE p.reader_key = ? AND p.session_id = s.id) DESC,
+             (SELECT p.rowid FROM pins p WHERE p.reader_key = ? AND p.session_id = s.id) DESC, s.id`, // #26 (pinned=1 only)
     relevance: 'm.score ASC, s.updated_at DESC, s.id',
     updated: 's.updated_at DESC, s.id',
     created: 's.created_at DESC, s.id',
@@ -144,6 +167,7 @@ function libraryDocs(req, res) {
     total = db.prepare(`SELECT count(*) AS c FROM ${from} WHERE ${where.join(' AND ')}`).get(...fromArgs, ...args).c;
     page = db.prepare(`
       SELECT s.id, s.slug, s.title, s.filename, s.content_type, s.mode, s.created_by, s.created_at, s.updated_at,
+             ${q ? 'm.fts_rowid' : 'NULL'} AS fts_rowid, s.edit_token_hash IS NOT NULL AS protected,
              (SELECT count(*) FROM files f WHERE f.session_id = s.id) AS file_count,
              (SELECT count(*) FROM reactions rx WHERE rx.session_id = s.id) AS reaction_count,
              (SELECT count(*) FROM views v WHERE v.session_id = s.id AND v.is_editor = 0) AS view_count,
@@ -152,13 +176,20 @@ function libraryDocs(req, res) {
                WHERE ci.session_id = s.id) AS collection_json,
              (SELECT json_group_array(t.name) FROM session_tags st JOIN tags t ON t.id = st.tag_id WHERE st.session_id = s.id) AS tags_json
       FROM ${from} WHERE ${where.join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`)
-      .all(...fromArgs, ...args, limit, offset);
+      .all(...fromArgs, ...args, ...orderArgs, limit, offset);
   } catch (e) {
     // q never causes a 4xx/5xx (00 §8): any query the index rejects matches nothing
     if (q) return empty();
     throw e;
   }
 
+  const pinned = new Set();
+  if (reader.key && page.length) {
+    const marks = page.map(() => '?').join(', ');
+    for (const p of db.prepare(`SELECT session_id FROM pins WHERE reader_key = ? AND session_id IN (${marks})`).all(reader.key, ...page.map((r) => r.id))) {
+      pinned.add(p.session_id);
+    }
+  }
   const items = page.map((r) => ({
     id: r.id,
     slug: r.slug,
@@ -170,12 +201,13 @@ function libraryDocs(req, res) {
     created_at: r.created_at,
     updated_at: r.updated_at,
     collection: r.collection_json ? JSON.parse(r.collection_json) : null,
-    tags: r.tags_json ? JSON.parse(r.tags_json).sort((a, b) => a.localeCompare(b)) : [],
+    tags: r.tags_json ? JSON.parse(r.tags_json).sort(compareTags) : [],
     file_count: r.file_count,
     reaction_count: r.reaction_count, // #24
     view_count: r.view_count, // #25: total_views (non-editor reader-days)
     must_fix_unresolved: r.must_fix_unresolved,
-    pinned: false, // #26
+    pinned: pinned.has(r.id), // #26: for the X-MdReview-Reader reader
+    protected: r.protected === 1, // #26: has an edit token (legacy link-editable docs: false)
     match: q ? matchFor(r, terms) : null,
   }));
   const next = offset + page.length < total ? encodeCursor({ o: offset + page.length, f: fingerprint }) : null;

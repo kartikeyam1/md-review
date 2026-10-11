@@ -25,8 +25,13 @@ const doc = useDocState()
 const actions = useDocActions()
 const { router, onScreen, capability, reviewUI, mode, comments, historyId, docLink, reviewerName, route, revisionList, changeSummary } = doc
 
+/**
+ * #26: a file route shows a read-only file, not the doc — History (restore) and
+ * Document mode would change the doc out of sight, so they live on its primary tab.
+ */
+const onFile = computed(() => route.value.kind === 'file')
 /** Mirrors menu-history's unseen-changes dot on the trigger, so it is visible with the menu closed. */
-const unseen = computed(() => onScreen.value && !!changeSummary.value)
+const unseen = computed(() => onScreen.value && !onFile.value && !!changeSummary.value)
 const triggerLabel = computed(() => (unseen.value ? 'More actions (the document changed since you last looked)' : 'More actions'))
 
 const entries = computed<AppMenuEntry[]>(() => {
@@ -59,7 +64,7 @@ const entries = computed<AppMenuEntry[]>(() => {
     out.push({ type: 'item', id: 'home', testid: 'app-home-link', label: 'Home', onSelect: () => router.push(router.base) })
   }
   // 2. History (shared docs, pinned revisions included).
-  if (docOpen && historyId.value) {
+  if (docOpen && historyId.value && !onFile.value) {
     out.push({
       type: 'item', id: 'history', testid: 'menu-history', label: 'History',
       title: changeSummary.value ? 'The document changed since you last looked — open history to see what' : 'Revision history: compare or restore earlier versions',
@@ -73,7 +78,7 @@ const entries = computed<AppMenuEntry[]>(() => {
     out.push({ type: 'item', id: 'prompt', testid: 'menu-generate-prompt', label: 'Generate prompt', onSelect: () => { doc.showPromptModal.value = true } })
   }
   // 4. Document mode (editors).
-  if (docOpen && editor) {
+  if (docOpen && editor && !onFile.value) {
     const hidden = mode.value === 'publish' ? comments.value.length : 0
     out.push({
       type: 'group',

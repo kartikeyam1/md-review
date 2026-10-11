@@ -17,7 +17,7 @@ const doc = useDocState()
 const {
   router, route, onScreen, pinnedInfo, notice, sync, reviewUI, pasteId, approvalInfo, unresolvedMustFixCount,
   reviewerName, setReviewerName, filename, comments, changeSummary, openHistory, acknowledge,
-  view, contentType, fileView,
+  view, contentType,
 } = doc
 const persistError = doc.persistence.persistError
 /** #13 rule 3/4: focus mode hides the notice, approval, summary and changes banners — never the conflict or persist-error bars. */
@@ -69,7 +69,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
   </div>
 
   <!-- 3. agent-view-banner (#28; markdown docs only — never HTML, rule 21) -->
-  <AgentViewBanner v-if="onScreen && view === 'agent' && contentType === 'markdown' && !fileView" />
+  <AgentViewBanner v-if="onScreen && view === 'agent' && contentType === 'markdown' && route.kind !== 'file'" />
 
   <!-- 4. conflict, persist error -->
   <div v-if="onScreen && sync.conflict.value" class="conflict-bar" role="alert" data-testid="conflict-bar">
@@ -116,9 +116,9 @@ function onAppLinkClick(e: MouseEvent, path: string) {
     />
   </template>
 
-  <!-- 7. changes since you last looked -->
+  <!-- 7. changes since you last looked (#26: not on file routes — History lives on the primary tab) -->
   <ChangesBanner
-    v-if="onScreen && pasteId && changeSummary"
+    v-if="onScreen && pasteId && changeSummary && route.kind !== 'file'"
     v-show="!focusOn"
     :summary="changeSummary"
     @view="openHistory()"

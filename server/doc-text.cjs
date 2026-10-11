@@ -303,7 +303,7 @@ function stripUnderscoreEmphasis(s) {
 }
 
 /** Plain text of inline markdown (headings, titles, snippets), in linear time. */
-function stripInlineMarkdown(s) {
+function stripInlineMarkdown(s, { keepTags = false } = {}) {
   // RAG status badges (`:rag-green[On track]`) read as their label; a GitHub
   // alert marker (`[!NOTE]`, after the quote marker is gone) is not text.
   let t = String(s)
@@ -312,7 +312,8 @@ function stripInlineMarkdown(s) {
   t = replaceBracketed(t, '![', '(', ')');
   t = replaceBracketed(t, '[', '(', ')');
   t = replaceBracketed(t, '[', '[', ']');
-  t = removeTags(t.replace(/`+([^`]*)`+/g, '$1'));
+  t = t.replace(/`+([^`]*)`+/g, '$1');
+  if (!keepTags) t = removeTags(t);
   t = stripUnderscoreEmphasis(t.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1'));
   return t
     .replace(/~~(.+?)~~/g, '$1')
@@ -418,8 +419,10 @@ function stripHtmlComments(s) {
  * (headings, quotes, list bullets, fences, table pipes), emphasis, links,
  * HTML tags and comments removed; whitespace collapsed to single spaces.
  * Block markers are removed line by line; everything is linear time.
+ * `keepTags` (#26 AC-26.3, search snippets): inline HTML tags stay as literal
+ * text (clients render snippet segments as text); comments are still removed.
  */
-function markdownToPlain(md) {
+function markdownToPlain(md, { keepTags = false } = {}) {
   return stripInlineMarkdown(stripHtmlComments(String(md))
     .replace(/^ {0,3}(?:`{3,}|~{3,}).*$/gm, ' ')
     .replace(/^ {0,3}#{1,6}(?=\s|$)/gm, ' ')
@@ -428,7 +431,8 @@ function markdownToPlain(md) {
     .replace(/^[^\S\n\r\u2028\u2029]*(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?/gm, ' ')
     .replace(/^ {0,3}(?:[-*_]\s*){3,}$/gm, ' ')
     // table delimiter rows, checked by hand (the old nested-quantifier regex backtracked badly)
-    .replace(/^[^\n\r\u2028\u2029]*--[^\n\r\u2028\u2029]*/gm, (line) => (isTableDelimiterRow(line) ? ' ' : line)))
+    .replace(/^[^\n\r\u2028\u2029]*--[^\n\r\u2028\u2029]*/gm, (line) => (isTableDelimiterRow(line) ? ' ' : line)),
+  { keepTags })
     .replace(/\|/g, ' ')
     .replace(/\*+/g, '')
     .replace(/\s+/g, ' ')
@@ -732,9 +736,12 @@ function searchContent(contentType, markdown) {
   return isHtml(contentType) ? htmlToText(markdown || '') : String(markdown || '');
 }
 
-/** Plain text for search snippets (the index keeps the full source, 00 §8). */
+/**
+ * Plain text for search snippets (the index keeps the full source, 00 §8).
+ * HTML docs are tag-stripped; markdown keeps its inline HTML as literal text (#26 AC-26.3).
+ */
 function snippetText(contentType, markdown) {
-  return isHtml(contentType) ? htmlToText(markdown || '').replace(/\s+/g, ' ').trim() : markdownToPlain(markdown || '');
+  return isHtml(contentType) ? htmlToText(markdown || '').replace(/\s+/g, ' ').trim() : markdownToPlain(markdown || '', { keepTags: true });
 }
 
 module.exports = {

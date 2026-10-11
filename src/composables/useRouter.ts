@@ -7,7 +7,7 @@ import type { ContentType } from '@/types'
 // the fragment is only ever a heading/anchor id — never routing state.
 //
 //   ''                  landing (upload / restored local draft)
-//   library             the library (DashboardView until #26)
+//   library             the library (LibraryView, #26)
 //   d/<ID>              a shared doc            (d/<ID>/ is rewritten to d/<ID>)
 //   d/<ID>@<HASH>       a pinned revision (read-only)
 //   d/<ID>/<FILE…>      a file inside a multi-file session

@@ -53,7 +53,9 @@ describe('#4 routes — file route d/<ID>/<FILE> (rule 8)', () => {
     await addFile(doc.id, 'data.csv', 'a,b\n1,2\n')
   })
 
-  it('a nested markdown file renders read-only (percent-decoded name, no live-doc fetch)', T, async () => {
+  // #26 (00 §1.2, rule 27): a file route keeps its doc attached (the doc's capability and
+  // poll), so the doc's own GET is now expected; the file itself is still fetched by name.
+  it('a nested markdown file renders read-only (percent-decoded name)', T, async () => {
     const { context, page } = await open()
     const gets = []
     page.on('request', (r) => { if (r.method() === 'GET' && r.url().startsWith(API + '/paste/')) gets.push(new URL(r.url()).pathname) })
@@ -64,7 +66,6 @@ describe('#4 routes — file route d/<ID>/<FILE> (rule 8)', () => {
       assert.equal(await page.getByRole('button', { name: 'Edit', exact: true }).count(), 0, 'read-only: no Edit')
       assert.equal(await page.locator('aside.sidebar').filter({ visible: true }).count(), 0, 'no comments sidebar')
       assert.ok(gets.includes(`/paste/${doc.id}/files/notes/read%20me.md`), JSON.stringify(gets))
-      assert.ok(!gets.includes(`/paste/${doc.id}`), `no live-doc GET: ${JSON.stringify(gets)}`)
     } finally { await context.close() }
   })
 
@@ -91,15 +92,19 @@ describe('#4 routes — file route d/<ID>/<FILE> (rule 8)', () => {
       await page.goto(`${BASE}/d/${doc.id}/data.csv`)
       const link = page.locator('.file-view a[download]')
       await link.waitFor({ state: 'visible', timeout: 10000 })
-      assert.equal(new URL(await link.getAttribute('href')).pathname, `/paste/${doc.id}/files/data.csv`)
+      // #26 fix round (FE review SF3): the file is fetched and offered from a blob URL — `<a download>`
+      // on the cross-origin API URL is ignored and would navigate the app away.
+      assert.match(await link.getAttribute('href'), /^blob:/)
+      assert.equal(await link.getAttribute('download'), 'data.csv')
     } finally { await context.close() }
   })
 
-  it('a missing file shows doc-not-found', T, async () => {
+  // #26 rule 23 / AC-26.17: an unknown file of an existing doc is `file-not-found`.
+  it('a missing file shows file-not-found', T, async () => {
     const { context, page } = await open()
     try {
       await page.goto(`${BASE}/d/${doc.id}/nope.md`)
-      await page.locator('[data-testid="doc-not-found"]').waitFor({ state: 'visible', timeout: 10000 })
+      await page.locator('[data-testid="file-not-found"]').waitFor({ state: 'visible', timeout: 10000 })
       assert.equal(await page.locator('.upload-area').filter({ visible: true }).count(), 0)
     } finally { await context.close() }
   })
@@ -339,7 +344,7 @@ describe('#4 routes — leaving a doc with unsaved edits (rule 13)', () => {
     try {
       await stallWrites(page)
       await page.goto(`${BASE}/library`)
-      await page.locator('.session-card').filter({ hasText: nameA }).first().click()
+      await page.locator('[data-testid="library-row"], .session-card').filter({ hasText: nameA }).first().click()
       await waitForPath(page, `/d/${keyA}`)
       await waitForDoc(page, 'Guarded doc body.')
       await typeInEditor(page, '\n\nUnsaved guard text.')
@@ -350,7 +355,7 @@ describe('#4 routes — leaving a doc with unsaved edits (rule 13)', () => {
       // While the (stalled) save gets its short chance, the doc stays on screen.
       assert.equal(await page.evaluate(() => location.pathname), '/library')
       assert.equal(await page.locator('.preview-pane').filter({ hasText: 'Unsaved guard text' }).count(), 1, 'the doc stays on screen while deciding')
-      assert.equal(await page.locator('.dashboard').count(), 0)
+      assert.equal(await page.locator('[data-testid="library-page"], .dashboard').count(), 0)
       for (let i = 0; i < 50 && dialogs.length < 1; i++) await page.waitForTimeout(100)
       assert.equal(dialogs.length, 1, 'Back from a doc with unsaved edits asks')
       await waitForPath(page, `/d/${keyA}`)
@@ -359,11 +364,11 @@ describe('#4 routes — leaving a doc with unsaved edits (rule 13)', () => {
       // In-doc link to the library: asks again; accept → library.
       accept = true
       await page.locator('.preview-pane a', { hasText: 'to library' }).click()
-      await page.locator('.dashboard').waitFor({ state: 'visible', timeout: 15000 })
+      await page.locator('[data-testid="library-page"], .dashboard').waitFor({ state: 'visible', timeout: 15000 })
       assert.equal(here(page).pathname, '/library')
       assert.equal(dialogs.length, 2, 'the in-doc link asked too')
       // Opening another doc afterwards does not ask again (the edits were discarded).
-      await page.locator('.session-card').filter({ hasText: nameB }).first().click()
+      await page.locator('[data-testid="library-row"], .session-card').filter({ hasText: nameB }).first().click()
       await waitForDoc(page, 'Second doc body.')
       assert.equal(dialogs.length, 2, 'no second confirm after accepting')
     } finally { await context.close() }

@@ -8,6 +8,7 @@ import { historyBarrier } from '@/composables/useExternalChange'
 import { resolveView, routeKey, type RouterLocation } from '@/composables/useRouter'
 import { paneModeFor, type DocState, type DocViewName } from '@/composables/useDocState'
 import { loadFenceLanguages } from '@/markdown/highlight'
+import { provideSessionFiles, docKeyOfScreen } from '@/composables/useSessionFiles'
 
 // ── Doc loaders (spec #4 routes, #2 shell split) ─────────────────────────────
 // What happens when a route is entered: load the shared doc / pinned revision
@@ -15,9 +16,6 @@ import { loadFenceLanguages } from '@/markdown/highlight'
 // unsaved edits, and the document-level actions that change what is on screen
 // (open a file, New, Share).
 
-const MARKDOWN_FILE = /\.(md|markdown|txt)$/i
-const HTML_FILE = /\.html?$/i
-const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
 const LEAVE_FLUSH_MS = 1500
 // A doc's first render waits this long at most for the lazy highlight.js
 // languages its fences name (one small chunk each), so its code paints with
@@ -40,7 +38,9 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
   const {
     takeRestoredDraft, restoredInfo, loadLocalDraft, forgetLocalDraft, clearPersisted, restored,
   } = doc.persistence
-  const { loadShareDetailed, fetchGithub, getShareUrls, getRevision, loadSessionFile, sessionFileUrl, createShare, getComments, getApproval } = doc.share
+  const { loadShareDetailed, fetchGithub, getShareUrls, getRevision, createShare, getComments, getApproval } = doc.share
+  /** #26: the attached doc's files (tabs, attachments, file routes). */
+  const sessionFiles = provideSessionFiles(doc)
 
   function detachFromShare() {
     doc.pasteId.value = null
@@ -54,7 +54,6 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
   function showReadOnlyContent(content: string, name: string, type: ContentType) {
     detachFromShare()
     doc.pinnedInfo.value = null
-    doc.setFileView(null)
     doc.clearComments()
     doc.dismissAll()
     doc.notice.value = null
@@ -67,11 +66,19 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
   let navToken = 0
   const isStale = (token: number) => token !== navToken
 
-  async function loadSharedDoc(shareId: string, token: number) {
+  /**
+   * Attach the shared doc and show `screen`: the doc itself, or (#26) one of
+   * its file routes — a file route keeps its doc attached (capability, poll).
+   */
+  async function loadSharedDoc(shareId: string, token: number, screen: string = routeKey({ kind: 'doc', id: shareId })) {
     const key = routeKey({ kind: 'doc', id: shareId })
-    // Already attached to this session (Back/Forward, library and back) — do
-    // not reload over local edits.
-    if (doc.pasteId.value === shareId && doc.screenKey.value === key) { applyViewParam(); return }
+    // Already attached to this session (Back/Forward, a file tab and back,
+    // library and back) — do not reload over local edits.
+    if (doc.pasteId.value === shareId && docKeyOfScreen(doc.screenKey.value, shareId) === key) {
+      doc.screenKey.value = screen
+      applyViewParam()
+      return
+    }
     if (doc.pasteId.value) detachFromShare()
 
     const { data, status } = await loadShareDetailed(shareId)
@@ -81,7 +88,9 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (!data) {
       const draft = takeRestoredDraft(shareId)
       if (status === 404 || status === 410) {
-        if (!draft || doc.embed.value) {
+        // #26: only unsaved edits make a local copy worth showing; a clean draft
+        // (just viewed, e.g. a recent-list entry for a doc deleted elsewhere) is not-found.
+        if (!draft || draft.clean || doc.embed.value) {
           // Rule 10: no local copy — a definitive "not found", never the upload screen.
           doc.docMissing.value = 'missing'
           return
@@ -103,7 +112,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
         handleFileLoaded(draft.markdown, draft.filename, undefined, { shared: true })
         doc.mode.value = draft.mode
         doc.pasteId.value = shareId
-        doc.screenKey.value = key
+        doc.screenKey.value = screen
         if (draft.baseMarkdown !== null) {
           sync.setBaseline({ markdown: draft.baseMarkdown, filename: draft.filename, contentHash: draft.baseHash })
           if (draft.conflict) sync.restoreDraft(draft.markdown, draft.baseMarkdown, { baseHash: draft.baseHash, conflict: true })
@@ -123,7 +132,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       doc.loadComments(data.comments)
     }
     doc.pasteId.value = shareId
-    doc.screenKey.value = key
+    doc.screenKey.value = screen
     // Mode and header meta from the payload (absent/invalid mode → review).
     doc.applyServerMeta(data, Date.now(), { initial: true })
     sync.setBaseline({
@@ -164,7 +173,6 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       return
     }
     showReadOnlyContent(data.markdown, id, detectContentType('', data.markdown))
-    doc.fileView.value = null
     doc.pinnedInfo.value = { id, at: data.at }
     doc.pinnedCurrent.value = null
     // #2/#4 ruling: the doc's mode comes on the revision response; a review
@@ -184,34 +192,16 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     }
   }
 
-  /** Rule 8: one file of a multi-file session, read-only. */
+  /**
+   * Rule 8 / #26: one file of a multi-file session, read-only, with its doc
+   * attached (the doc's capability, tabs and poll). The file is fetched once;
+   * an unknown name is a file-not-found state, not a missing doc.
+   */
   async function loadFile(id: string, file: string, token: number) {
     const key = routeKey({ kind: 'file', id, file })
     if (doc.screenKey.value === key) { applyViewParam(); return }
-    const res = await loadSessionFile(id, file)
-    if (isStale(token)) return
-    if (!res.blob) {
-      if (res.status === 404 || res.status === 410) doc.docMissing.value = 'missing'
-      else doc.notice.value = 'Cannot reach the review server. Try again when it is back.'
-      return
-    }
-    const name = file.split('/').pop() || file
-    doc.pinnedInfo.value = null
-    if (MARKDOWN_FILE.test(file) || HTML_FILE.test(file)) {
-      const text = await res.blob.text()
-      if (isStale(token)) return
-      showReadOnlyContent(text, name, HTML_FILE.test(file) ? 'html' : 'markdown')
-      doc.setFileView(null)
-    } else {
-      showReadOnlyContent('', name, 'markdown')
-      doc.setFileView(IMAGE_FILE.test(file) || res.type.startsWith('image/')
-        ? { kind: 'image', url: URL.createObjectURL(res.blob), name }
-        : { kind: 'download', url: sessionFileUrl(id, file), name })
-    }
-    // A session file carries no comments of its own: a plain reading page.
-    doc.mode.value = 'publish'
-    doc.screenKey.value = key
-    applyViewParam()
+    sessionFiles.openFile(id, file)
+    await loadSharedDoc(id, token, key)
   }
 
   /**
@@ -305,7 +295,6 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     doc.mode.value = 'publish'
     detachFromShare()
     doc.pinnedInfo.value = null
-    doc.setFileView(null)
     doc.appMode.value = 'upload'
     doc.screenKey.value = 'landing'
   }
@@ -330,9 +319,13 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (!attached || !sync.isShared.value) return true
     const attachedKey = routeKey({ kind: 'doc', id: attached })
     if (to.key === attachedKey) return true
+    // #26: a file tab of the attached doc does not leave it.
+    if (to.route.kind === 'file' && to.route.id === attached) return true
     const unsaved = () => sync.isDirty.value || !!sync.conflict.value || sync.saveState.value === 'saving'
     if (!unsaved()) return true
-    const showing = from.key === attachedKey && doc.screenKey.value === attachedKey
+    // #26: the doc or one of its file tabs was on screen — it stays there while deciding
+    const fromAttached = from.key === attachedKey || (from.route.kind === 'file' && from.route.id === attached)
+    const showing = fromAttached && doc.screenKey.value === from.key
     if (showing) doc.held.value = from
     try {
       if (!sync.conflict.value) await withTimeout(doc.flushAutosave(), LEAVE_FLUSH_MS, false)
@@ -361,7 +354,6 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     doc.dismissAll()
     doc.notice.value = null
     doc.pinnedInfo.value = null
-    doc.setFileView(null)
     doc.markdown.value = local.markdown
     doc.filename.value = local.filename
     doc.contentType.value = local.contentType ?? 'markdown'
@@ -378,6 +370,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (isStale(token)) return
     doc.docMissing.value = null
     const r = to.route
+    if (r.kind !== 'file') sessionFiles.closeFile()
     switch (r.kind) {
       case 'landing':
         return enterLanding(token)
@@ -421,9 +414,8 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       if (doc.route.value.kind !== 'landing') router.replace(router.base)
     }
     historyBarrier() // another document: no undo into the previous one (#8 rule 5)
-    // Whatever was on screen before (a pinned banner, a file's image) goes.
+    // Whatever was on screen before (a pinned banner) goes.
     doc.pinnedInfo.value = null
-    doc.setFileView(null)
     doc.clearComments()
     doc.dismissAll()
     doc.notice.value = null

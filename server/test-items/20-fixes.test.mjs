@@ -59,6 +59,8 @@ test('fix 2: client-supplied column-owned keys never round-trip into extra_json 
     // #23 rule 6 adds the real `id` to GET responses; the forged one must still never come back.
     for (const k of Object.keys(forged)) {
       if (k === 'id') assert.equal(g.json.id, id, `${p}: id is the real one, never the forged value`);
+      // #26 (spec API + contract) adds the stored creator to GET responses; the forged one must still never come back.
+      else if (k === 'created_by') assert.equal(g.json.created_by, 'Ann', `${p}: created_by is the real author, never the forged value`);
       else assert.ok(!(k in g.json), `${p}: ${k} must not be echoed`);
     }
     assert.equal(g.json.keep_me, 1, 'ordinary extra keys still round-trip');

@@ -56,14 +56,18 @@ export function resolveDocAxes(input: DocAxesInput): DocAxes {
     : input.routeKind === 'pinned' ? 'pinned'
       : input.routeKind === 'file' ? 'file'
         : 'doc'
-  // Pinned revisions, file routes and embeds are read-only (00 §1.2); a shared
-  // doc is editable only with edit access (#23 — a protected doc without a valid token is view-only).
+  // Pinned revisions and embeds are viewers (00 §1.2); a shared doc is editable
+  // only with edit access (#23 — a protected doc without a valid token is view-only).
+  // A file route (#26) has the doc's capability, but only the read view and no
+  // review UI: its files are read-only and carry no comments of their own.
   const canEdit = !input.pasteId || input.canEdit !== false
-  const capability: Capability = routeKind === 'doc' && canEdit ? 'editor' : 'viewer'
-  // Edit and split are editing views (#7): only an editor gets them.
-  const view: DocViewName = capability === 'editor' && input.paneMode !== 'preview' ? input.paneMode
-    : routeKind === 'embed' ? 'read' : input.readerView ?? 'read'
-  return { routeKind, capability, view, isShared: !!input.pasteId, mode: input.mode, reviewUI: input.mode === 'review' }
+  const capability: Capability = (routeKind === 'doc' || routeKind === 'file') && canEdit ? 'editor' : 'viewer'
+  // Edit and split are editing views (#7): only an editor gets them. A file route (#26) only has the read view.
+  const view: DocViewName = routeKind === 'file' ? 'read'
+    : capability === 'editor' && input.paneMode !== 'preview' ? input.paneMode
+      : routeKind === 'embed' ? 'read' : input.readerView ?? 'read'
+  const reviewUI = input.mode === 'review' && routeKind !== 'file'
+  return { routeKind, capability, view, isShared: !!input.pasteId, mode: input.mode, reviewUI }
 }
 
 export const isEmbedLocation = (loc: RouterLocation) => new URLSearchParams(loc.search).get('embed') === '1'

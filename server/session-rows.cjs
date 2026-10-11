@@ -9,7 +9,7 @@
 // (a string); null, non-string or otherwise unusual values stay in extra_json
 // verbatim, so absent vs null vs odd values all survive.
 const crypto = require('crypto');
-const { docTitle, searchContent } = require('./doc-text.cjs');
+const { docTitle, searchContent, htmlToText } = require('./doc-text.cjs');
 
 const { VALID_MODES, validMode } = require('./mode.cjs');
 
@@ -216,6 +216,29 @@ function deleteSearchRow(db, sessionId) {
   if (prev && prev.fts_rowid !== null) db.prepare('DELETE FROM doc_fts WHERE rowid = ?').run(prev.fts_rowid);
 }
 
+// ── document files in the search index (#26, 00 §8) ─────────────────────────
+// One doc_fts row per document file: title '', filename = file_name = the file's
+// path, content = its text (HTML stripped like the session row). session_id and
+// file_name are UNINDEXED, so finding a file's rows scans the index: callers
+// only do it for document files (never for pasted images and other attachments).
+
+/** "Document files" (#26 rule 19): .md .markdown .html .htm .txt, case-insensitive. */
+const DOC_FILE_RE = /\.(md|markdown|html|htm|txt)$/i;
+const isDocFile = (name) => typeof name === 'string' && DOC_FILE_RE.test(name);
+
+/** Replace (text given) or remove (text null) the index row of one document file of a session. */
+function syncFileSearchRow(db, sessionId, name, text) {
+  db.prepare("DELETE FROM doc_fts WHERE session_id = ? AND file_name = ? AND file_name <> ''").run(sessionId, name);
+  if (text === null || text === undefined) return;
+  const content = /\.html?$/i.test(name) ? htmlToText(text) : String(text);
+  db.prepare("INSERT INTO doc_fts (title, filename, content, session_id, file_name) VALUES ('', ?, ?, ?, ?)").run(name, content, sessionId, name);
+}
+
+/** Remove every document-file index row of a session (the session's own row is deleteSearchRow's). */
+function deleteFileSearchRows(db, sessionId) {
+  db.prepare("DELETE FROM doc_fts WHERE session_id = ? AND file_name <> ''").run(sessionId);
+}
+
 /** Write (insert or update) the sessions row from encoded meta. Bumps `version`. */
 function upsertSessionRow(db, id, meta, { mode, slugOwned, createdBy = null, now = new Date().toISOString(), sourceSig } = {}) {
   const { cols, extra } = encodeMeta(meta, { slugOwned });
@@ -238,4 +261,5 @@ module.exports = {
   VALID_MODES, META_COLUMNS, COLUMN_OWNED, encodeMeta, decodeMeta, validMode,
   writeComments, syncComments, readComments, REVISION_META_COLUMNS, encodeRevision, decodeRevision, insertRevision,
   refreshUpdatedAt, syncSearchRow, deleteSearchRow, upsertSessionRow,
+  DOC_FILE_RE, isDocFile, syncFileSearchRow, deleteFileSearchRows,
 };

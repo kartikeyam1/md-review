@@ -18,9 +18,9 @@ describe('resolveDocAxes (00 §1)', () => {
     expect(resolveDocAxes({ ...base, routeKind: 'landing', pasteId: null })).toMatchObject({ routeKind: 'doc', capability: 'editor', isShared: false })
   })
 
-  it('pinned revisions, file routes and embeds are viewers', () => {
+  it('pinned revisions and embeds are viewers; a file route has the doc\'s capability (00 §1.2, #26)', () => {
     expect(resolveDocAxes({ ...base, routeKind: 'pinned' })).toMatchObject({ routeKind: 'pinned', capability: 'viewer' })
-    expect(resolveDocAxes({ ...base, routeKind: 'file' })).toMatchObject({ routeKind: 'file', capability: 'viewer' })
+    expect(resolveDocAxes({ ...base, routeKind: 'file' })).toMatchObject({ routeKind: 'file', capability: 'editor', view: 'read' })
     expect(resolveDocAxes({ ...base, embed: true })).toMatchObject({ routeKind: 'embed', capability: 'viewer' })
   })
 

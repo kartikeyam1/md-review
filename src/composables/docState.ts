@@ -51,8 +51,6 @@ export function createDocState(router: Router) {
   const docMissing = ref<null | 'missing' | 'revision-gone'>(null)
   /** Pinned revision on screen (rule 7). */
   const pinnedInfo = ref<{ id: string; at: string | null } | null>(null)
-  /** Non-text file on a file route (rule 8): an image or a download link. */
-  const fileView = ref<null | { kind: 'image' | 'download'; url: string; name: string }>(null)
 
   const appMode = ref<AppMode>('upload')
   const paneMode = ref<PaneMode>('preview')
@@ -84,11 +82,19 @@ export function createDocState(router: Router) {
   const modeSync = useDocModeSync({ mode, pasteId, share, canChange: () => capability.value === 'editor' })
   const { docMeta } = modeSync
 
+  /** #26: listeners for every server payload of the attached doc (its first GET and each changed poll). */
+  const payloadListeners = new Set<(data: SharedPayload) => void>()
+  function onServerPayload(fn: (data: SharedPayload) => void): () => void {
+    payloadListeners.add(fn)
+    return () => { payloadListeners.delete(fn) }
+  }
+
   /** A server payload for the attached doc: header meta, mode and (#23) edit access. */
   function applyServerMeta(data: SharedPayload, requestedAt: number, o: { initial?: boolean } = {}) {
     const wasEditor = access.value === null || access.value.can_edit
     if (data.access) access.value = { ...data.access }
     modeSync.applyServerMeta(data, requestedAt, o)
+    for (const fn of payloadListeners) fn(data)
     // A poll says this browser can no longer edit (token rotated elsewhere): same as a refused write.
     if (!o.initial && wasEditor && data.access?.protected && !data.access.can_edit) loseEditAccess(true)
   }
@@ -265,15 +271,6 @@ export function createDocState(router: Router) {
     return null
   })
 
-  // ── File route content ───────────────────────────────────────────────────
-  let fileObjectUrl: string | null = null
-
-  function setFileView(next: typeof fileView.value) {
-    if (fileObjectUrl) { URL.revokeObjectURL(fileObjectUrl); fileObjectUrl = null }
-    if (next?.kind === 'image') fileObjectUrl = next.url
-    fileView.value = next
-  }
-
   /** The route's content is what the doc state holds. */
   const onScreen = computed(() => appMode.value === 'doc' && screenKey.value === viewLoc.value.key)
 
@@ -303,10 +300,10 @@ export function createDocState(router: Router) {
   return {
     router,
     // route / screen
-    held, viewLoc, route, embed, readOnly, screenKey, docMissing, pinnedInfo, fileView, setFileView, onScreen, booted,
+    held, viewLoc, route, embed, readOnly, screenKey, docMissing, pinnedInfo, onScreen, booted,
     filePathParam,
     // axes (00 §1) + mode
-    ...axes, mode, ...modeSync, applyServerMeta, access, localCopy, setLocalCopy, discardLocalCopy, useServerVersion, restoreLocalCopy, docTitle, docLink,
+    ...axes, mode, ...modeSync, applyServerMeta, onServerPayload, access, localCopy, setLocalCopy, discardLocalCopy, useServerVersion, restoreLocalCopy, docTitle, docLink,
     // content
     appMode, paneMode, readerView, agentSectionCount, rawMarkdownUrl, markdown, filename, contentType, pasteId, wordCount, charCount, NO_COMMENTS,
     // UI state

@@ -21,6 +21,7 @@ import { useActiveHeading } from '@/composables/useActiveHeading'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import ReactionBar from '@/components/ReactionBar.vue'
 import ReactionOverlays from '@/components/ReactionOverlays.vue'
+import { useSessionFilesStore, docKeyOfScreen } from '@/composables/useSessionFiles'
 
 // The doc layout (00 §4.2): header, the below-header stack (DocBanners), the
 // body, and the modals. App.vue is the router shell; this renders the
@@ -28,6 +29,8 @@ import ReactionOverlays from '@/components/ReactionOverlays.vue'
 // one line in theirs:
 //   rail    — #3 toc-panel
 //   content — the doc (file view | editor | preview); #24 reaction-bar after it
+// #26 puts the breadcrumb and the file tabs at the end of the below-header
+// stack (00 §2.4 position 8); a file route shows FileView in the content.
 //   aside   — review-mode comments (CommentsLayer)
 
 // Carries the diff library — only loaded when someone opens History.
@@ -44,11 +47,15 @@ const FocusControls = defineAsyncComponent(() => import('@/components/FocusContr
 const AgentSectionsNotice = defineAsyncComponent(() => import('@/components/AgentSectionsNotice.vue'))
 // #29: the deck, only for ?view=slides.
 const SlidesView = defineAsyncComponent(() => import('@/components/SlidesView.vue'))
+// #26: multi-file sessions — only shared docs use them; kept out of the entry chunk (#6 AC-06.8 budget).
+const DocBreadcrumb = defineAsyncComponent(() => import('@/components/DocBreadcrumb.vue'))
+const FileTabs = defineAsyncComponent(() => import('@/components/FileTabs.vue'))
+const FileView = defineAsyncComponent(() => import('@/components/FileView.vue'))
 
 const doc = useDocState()
 const actions = useDocActions()
 const {
-  router, route, embed, readOnly, docMissing, fileView, onScreen, booted, screenKey,
+  router, route, embed, readOnly, docMissing, onScreen, booted, screenKey,
   view, mode, capability, reviewUI, historyId, historyCurrent, historyLive,
   paneMode, markdown, filename, contentType, pasteId, NO_COMMENTS,
   showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
@@ -62,16 +69,51 @@ const editorRef = ref<InstanceType<typeof LazyEditor>>()
 const previewRef = ref<InstanceType<typeof PreviewPane>>()
 onMounted(() => setHighlightClearer(() => previewRef.value?.clearSelectionHighlight()))
 
+// #3 rule 10 with #26: the sticky TOC rail must not jump when the page scrolls.
+// Whatever sits between the header and the doc body in the flow (the #26
+// breadcrumb and file strip, banners) pushes the rail's natural top below the
+// header; `--doc-stack-h` is that height, so the rail sticks exactly where it
+// starts. Measured, not hard-coded: the stack's rows come and go.
+const appEl = ref<HTMLElement | null>(null)
+const bodyEl = ref<HTMLElement | null>(null)
+const stackH = ref(0)
+function measureStack() {
+  const body = bodyEl.value
+  if (!body) { stackH.value = 0; return }
+  const headerH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--header-h')) || 0
+  const scrollTop = document.scrollingElement?.scrollTop ?? 0
+  stackH.value = Math.max(0, Math.round(body.getBoundingClientRect().top + scrollTop - headerH))
+}
+let stackRo: ResizeObserver | null = null
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined') return
+  stackRo = new ResizeObserver(() => measureStack())
+  watch([appEl, bodyEl], ([app, body], old) => {
+    for (const el of old ?? []) if (el) stackRo?.unobserve(el)
+    if (app) stackRo?.observe(app)
+    if (body) stackRo?.observe(body)
+    measureStack()
+  }, { immediate: true })
+})
+onBeforeUnmount(() => { stackRo?.disconnect(); stackRo = null })
+
 // #6: the editor is lazy. Its slot mounts the first time the doc is shown in
 // edit or split view (which fetches the chunk) and then stays mounted, hidden
 // with v-show, so read ↔ edit ↔ split keeps the same editor instance (rule 5) —
 // for the lifetime of the open document only: `docKey` changes with the doc on
 // screen, which drops the slot (and with it any per-doc editor state, e.g. #8 history).
-const editorShown = computed(() => paneMode.value !== 'preview' && capability.value === 'editor' && !readOnly.value && !fileView.value)
+/** #26: the session-files store (a lazy chunk; null until it has loaded). */
+const filesStore = useSessionFilesStore()
+/** #26: a session file on screen (its doc stays attached underneath). */
+const isFileRoute = computed(() => route.value.kind === 'file')
+/** #26: the file strip is on screen — the doc body is its tabpanel (FileTabs' aria-controls). */
+const tabsShown = computed(() => !!filesStore.value?.stripShown.value)
+const editorShown = computed(() => paneMode.value !== 'preview' && capability.value === 'editor' && !readOnly.value && !isFileRoute.value)
 /** #7: editor and preview side by side (or as tabs below 960px). */
 const splitShown = computed(() => editorShown.value && paneMode.value === 'split')
-const previewShown = computed(() => !fileView.value && (!editorShown.value || splitShown.value))
-const docKey = computed(() => `${screenKey.value ?? ''}|${pasteId.value ?? ''}`)
+const previewShown = computed(() => !isFileRoute.value && (!editorShown.value || splitShown.value))
+// A file tab of the attached doc is the same document: the editor slot survives a trip to it.
+const docKey = computed(() => `${(pasteId.value ? docKeyOfScreen(screenKey.value, pasteId.value) : screenKey.value) ?? ''}|${pasteId.value ?? ''}`)
 const emptyDocHint = computed(() => previewShown.value && !splitShown.value && capability.value === 'editor' && !readOnly.value
   && contentType.value === 'markdown' && !markdown.value.trim())
 const editorMounted = ref(false)
@@ -210,12 +252,25 @@ function goHome() {
  * fixed-viewport layout with internally scrolling panes.
  */
 // #29: the deck replaces the header, banners and body (declared before anything that reads it).
-const slidesShown = computed(() => onScreen.value && view.value === 'slides' && contentType.value === 'markdown' && !fileView.value && !docMissing.value)
-const docScroll = computed(() => onScreen.value && !editorShown.value && !fileView.value && contentType.value !== 'html' && !slidesShown.value)
+const slidesShown = computed(() => onScreen.value && view.value === 'slides' && contentType.value === 'markdown' && !isFileRoute.value && !docMissing.value)
+const fileContent = computed(() => filesStore.value?.content.value ?? null)
+/** #26: markdown and code files read like a doc (document scroll); images, HTML and cards keep the fixed layout. */
+const fileScrolls = computed(() => {
+  const c = fileContent.value
+  return c?.status === 'ready' && (c.kind === 'markdown' || c.kind === 'code')
+})
+const docScroll = computed(() => onScreen.value && !editorShown.value && !slidesShown.value
+  && (isFileRoute.value ? fileScrolls.value : contentType.value !== 'html'))
 
-// #3: the TOC — read view of a markdown doc only (never edit view, HTML, files or embeds).
+// #3: the TOC — read view of a markdown doc only (never edit view, HTML or embeds);
+// on a markdown file's route (#26) it lists that file's headings.
 const breakpoint = useBreakpoint()
-const toc = provideToc({ markdown, enabled: docScroll, breakpoint, agentView: computed(() => view.value === 'agent') })
+const tocSource = computed(() => {
+  if (!isFileRoute.value) return markdown.value
+  const c = fileContent.value
+  return c?.status === 'ready' && c.kind === 'markdown' ? c.text : ''
+})
+const toc = provideToc({ markdown: tocSource, enabled: docScroll, breakpoint, agentView: computed(() => view.value === 'agent' && !isFileRoute.value) })
 const activeHeading = useActiveHeading({ entries: toc.entries, activeId: toc.activeId, enabled: toc.visible })
 
 // ── #28 human view vs agent view ─────────────────────────────────────────────
@@ -260,10 +315,7 @@ const embedOpenHref = computed(() => {
     <RouteNotFound v-if="route.kind === 'not-found' || route.kind === 'landing' || route.kind === 'library'" kind="route" :home="router.base" @home="goHome" />
     <RouteNotFound v-else-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" @home="goHome" />
     <div v-else-if="onScreen" class="main-pane embed-pane">
-      <div v-if="fileView" class="file-view">
-        <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
-        <a v-else :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
-      </div>
+      <template v-if="isFileRoute"><FileView v-if="filesStore" /></template>
       <PreviewPane v-else ref="previewRef" :content="markdown" :comments="NO_COMMENTS" :theme="theme" :content-type="contentType" :front-matter="capability === 'editor'" />
     </div>
     <div class="embed-footer">
@@ -272,8 +324,10 @@ const embedOpenHref = computed(() => {
   </div>
   <div
     v-else
+    ref="appEl"
     class="app"
     :class="{ 'doc-scroll': docScroll }"
+    :style="stackH ? { '--doc-stack-h': `${stackH}px` } : undefined"
     :data-view="view"
     :data-mode="mode"
     :data-capability="capability"
@@ -283,27 +337,36 @@ const embedOpenHref = computed(() => {
     <div v-if="showHeader" v-show="!focusShown" class="doc-header-slot"><DocHeader /></div>
     <DocBanners v-if="!slidesShown" />
     <SlidesView v-if="slidesShown" />
+    <template v-if="onScreen && !docMissing && filesStore && !slidesShown">
+      <DocBreadcrumb />
+      <FileTabs />
+    </template>
 
     <RouteNotFound v-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" @home="goHome" />
     <FileUpload v-else-if="route.kind === 'landing' && booted && !onScreen" @file-loaded="actions.handleFileLoaded" />
 
-    <div v-if="onScreen && !slidesShown" class="doc-body review-layout">
+    <div
+      v-if="onScreen && !slidesShown"
+      id="doc-tabpanel"
+      ref="bodyEl"
+      class="doc-body review-layout"
+      :role="tabsShown ? 'tabpanel' : undefined"
+      :aria-label="tabsShown ? (route.kind === 'file' ? route.file : filename || 'Document') : undefined"
+    >
       <div class="doc-rail"><TocPanel v-if="toc.railShown.value" :toc="toc" variant="rail" @pin="activeHeading.pin" /></div>
       <main class="doc-content main-pane">
-        <AgentSectionsNotice v-if="noticeShown && !fileView" />
+        <AgentSectionsNotice v-if="noticeShown && !isFileRoute" />
         <!-- An empty doc in the read view (e.g. "Start blank"): say so and offer the editor. -->
         <div v-if="emptyDocHint" class="empty-doc-hint" data-testid="empty-doc-hint">
           <span>This document is empty.</span>
           <button type="button" class="btn btn-primary" data-testid="empty-doc-edit" @click="actions.setView('edit')">Start writing</button>
         </div>
-        <div v-if="fileView" class="file-view">
-          <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
-          <a v-else class="btn btn-primary" :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
-        </div>
+        <template v-if="isFileRoute"><FileView v-if="filesStore" /></template>
         <!-- #7: both panes render through SplitView in every view, so a view switch never remounts
-             the editor; the preview mounts with the read and split views. -->
+             the editor; the preview mounts with the read and split views. #26: hidden (not
+             unmounted) on the doc's file tabs, so the editor slot survives a trip to one. -->
         <SplitView
-          v-else
+          v-show="!isFileRoute"
           :split="splitShown"
           :editor="editorRef"
           :preview="previewRef"
@@ -342,7 +405,7 @@ const embedOpenHref = computed(() => {
             />
           </template>
         </SplitView>
-        <ReactionBar v-if="reactions.active.value && !fileView && !editorShown" />
+        <ReactionBar v-if="reactions.active.value && !isFileRoute && !editorShown" />
       </main>
       <aside class="doc-aside" :class="{ collapsed: sidebarHidden }"><CommentsLayer v-if="reviewUI" @scroll-to="scrollToLine" /></aside>
     </div>
@@ -437,21 +500,6 @@ const embedOpenHref = computed(() => {
 
 .embed-open-link:hover {
   color: var(--text-primary);
-}
-
-.file-view {
-  height: 100%;
-  overflow: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: var(--bg-surface);
-}
-
-.file-view img {
-  max-width: 100%;
-  max-height: 100%;
 }
 
 .doc-loading {

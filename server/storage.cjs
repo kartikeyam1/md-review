@@ -358,8 +358,15 @@ function savePaste(id, data, ctx = {}, opts = {}) {
 function deleteSession(id, meta) {
   tx(db, () => {
     rows.deleteSearchRow(db, id);
+    // #26: its document files' index rows (only scanned for when it has document files)
+    if (db.prepare('SELECT name FROM files WHERE session_id = ?').all(id).some((f) => rows.isDocFile(f.name))) {
+      rows.deleteFileSearchRows(db, id);
+    }
+    const hadTags = !!db.prepare('SELECT 1 FROM session_tags WHERE session_id = ? LIMIT 1').get(id);
     db.prepare('DELETE FROM slugs WHERE target_id = ? AND kind = ?').run(id, 'session');
     db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    // #26: tags no other doc uses go with it (single delete, bulk delete and the expiry sweep all land here)
+    if (hadTags) db.prepare('DELETE FROM tags WHERE NOT EXISTS (SELECT 1 FROM session_tags st WHERE st.tag_id = tags.id)').run();
   });
   const fdir = filesDir(id);
   if (fs.existsSync(fdir)) { try { fs.rmSync(fdir, { recursive: true, force: true }); } catch {} }
@@ -414,9 +421,18 @@ function listSessionFiles(id) {
     .map((r) => ({ name: r.name, size: r.size, type: r.type }));
 }
 
-/** A file write is a session write: its metadata row and the session version change together. */
+/** Text of a session file on disk, or null when it cannot be read. */
+function readFileText(id, rel) {
+  try { return fs.readFileSync(path.join(filesDir(id), ...rel.split('/')), 'utf-8'); } catch { return null; }
+}
+
+/**
+ * A file write is a session write: its metadata row, its search-index row (#26:
+ * document files only) and the session version change together.
+ */
 function touchFileRow(id, rel, stat) {
   tx(db, () => {
+    if (rows.isDocFile(rel)) rows.syncFileSearchRow(db, id, rel, stat ? readFileText(id, rel) : null);
     if (stat) {
       db.prepare(`INSERT INTO files (session_id, name, size, type, updated_at) VALUES (?, ?, ?, ?, ?)
                   ON CONFLICT(session_id, name) DO UPDATE SET size = excluded.size, type = excluded.type, updated_at = excluded.updated_at`)
@@ -465,6 +481,37 @@ function getSessionFile(id, filename) {
   if (!target.startsWith(dir + path.sep) && target !== dir) return null;
   if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) return null;
   return { path: target, mime: getMime(filename) };
+}
+
+/**
+ * Boot (#26): document files that have no index row yet (data migrated from the
+ * JSON-file server, or written before #26) get one. One index scan; reads only
+ * the missing files. A file that cannot be read is skipped (retried next boot).
+ */
+function backfillFileSearchRows() {
+  const docFiles = db.prepare('SELECT session_id, name FROM files').all().filter((f) => rows.isDocFile(f.name));
+  if (docFiles.length === 0) return 0;
+  const key = (sid, name) => `${sid}\u0000${name}`;
+  const indexed = new Set(db.prepare("SELECT session_id, file_name FROM doc_fts WHERE file_name <> ''").all().map((r) => key(r.session_id, r.file_name)));
+  const missing = docFiles.filter((f) => !indexed.has(key(f.session_id, f.name)));
+  let added = 0;
+  if (missing.length) {
+    tx(db, () => {
+      for (const f of missing) {
+        const text = readFileText(f.session_id, f.name);
+        if (text === null) continue;
+        rows.syncFileSearchRow(db, f.session_id, f.name, text);
+        added++;
+      }
+    });
+  }
+  return added;
+}
+try {
+  const n = backfillFileSearchRows();
+  if (n) console.log(`[md-review] indexed ${n} document file(s) for search`);
+} catch (e) {
+  console.error('[md-review] indexing document files for search failed:', e); // search misses them; never block boot
 }
 
 // ── Chunked upload helpers ──────────────────────────────────────────────────

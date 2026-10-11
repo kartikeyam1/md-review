@@ -41,6 +41,7 @@ const ROUTES = [
   require('./routes/views.cjs'), // #25
   require('./routes/list.cjs'),
   require('./routes/library-docs.cjs'),
+  require('./routes/library.cjs'), // #26: collections, tags, pins, bulk; PUT /paste/:id/tags|collection
   require('./routes/session.cjs'),
   require('./routes/uploads.cjs'),
   require('./routes/files.cjs'),
