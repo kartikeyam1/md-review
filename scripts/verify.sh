@@ -30,8 +30,8 @@
 #   STACK_MODE=dev           e2e against the vite dev server, not the build
 #   VERIFY_KEEP_DIST=1       keep the run's build (.verify/runs/<id>/dist)
 #   E2E_SHARD=2/4            run only shard 2 of 4 of the e2e files (CI matrix).
-#                            Files are balanced by size (largest first onto the
-#                            lightest shard), so the split is deterministic.
+#                            Files are balanced by recorded runtime
+#                            (tests/e2e/timings.json), longest first.
 #   E2E_EXCLUDE=a,b          drop these e2e files (names as in E2E_FILES),
 #                            before sharding (CI: the visual job runs them).
 #   E2E_DEV_FILES="06-lazy-editor"  e2e files written against the dev server's
@@ -236,14 +236,23 @@ shard_e2e_files() {
   [[ -n "${E2E_SHARD:-}" ]] || return 0
   local i="${E2E_SHARD%/*}" n="${E2E_SHARD#*/}"
   [[ "$i" =~ ^[0-9]+$ && "$n" =~ ^[0-9]+$ && "$i" -ge 1 && "$i" -le "$n" ]] || { echo "bad E2E_SHARD=$E2E_SHARD (want i/n)" >&2; return 1; }
+  # Weight = recorded seconds from tests/e2e/timings.json (refresh with
+  # scripts/update-e2e-timings.mjs); files without a timing count as the
+  # median. Greedy longest-first onto the lightest shard: deterministic.
   local -a load mine=() sorted
-  local k f best size
+  local k f best w
   for ((k = 0; k < n; k++)); do load[k]=0; done
-  mapfile -t sorted < <(for f in "${E2E_LIST[@]}"; do printf '%s %s\n' "$(stat -c %s "$f")" "$f"; done | sort -k1,1nr -k2,2)
+  mapfile -t sorted < <(node -e '
+    const fs = require("fs"), path = require("path")
+    let t = {}; try { t = JSON.parse(fs.readFileSync("tests/e2e/timings.json", "utf8")) } catch {}
+    const vals = Object.values(t).sort((a, b) => a - b), median = vals.length ? vals[vals.length >> 1] : 10
+    const rows = process.argv.slice(1).map(f => [Math.round(1000 * (t[path.basename(f, ".test.mjs")] ?? median)), f])
+    rows.sort((a, b) => b[0] - a[0] || a[1].localeCompare(b[1]))
+    for (const [w, f] of rows) console.log(w + " " + f)' "${E2E_LIST[@]}")
   for line in "${sorted[@]}"; do
-    size="${line%% *}"; f="${line#* }"; best=0
+    w="${line%% *}"; f="${line#* }"; best=0
     for ((k = 1; k < n; k++)); do (( load[k] < load[best] )) && best=$k; done
-    load[best]=$(( load[best] + size ))
+    load[best]=$(( load[best] + w ))
     (( best == i - 1 )) && mine+=("$f")
   done
   E2E_LIST=("${mine[@]}")
