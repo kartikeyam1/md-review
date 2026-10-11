@@ -9,6 +9,12 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # Chromium and its system libraries come preinstalled in the official
+    # Playwright image (tag must match the playwright version in package-lock),
+    # so there is no multi-minute `playwright install --with-deps` step.
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
+      options: --user 1001
 
     steps:
       - uses: actions/checkout@v4
@@ -31,9 +37,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Install Playwright
-        run: npx playwright install --with-deps chromium
 
       - name: E2E and server tests (throwaway backend + production build)
         run: scripts/verify.sh --only e2e,server
