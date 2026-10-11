@@ -152,6 +152,12 @@ function handleRestoreRevision(oldMarkdown: string, entry: RevisionEntry | null)
   showHistory.value = false
   markExternalChange(oldMarkdown, 'local') // one undo step back (#8 rule 6)
   markdown.value = oldMarkdown
+  // QA M6: restoring the set-aside copy from History also clears its banner.
+  if (!entry && doc.localCopy.value?.markdown === oldMarkdown) {
+    doc.discardLocalCopy()
+    notice.value = 'Your set-aside edits are back in the editor as unsaved edits. They will autosave shortly.'
+    return
+  }
   const when = entry ? new Date(entry.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'an earlier version'
   notice.value = `Restored the version from ${when} as unsaved edits — it will autosave shortly. Use History again to go back.`
 }
@@ -352,6 +358,7 @@ const embedOpenHref = computed(() => {
       :live-hash="historyLive"
       :initial-from="historyFrom"
       :allow-restore="capability === 'editor'"
+      :local-copy="capability === 'editor' ? doc.localCopy.value : null"
       @close="showHistory = false"
       @restore="handleRestoreRevision"
       @acknowledged="acknowledge"
@@ -575,7 +582,8 @@ const embedOpenHref = computed(() => {
 .app[data-focus-mode='true'] :deep(.panes.wide .split-preview-bar),
 .app[data-focus-mode='true'] :deep(.panes.tabs .editor-toolbar),
 .app[data-focus-mode='true'] :deep(.panes.tabs .split-preview-bar) {
-  padding-right: calc(var(--focus-controls-w, 40px) + 16px);
+  /* QA c7: a clear gap (and the cluster's own divider) so it never reads as part of the bar's controls. */
+  padding-right: calc(var(--focus-controls-w, 40px) + 28px);
 }
 
 /* Below the split tabs (their 40px + 1px border). */

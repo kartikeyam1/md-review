@@ -8,7 +8,10 @@ import { toast } from '@/composables/useToast'
 // server version, never as the document. The user copies, downloads or
 // discards it. The copy renders with the preview styles (.preview-pane).
 const doc = useDocState()
-const { localCopy, onScreen, filename } = doc
+const { localCopy, onScreen, filename, capability } = doc
+const canEdit = computed(() => capability.value === 'editor')
+/** QA M6: a copy set aside by "Use server version" in a conflict (restorable while the link can edit). */
+const fromConflict = computed(() => localCopy.value?.reason === 'conflict')
 const expanded = ref(true)
 
 const when = computed(() => {
@@ -52,10 +55,12 @@ function discard() {
     <div class="local-copy-bar">
       <div class="local-copy-text">
         <strong id="local-copy-title">Your unsaved changes (not on the server)</strong>
-        <span class="local-copy-sub">This link is view-only, so these edits could not be saved{{ when ? ` (${when})` : '' }}. Below them is the server version.</span>
+        <span v-if="fromConflict" class="local-copy-sub">You chose the server version in a conflict, so your edits were set aside{{ when ? ` (${when})` : '' }}. The document shows the server version.</span>
+        <span v-else class="local-copy-sub">This link is view-only, so these edits could not be saved{{ when ? ` (${when})` : '' }}. Below them is the server version.</span>
       </div>
       <div class="local-copy-actions">
         <button type="button" class="btn btn-ghost btn-sm" :aria-expanded="expanded ? 'true' : 'false'" data-testid="local-copy-toggle" @click="expanded = !expanded">{{ expanded ? 'Hide' : 'Show' }}</button>
+        <button v-if="canEdit" type="button" class="btn btn-ghost btn-sm" data-testid="local-copy-restore" title="Put these edits back in the editor as unsaved edits" @click="doc.restoreLocalCopy()">Restore</button>
         <button type="button" class="btn btn-ghost btn-sm" data-testid="local-copy-copy" @click="copy">Copy</button>
         <button type="button" class="btn btn-ghost btn-sm" data-testid="local-copy-download" @click="download">Download</button>
         <button type="button" class="btn btn-ghost btn-sm" data-testid="local-copy-discard" @click="discard">Discard</button>

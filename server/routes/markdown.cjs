@@ -9,7 +9,8 @@ const { requireEdit } = require('./edit-tokens.cjs');
 
 module.exports = async function markdown(req, res) {
   // PUT /paste/:id/markdown — update markdown (full replace or patch)
-  //   Body: { markdown } | { patch: "<unified diff>" }, optional filename, optional base_hash
+  //   Body: { markdown } | { patch: "<unified diff>" }, optional filename, optional base_hash,
+  //   optional overwrite: true (a forced conflict resolution; never coalesces into the last revision)
   //   Optimistic concurrency: send If-Match: <content_hash> (or base_hash in the
   //   body). If the stored content has changed since, responds 412 with the
   //   current content_hash + markdown so the client can merge instead of clobber.
@@ -84,7 +85,9 @@ module.exports = async function markdown(req, res) {
     }
     if (parsed.filename !== undefined) data.filename = parsed.filename;
     const by = typeof parsed.author === 'string' && parsed.author.trim() ? parsed.author.trim().slice(0, 80) : null;
-    const saved = savePaste(pasteId, data, { by, client: clientOf(req) });
+    // `overwrite: true` = a conflict resolved with "keep my version": the copy it replaces
+    // stays its own revision (never folded away), so the losing side is in History.
+    const saved = savePaste(pasteId, data, { by, client: clientOf(req), noCoalesce: parsed.overwrite === true });
 
     res.writeHead(200, { 'Content-Type': 'application/json', ETag: `"${saved.content_hash}"` });
     return res.end(JSON.stringify({ ok: true, content_hash: saved.content_hash, filename: saved.filename }));

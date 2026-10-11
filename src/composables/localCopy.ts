@@ -12,6 +12,11 @@ export interface LocalCopy {
   filename: string
   /** ISO time the copy was set aside. */
   at: string
+  /**
+   * Why it was set aside: the link turned view-only (#23, the default), or the user
+   * chose "Use server version" in a conflict (QA M6) — that copy can be restored.
+   */
+  reason?: 'view-only' | 'conflict'
 }
 
 type CopyMap = Record<string, LocalCopy>

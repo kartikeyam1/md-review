@@ -14,6 +14,7 @@ import { useDocModeSync } from '@/composables/useDocModeSync'
 import { onTokenRejected, sameDoc, docIdOf, type DocAccess } from '@/composables/useEditToken'
 import { saveLocalCopy, clearLocalCopy, type LocalCopy } from '@/composables/localCopy'
 import { toast } from '@/composables/useToast'
+import { markExternalChange } from '@/composables/useExternalChange'
 import { createReactions } from '@/composables/useReactions'
 import { createViews } from '@/composables/useViews'
 import type { SharedPayload } from '@/composables/useShare'
@@ -96,10 +97,11 @@ export function createDocState(router: Router) {
   const localCopy = ref<LocalCopy | null>(null)
 
   /** Keep `text` as the doc's unsaved local copy (persisted, so a reload still offers it). */
-  function setLocalCopy(text: string, name: string) {
+  function setLocalCopy(text: string, name: string, reason?: LocalCopy['reason']) {
     const id = pasteId.value
     if (!id) return
-    const copy = { markdown: text, filename: name, at: new Date().toISOString() }
+    const copy: LocalCopy = { markdown: text, filename: name, at: new Date().toISOString() }
+    if (reason) copy.reason = reason
     localCopy.value = copy
     saveLocalCopy(docIdOf(id), copy)
   }
@@ -107,6 +109,26 @@ export function createDocState(router: Router) {
   function discardLocalCopy() {
     if (pasteId.value) clearLocalCopy(docIdOf(pasteId.value))
     localCopy.value = null
+  }
+
+  /**
+   * Conflict → "Use server version" (QA M6): the local edits are not thrown away but
+   * set aside as a local copy (banner + History row), so the losing side stays recoverable.
+   */
+  function useServerVersion() {
+    const server = sync.remoteMarkdown.value ?? sync.serverMarkdown.value
+    if (server !== null && markdown.value !== server) setLocalCopy(markdown.value, filename.value, 'conflict')
+    sync.adoptRemote()
+  }
+
+  /** Put the set-aside copy back in the editor as unsaved edits (one undo step), then drop it. */
+  function restoreLocalCopy() {
+    const copy = localCopy.value
+    if (!copy || axes.capability.value !== 'editor') return
+    markExternalChange(copy.markdown, 'local')
+    markdown.value = copy.markdown
+    discardLocalCopy()
+    notice.value = 'Your set-aside edits are back in the editor as unsaved edits. They will autosave shortly.'
   }
 
   /**
@@ -271,7 +293,7 @@ export function createDocState(router: Router) {
     held, viewLoc, route, embed, readOnly, screenKey, docMissing, pinnedInfo, fileView, setFileView, onScreen, booted,
     filePathParam,
     // axes (00 §1) + mode
-    ...axes, mode, ...modeSync, applyServerMeta, access, localCopy, setLocalCopy, discardLocalCopy, docTitle, docLink,
+    ...axes, mode, ...modeSync, applyServerMeta, access, localCopy, setLocalCopy, discardLocalCopy, useServerVersion, restoreLocalCopy, docTitle, docLink,
     // content
     appMode, paneMode, readerView, agentSectionCount, rawMarkdownUrl, markdown, filename, contentType, pasteId, wordCount, charCount, NO_COMMENTS,
     // UI state

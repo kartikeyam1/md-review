@@ -1,11 +1,12 @@
 import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
-import { ChangeSet, EditorSelection, StateEffect, StateField, Transaction, type ChangeSpec, type Extension, type Text } from '@codemirror/state'
+import { ChangeSet, EditorSelection, StateEffect, StateField, Transaction, type ChangeSpec, type EditorState, type Extension, type Text } from '@codemirror/state'
 import type { ContentType } from '@/types'
 import {
   MAX_IMAGE_BYTES, MAX_IMAGES, STALE_PLACEHOLDER_RE, altFromName, assetName, attachmentHost, imageExtension,
   imageMarkup, isImageFile, placeholderText, registerPendingPaste, unregisterPendingPaste, uploadImage,
 } from '@/composables/attachments'
 import { toast } from '@/composables/useToast'
+import { DELIMITER_ROW_RE } from '@/editor/tableFormat'
 
 /**
  * Paste / drop images → upload as doc attachments (spec #10, 00 §3.6).
@@ -293,6 +294,28 @@ async function waitForLiveEditor(timeoutMs = 3000): Promise<EditorView | null> {
 
 // ── Insert + upload ─────────────────────────────────────────────────────────
 
+/** Is line `n` part of a GFM table (a `|` line in a block whose second line or later is a delimiter row)? */
+function inTable(state: EditorState, n: number): boolean {
+  if (n < 1 || !state.doc.line(n).text.includes('|')) return false
+  for (let k = n, steps = 0; k > 1 && steps < 1000; k--, steps++) {
+    const text = state.doc.line(k).text
+    if (!text.trim()) return false
+    if (DELIMITER_ROW_RE.test(text) && state.doc.line(k - 1).text.trim()) return true
+  }
+  return false
+}
+
+/**
+ * QA m7: an image inserted on the line right after a table (or at the end of a row)
+ * would become a table row. Start it as its own paragraph instead.
+ */
+export function leadingBreak(state: EditorState, pos: number): string {
+  const line = state.doc.lineAt(pos)
+  const before = line.text.slice(0, pos - line.from)
+  if (before.trim()) return pos === line.to && inTable(state, line.number) ? '\n\n' : ''
+  return inTable(state, line.number - 1) ? '\n' : ''
+}
+
 function start(view: EditorView, items: Accepted[], range: { from: number; to: number }, doc: { key: string; id: string }, contentType: ContentType | undefined) {
   const plugin = view.plugin(uploadPlugin)
   if (!plugin) return
@@ -305,9 +328,10 @@ function start(view: EditorView, items: Accepted[], range: { from: number; to: n
   // Rule 8: placeholders joined by a blank line, cursor after the last one; one undo step.
   const group: Group = { id: nextId++, anchor: from, replaced, status: 'active', restoredAt: null, atSuspend: [], dirty: false }
   const placeholders = items.map((it) => placeholderText(it.alt))
-  const insert = placeholders.join('\n\n')
+  const lead = contentType === 'html' ? '' : leadingBreak(view.state, from)
+  const insert = lead + placeholders.join('\n\n')
   const tracked: Tracked[] = []
-  let at = from
+  let at = from + lead.length
   for (const p of placeholders) {
     tracked.push({ id: nextId++, group: group.id, from: at, to: at + p.length, text: p })
     at += p.length + 2

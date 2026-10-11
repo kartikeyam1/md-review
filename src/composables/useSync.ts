@@ -521,7 +521,7 @@ export function useSync(
         // Old server (saved nothing of the content) or delta refused: send it all.
       }
     }
-    return putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive, author })
+    return putMarkdown(id, snapshotMarkdown, sendFilename, { ifMatch, keepalive: opts.keepalive, author, overwrite: opts.force })
   }
 
   /** Conflict resolution: discard local edits, take the server copy. */

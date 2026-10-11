@@ -78,7 +78,7 @@ function onAppLinkClick(e: MouseEvent, path: string) {
       Your edits are kept here until you choose.
     </span>
     <span class="conflict-actions">
-      <button class="btn btn-ghost btn-sm" title="Discard your local edits and load the server copy" @click="sync.adoptRemote()">Use server version</button>
+      <button class="btn btn-ghost btn-sm" title="Load the server copy; your edits are kept aside so you can restore them" @click="doc.useServerVersion()">Use server version</button>
       <button class="btn btn-primary btn-sm" title="Overwrite the server copy with your edits" @click="sync.overwriteRemote()">Keep my version</button>
     </span>
   </div>

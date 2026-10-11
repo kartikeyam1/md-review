@@ -202,6 +202,30 @@ function effectiveTo(state: EditorState, range: SelectionRange): number {
   return to
 }
 
+/**
+ * Length of the closing marker that starts at `pos`, when the line before `pos` holds an
+ * unmatched opener and the closer is right-flanking (no whitespace before it); else 0.
+ */
+function closerAt(doc: string, lineFrom: number, pos: number, m: Marker): number {
+  const close = m.close('')
+  if (!doc.startsWith(close, pos) || pos <= lineFrom || /\s/.test(doc[pos - 1]!)) return 0
+  const ch = close[0]!
+  if (doc[pos - 1] === ch) return 0
+  const before = doc.slice(lineFrom, pos)
+  let openers: number
+  if (m === MARKERS.italic) {
+    // A lone `*` closes italic only when the run at `pos` is odd (not half of `**`).
+    if (runRight(doc, pos, '*') % 2 === 0) return 0
+    openers = (before.match(LONE_STAR) ?? []).length + (before.match(/\*\*\*/g) ?? []).length
+  } else if (m === MARKERS.code) {
+    if (runRight(doc, pos, '`') !== 1) return 0
+    openers = before.split('`').length - 1
+  } else {
+    openers = before.split(close).length - 1
+  }
+  return openers % 2 === 1 ? close.length : 0
+}
+
 function wrapRange(state: EditorState, range: SelectionRange, m: Marker): RangeResult {
   const doc = state.doc.toString()
   if (range.empty) {
@@ -213,7 +237,16 @@ function wrapRange(state: EditorState, range: SelectionRange, m: Marker): RangeR
       return { changes: r.changes, range: EditorSelection.cursor(pos + r.delta) }
     }
     const open = m.open('')
-    return { changes: [{ from: pos, insert: open + m.close('') }], range: EditorSelection.cursor(pos + open.length) }
+    const close = m.close('')
+    // Rule 1f (toggle off, like Docs): inside an empty pair `**|**` → remove the pair;
+    // right before the closer of a span opened earlier on the line (`**bb|**`) → step over it.
+    if (doc.slice(pos - open.length, pos) === open && doc.slice(pos, pos + close.length) === close
+      && runLeft(doc, pos, open[0]!) === open.length && runRight(doc, pos, close[0]!) === close.length) {
+      return { changes: [{ from: pos - open.length, to: pos + close.length }], range: EditorSelection.cursor(pos - open.length) }
+    }
+    const skip = closerAt(doc, state.doc.lineAt(pos).from, pos, m)
+    if (skip) return { changes: [], range: EditorSelection.cursor(pos + skip) }
+    return { changes: [{ from: pos, insert: open + close }], range: EditorSelection.cursor(pos + open.length) }
   }
   const to = effectiveTo(state, range)
   const first = state.doc.lineAt(range.from)

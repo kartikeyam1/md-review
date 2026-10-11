@@ -371,7 +371,7 @@ describe('useSync', () => {
 
     mockPutMarkdown.mockResolvedValueOnce(okPut)
     expect(await sync.overwriteRemote()).toBe(true)
-    expect(mockPutMarkdown).toHaveBeenLastCalledWith('abc123', 'mine', undefined, expect.objectContaining({ ifMatch: null }))
+    expect(mockPutMarkdown).toHaveBeenLastCalledWith('abc123', 'mine', undefined, expect.objectContaining({ ifMatch: null, overwrite: true }))
     expect(sync.conflict.value).toBe(false)
     expect(sync.saveState.value).toBe('saved')
   })

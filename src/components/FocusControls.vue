@@ -74,6 +74,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* QA c7: a divider separates the cluster from the bar it floats over (e.g. split's Sync scroll). */
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
   opacity: 0.35;
   transition: opacity 150ms ease;
   font-family: var(--font-body);

@@ -81,6 +81,11 @@ export interface PutMarkdownOptions {
   /** Reviewer name recorded on the revision this write creates. */
   author?: string
   /**
+   * A forced conflict resolution ("keep my version"): the server keeps the copy
+   * this replaces as its own revision instead of folding it away (QA M6).
+   */
+  overwrite?: boolean
+  /**
    * Send only the changed span instead of the whole document. Requires
    * `ifMatch`. A server that predates deltas answers 200 without a
    * content_hash; the result then carries `deltaIgnored` so the caller can
@@ -282,6 +287,7 @@ export function useShare() {
       const body: Record<string, unknown> = useDelta ? { delta: opts.delta } : { markdown }
       if (filename) body.filename = filename
       if (opts.author) body.author = opts.author
+      if (opts.overwrite) body.overwrite = true
       const payload = JSON.stringify(body)
       const headers: Record<string, string> = { 'Content-Type': 'application/json', ...CLIENT_HEADER, ...editHeaders(pasteId) }
       if (opts.ifMatch) headers['If-Match'] = opts.ifMatch

@@ -52,3 +52,32 @@ describe('collapseContext', () => {
     expect(collapseContext(rows, 3)).toEqual(rows)
   })
 })
+
+// QA fixes: c8 (one highlight per changed phrase) and leader M4 (changed sections).
+import { mergeSegments, changedSections } from '@/composables/useDiff'
+
+describe('QA c8 — word highlights merge across spaces', () => {
+  it('two changed words and the space between them are one segment', async () => {
+    const { rows } = await buildLineDiff('The quick brown fox jumps\n', 'The quick red cat jumps\n')
+    const add = rows.find(r => r.type === 'add')!
+    expect(add.segments!.filter(s => s.changed).map(s => s.text)).toEqual(['red cat'])
+    expect(add.segments!.map(s => s.text).join('')).toBe('The quick red cat jumps')
+  })
+  it('mergeSegments leaves a space next to unchanged text alone', () => {
+    expect(mergeSegments([{ text: 'a', changed: true }, { text: ' ', changed: false }, { text: 'b', changed: false }]))
+      .toEqual([{ text: 'a', changed: true }, { text: ' b', changed: false }])
+  })
+})
+
+describe('QA leader M4 — changedSections', () => {
+  it('names the touched sections in order, ignoring headings inside code fences', async () => {
+    const a = '# Doc\n\nintro\n\n## One\n\nx\n\n```\n# not a heading\n```\n\n## Two **bold**\n\ny\n'
+    const b = '# Doc\n\nintro changed\n\n## One\n\nx\n\n```\n# not a heading\nz\n```\n\n## Two **bold**\n\ny2\n'
+    const { rows } = await buildLineDiff(a, b)
+    expect(changedSections(rows, a, b)).toEqual(['Doc', 'One', 'Two bold'])
+  })
+  it('null for changes before the first heading', async () => {
+    const { rows } = await buildLineDiff('a\n', 'b\n')
+    expect(changedSections(rows, 'a\n', 'b\n')).toEqual([null])
+  })
+})
