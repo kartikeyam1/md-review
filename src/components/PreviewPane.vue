@@ -11,7 +11,7 @@ import { copyText } from '@/composables/useCopyLink'
 import { toast } from '@/composables/useToast'
 import { runEnhancers } from '@/preview/enhancers'
 import { buildAnchors, lineToOffset, offsetToLine, type Anchor } from '@/composables/useScrollSync'
-import { mermaidConfigFor, mermaidJob, type MermaidThemeConfig } from '@/preview/mermaidTheme'
+import { mermaidConfigFor, mermaidJob, fixAuthorFillContrast, type MermaidThemeConfig } from '@/preview/mermaidTheme'
 
 const props = withDefaults(defineProps<{
   content: string
@@ -34,7 +34,9 @@ const props = withDefaults(defineProps<{
    * view (`reveal-agent`, rule 12).
    */
   agentView?: boolean
-}>(), { theme: undefined, contentType: undefined, commenting: true, reloadDelay: 0, agentView: false })
+  /** Show a leading front-matter block as its Field/Value table (off on a viewer's publish-mode reading page). */
+  frontMatter?: boolean
+}>(), { theme: undefined, contentType: undefined, commenting: true, reloadDelay: 0, agentView: false, frontMatter: true })
 
 // Mermaid is loaded on demand — only documents that actually contain a
 // diagram pay for it (it and its plugins are the bulk of the bundle).
@@ -75,7 +77,7 @@ const isGithubTheme = computed(() => isGithub(props.theme ?? 'light'))
 const isHtml = computed(() => props.contentType === 'html')
 
 // renderHtml now injects data-line-start/data-line-end via the markdown-it plugin
-const rendered = computed(() => renderWithHeadings(props.content, { agentView: props.agentView ? 'agent' : 'human' }))
+const rendered = computed(() => renderWithHeadings(props.content, { agentView: props.agentView ? 'agent' : 'human', frontMatter: props.frontMatter }))
 const renderedHtml = computed(() => rendered.value.html)
 
 // ── Preview enhancers (00 §4.5): run after every render ─────────────────────
@@ -532,12 +534,13 @@ async function renderMermaid(target: MermaidTarget) {
           cache.print = { key, svg }
         } catch { continue }
       }
-      if (printing && node.isConnected) { node.innerHTML = cache.print.svg; node.dataset.printShown = '1' }
+      if (printing && node.isConnected) { node.innerHTML = cache.print.svg; fixAuthorFillContrast(node); node.dataset.printShown = '1' }
       continue
     }
     // Printing ended without an afterprint (some PDF paths): put the screen drawing back.
     if (!printing && node.dataset.printShown && cache.screen) {
       node.innerHTML = cache.screen.svg
+      fixAuthorFillContrast(node)
       cache.screen.bind?.(node)
       delete node.dataset.printShown
     }
@@ -549,6 +552,7 @@ async function renderMermaid(target: MermaidTarget) {
       // Swap in one assignment: a diagram is never shown empty or half-built,
       // and a re-render replaces the old SVG instead of stacking on it.
       node.innerHTML = svg
+      fixAuthorFillContrast(node)
       bindFunctions?.(node)
       node.dataset.renderedKey = key
       node.setAttribute('data-processed', 'true')
@@ -718,6 +722,31 @@ function clearSelectionHighlight() {
   }
 }
 
+/**
+ * The range narrowed to the text it actually selects. A triple-click selects a
+ * paragraph up to offset 0 of the next block; without this the comment would
+ * anchor on (and highlight) that next block too.
+ */
+function textExtent(range: Range): Range {
+  const root = range.commonAncestorContainer
+  const walker = document.createTreeWalker(root.nodeType === Node.TEXT_NODE ? root.parentNode! : root, NodeFilter.SHOW_TEXT)
+  let first: { node: Text; start: number } | null = null
+  let last: { node: Text; end: number } | null = null
+  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    if (!range.intersectsNode(n)) continue
+    const start = n === range.startContainer ? range.startOffset : 0
+    const end = n === range.endContainer ? range.endOffset : n.length
+    if (!n.data.slice(start, end).trim()) continue
+    first ??= { node: n, start }
+    last = { node: n, end }
+  }
+  if (!first || !last) return range
+  const out = document.createRange()
+  out.setStart(first.node, first.start)
+  out.setEnd(last.node, last.end)
+  return out
+}
+
 /** Controls enhancers add to the rendered doc (#17 fold toggles) are not text: no comment flow. */
 const isPreviewControl = (e: MouseEvent) => !!(e.target as Element | null)?.closest?.('[data-preview-control]')
 
@@ -735,7 +764,7 @@ function onMouseUp(e: MouseEvent) {
     return
   }
 
-  const range = selection.getRangeAt(0)
+  const range = textExtent(selection.getRangeAt(0))
   const startBlock = findBlockAncestor(range.startContainer)
   const endBlock = findBlockAncestor(range.endContainer)
 

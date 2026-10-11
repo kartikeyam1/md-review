@@ -72,6 +72,8 @@ const editorShown = computed(() => paneMode.value !== 'preview' && capability.va
 const splitShown = computed(() => editorShown.value && paneMode.value === 'split')
 const previewShown = computed(() => !fileView.value && (!editorShown.value || splitShown.value))
 const docKey = computed(() => `${screenKey.value ?? ''}|${pasteId.value ?? ''}`)
+const emptyDocHint = computed(() => previewShown.value && !splitShown.value && capability.value === 'editor' && !readOnly.value
+  && contentType.value === 'markdown' && !markdown.value.trim())
 const editorMounted = ref(false)
 watch(editorShown, (shown) => { if (shown) editorMounted.value = true }, { immediate: true })
 watch(docKey, () => { editorMounted.value = editorShown.value })
@@ -262,7 +264,7 @@ const embedOpenHref = computed(() => {
         <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
         <a v-else :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
       </div>
-      <PreviewPane v-else ref="previewRef" :content="markdown" :comments="NO_COMMENTS" :theme="theme" :content-type="contentType" />
+      <PreviewPane v-else ref="previewRef" :content="markdown" :comments="NO_COMMENTS" :theme="theme" :content-type="contentType" :front-matter="capability === 'editor'" />
     </div>
     <div class="embed-footer">
       <a class="embed-open-link" data-testid="embed-open-link" :href="embedOpenHref" target="_blank" rel="noopener">Open in md-review</a>
@@ -289,6 +291,11 @@ const embedOpenHref = computed(() => {
       <div class="doc-rail"><TocPanel v-if="toc.railShown.value" :toc="toc" variant="rail" @pin="activeHeading.pin" /></div>
       <main class="doc-content main-pane">
         <AgentSectionsNotice v-if="noticeShown && !fileView" />
+        <!-- An empty doc in the read view (e.g. "Start blank"): say so and offer the editor. -->
+        <div v-if="emptyDocHint" class="empty-doc-hint" data-testid="empty-doc-hint">
+          <span>This document is empty.</span>
+          <button type="button" class="btn btn-primary" data-testid="empty-doc-edit" @click="actions.setView('edit')">Start writing</button>
+        </div>
         <div v-if="fileView" class="file-view">
           <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
           <a v-else class="btn btn-primary" :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
@@ -328,6 +335,7 @@ const embedOpenHref = computed(() => {
               :content-type="contentType"
               :reload-delay="splitShown ? 400 : 0"
               :agent-view="previewAgent"
+              :front-matter="capability === 'editor' || reviewUI"
               @selection="handleSelection"
               @selection-clear="handleSelectionClear"
               @reveal-agent="revealAgent"
@@ -617,5 +625,15 @@ const embedOpenHref = computed(() => {
   .doc-scroll .doc-aside {
     display: contents;
   }
+}
+.empty-doc-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 32px 16px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 </style>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent } from 'vue'
+import { ref, computed, defineAsyncComponent, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
 import { useBreakpoint } from '@/composables/useBreakpoint'
@@ -60,6 +60,55 @@ const demoted = computed(() => ({
   slides: !desktop.value,
 }))
 
+// A crowded desktop bar (review mode with its name field, view toggle, Present, Share…) must never
+// squeeze the doc title out. Level 1 moves the meta items (updated, badges, views) to doc-meta-row,
+// as below 1100px; level 2 also shows Home, Library and Copy link as icons. Measured whenever the
+// bar's size or content changes, synchronously before paint (no flicker).
+const headerRef = ref<HTMLElement | null>(null)
+const squeeze = ref(0)
+/** The title shows at least this much of itself (all of it when shorter). */
+const TITLE_MIN = 160
+function barFits(): boolean {
+  const h = headerRef.value
+  if (!h) return true
+  if (h.scrollWidth > h.clientWidth + 1) return false
+  const t = h.querySelector<HTMLElement>('.doc-title')
+  return !t || t.clientWidth >= Math.min(TITLE_MIN, t.scrollWidth) - 1
+}
+let measuring = false
+let mutations: MutationObserver | null = null
+let resizes: ResizeObserver | null = null
+async function measureBar() {
+  if (measuring) return
+  measuring = true
+  try {
+    if (!desktop.value || variant.value !== 'reader') { squeeze.value = 0; return }
+    squeeze.value = 0
+    await nextTick()
+    while (!barFits() && squeeze.value < 2) {
+      squeeze.value++
+      await nextTick()
+    }
+  } finally {
+    mutations?.takeRecords()
+    measuring = false
+  }
+}
+let raf = 0
+const scheduleMeasure = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; void measureBar() }) }
+watch([desktop, variant, () => docTitle.value, reviewUI], () => { void measureBar() })
+onMounted(() => {
+  const h = headerRef.value
+  if (!h) return
+  if (typeof ResizeObserver === 'function') { resizes = new ResizeObserver(scheduleMeasure); resizes.observe(h) }
+  mutations = new MutationObserver(() => { if (!measuring) scheduleMeasure() })
+  mutations.observe(h, { childList: true, subtree: true, characterData: true })
+  void measureBar()
+})
+onBeforeUnmount(() => { resizes?.disconnect(); mutations?.disconnect(); if (raf) cancelAnimationFrame(raf) })
+const metaInBar = computed(() => desktop.value && squeeze.value === 0)
+const iconLabels = computed(() => !desktop.value || squeeze.value >= 2)
+
 function onHomeClick(e: MouseEvent) {
   if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
   e.preventDefault()
@@ -74,7 +123,7 @@ function onLibraryClick(e: MouseEvent) {
 </script>
 
 <template>
-  <header class="header" data-testid="doc-header" :data-variant="variant" :data-breakpoint="bp">
+  <header ref="headerRef" class="header" data-testid="doc-header" :data-variant="variant" :data-breakpoint="bp">
     <!-- #3: first in the left group; opens the drawer (< 1100px) or reopens the collapsed rail. -->
     <button
       v-if="toc?.toggleShown.value"
@@ -92,14 +141,14 @@ function onLibraryClick(e: MouseEvent) {
     <a
       v-if="!phone"
       class="logo"
-      :class="{ 'icon-only': !desktop }"
+      :class="{ 'icon-only': iconLabels }"
       :href="router.base"
       title="md-review home"
       aria-label="md-review home"
       data-testid="app-home-link"
       @click="onHomeClick"
     >
-      <span v-if="desktop">mdreview<span class="logo-accent">.oss</span></span>
+      <span v-if="!iconLabels">mdreview<span class="logo-accent">.oss</span></span>
       <span v-else class="logo-mark">md</span>
     </a>
     <a
@@ -112,7 +161,7 @@ function onLibraryClick(e: MouseEvent) {
       @click="onLibraryClick"
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      <span v-if="desktop">Library</span>
+      <span v-if="!iconLabels">Library</span>
     </a>
 
     <template v-if="variant === 'editor'">
@@ -127,7 +176,7 @@ function onLibraryClick(e: MouseEvent) {
     <template v-else>
       <div class="doc-title-group">
         <span v-if="onScreen" class="doc-title" data-testid="doc-title" :title="docTitle">{{ truncateTitle(docTitle) }}</span>
-        <template v-if="onScreen && desktop">
+        <template v-if="onScreen && metaInBar">
           <DocUpdated v-if="!isLocal" />
           <span v-else-if="editor" class="badge local-badge" data-testid="doc-local-badge">Not shared</span>
           <span v-if="reviewUI" class="badge mode-badge" data-testid="doc-mode-badge">Review</span>
@@ -151,13 +200,13 @@ function onLibraryClick(e: MouseEvent) {
       data-testid="share-btn"
       @click="actions.handleShare()"
     >{{ sharing ? 'Sharing…' : 'Share' }}</button>
-    <CopyLinkButton v-if="!phone" :icon-only="!desktop" />
+    <CopyLinkButton v-if="!phone" :icon-only="iconLabels" />
     <DownloadMenu v-if="onScreen && desktop" />
     <ThemeSwitcher />
     <ReaderSettings v-if="onScreen" :sheet="phone" :html="contentType === 'html'" />
     <HeaderOverflowMenu :demoted="demoted" :can-present="canPresent" :sheet="phone" @edit-reviewer="editingNameFromMenu = true" />
   </header>
-  <div v-if="variant === 'reader' && onScreen && !desktop" class="doc-meta-row" data-testid="doc-meta-row">
+  <div v-if="variant === 'reader' && onScreen && !metaInBar" class="doc-meta-row" data-testid="doc-meta-row">
     <DocUpdated v-if="!isLocal" />
     <span v-else-if="editor" class="badge local-badge" data-testid="doc-local-badge">Not shared</span>
     <span v-if="reviewUI" class="badge mode-badge" data-testid="doc-mode-badge">Review</span>
@@ -195,6 +244,15 @@ function onLibraryClick(e: MouseEvent) {
 .header[data-breakpoint='phone'] :deep(input) {
   min-width: 40px;
   min-height: 40px;
+}
+
+/* Touch (a coarse pointer at any width, e.g. a tablet): every header control is a 44px target. */
+@media (pointer: coarse) {
+  .header[data-breakpoint] :deep(button),
+  .header[data-breakpoint] :deep(a[href]) {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* …but a sheet menu's items keep their 44px touch rows (#5 rule 7, #19 AC-19.14); tablets
@@ -267,6 +325,7 @@ function onLibraryClick(e: MouseEvent) {
 
 .doc-title {
   min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

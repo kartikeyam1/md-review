@@ -90,10 +90,22 @@ html[data-reader-width='wide'] .preview-pane {
 }
 
 @media (hover: none) {
+  /* Touch: the link sits at the right end of the heading's first line, out of the text flow, so
+     it never wraps onto a line of its own (with the ⋯ and reaction controls before it, a
+     heading that just fits used to grow a line holding only the link icon). */
+  .preview-pane :is(h1, h2, h3, h4, h5, h6):has(> .heading-anchor) {
+    position: relative;
+    padding-right: 30px;
+  }
+
   .preview-pane .heading-anchor {
+    position: absolute;
+    right: -14px;
+    top: 0.65em;
     width: 44px;
     height: 44px;
-    margin: -14px 0 -14px 0;
+    margin: -22px 0 0;
+    font-size: inherit;
     opacity: 0.55;
   }
 }
@@ -137,6 +149,18 @@ html[data-reader-width='wide'] .preview-pane {
   height: auto;
 }
 
+/* Mermaid sizes each label box while measuring off-screen, outside the doc; the doc's text rules
+   (Locus p/li size, colour and line height, the #18 text size, slides' larger type) must not
+   reach the labels or they paint bigger than their box and clip. Mermaid's own (id-scoped)
+   rules still win. */
+html .preview-pane .mermaid svg :is(p, li, span, div) {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  overflow-wrap: normal;
+}
+
 .preview-pane .table-scroll {
   max-width: 100%;
   overflow-x: auto;
@@ -152,6 +176,24 @@ html[data-reader-width='wide'] .preview-pane {
   display: table;
   max-width: none;
   overflow: visible;
+}
+
+/* More columns off to a side (tableScrollHint.ts): that edge fades out. */
+@media screen {
+  .preview-pane .table-scroll[data-overflow='r'] {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+  }
+
+  .preview-pane .table-scroll[data-overflow='l'] {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+  }
+
+  .preview-pane .table-scroll[data-overflow='lr'] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+  }
 }
 
 .preview-pane .table-scroll:focus-visible {
@@ -651,6 +693,26 @@ html.locus-theme .preview-pane .mermaid .slice {
   .preview-pane .section-reaction-trigger { opacity: 1; }
 }
 
+/* Touch: a 44px hit area that does not grow the chip (or the heading line). */
+@media (pointer: coarse) {
+  .preview-pane .section-reaction-chip,
+  .preview-pane .section-reaction-trigger {
+    position: relative;
+  }
+
+  .preview-pane .section-reaction-chip::after,
+  .preview-pane .section-reaction-trigger::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+
+}
+
 @media (prefers-reduced-motion: reduce) {
   .preview-pane .section-reaction-trigger { transition: none; }
 }
@@ -1075,15 +1137,21 @@ html.locus-theme .preview-pane details {
   }
 }
 
-/* Touch, and below desktop (the 16/24px side padding is no gutter for it): the toggle sits
-   inline before the text, always shown (reduced), so the heading text is indented by it. */
+/* Touch, and below desktop (the 16/24px side padding is no gutter for it): the toggle sits in a
+   32px indent of the heading, centred on its first line, always shown (reduced) — every line of a
+   wrapped heading starts at the same indent (no hanging first line). */
 @media (hover: none), (max-width: 1099.98px) {
+  .preview-pane > .foldable-heading {
+    padding-left: 32px;
+  }
+
   .preview-pane .heading-fold-toggle {
-    position: static;
+    left: -6px;
+    top: 0.65em;
     width: 44px;
     height: 44px;
-    margin: -10px 2px -10px -12px;
-    vertical-align: middle;
+    margin: -22px 0 0;
+    font-size: inherit;
     opacity: 0.6;
   }
 

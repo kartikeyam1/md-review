@@ -75,6 +75,10 @@ html[data-reader-width='wide'] .agent-notice {
   outline-offset: 2px;
 }
 
+@media (pointer: coarse) {
+  .agent-notice-show { min-height: 44px; padding: 2px 14px; }
+}
+
 @media print {
   .agent-notice { display: none; }
 }

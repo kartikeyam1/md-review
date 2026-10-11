@@ -77,3 +77,54 @@ export function mermaidJob<T>(job: () => Promise<T>): Promise<T> {
   queue = run
   return run
 }
+
+// ── Author fills (`style X fill:#f8d7da`) ───────────────────────────────────
+// Mermaid keeps the theme's label colour on a node the author filled, so a light
+// fill in a dark theme (or a dark fill in a light one) gets an unreadable label.
+// After each render, a label that falls below 3:1 on its node's fill switches to
+// whichever of dark or white text reads better. Labels the author coloured
+// (`color:` in the style) are left alone.
+
+let paint: CanvasRenderingContext2D | null | undefined
+function rgbOf(value: string | null | undefined): [number, number, number] | null {
+  const v = value?.trim()
+  if (!v || v === 'none' || typeof CSS === 'undefined' || !CSS.supports('color', v)) return null
+  paint ??= document.createElement('canvas').getContext('2d')
+  if (!paint) return null
+  paint.fillStyle = v
+  const s = String(paint.fillStyle)
+  if (s.startsWith('#')) return [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16)) as [number, number, number]
+  const m = /rgba?\(([^)]+)\)/.exec(s)
+  if (!m) return null
+  const [r, g, b, a] = m[1]!.split(',').map(Number)
+  return a === 0 ? null : [r!, g!, b!]
+}
+
+function luminance([r, g, b]: [number, number, number]): number {
+  const f = (c: number) => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4 }
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+}
+function ratio(a: [number, number, number], b: [number, number, number]): number {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p) as [number, number]
+  return (x + 0.05) / (y + 0.05)
+}
+
+const DARK: [number, number, number] = [40, 10, 56]
+const WHITE: [number, number, number] = [255, 255, 255]
+
+export function fixAuthorFillContrast(root: Element): void {
+  for (const shape of root.querySelectorAll<SVGElement>('g.node [style*="fill"]')) {
+    const style = shape.getAttribute('style') ?? ''
+    if (/(^|;)\s*color\s*:/i.test(style)) continue
+    const fill = rgbOf(/(?:^|;)\s*fill\s*:\s*([^;!]+)/i.exec(style)?.[1])
+    const node = shape.closest('g.node')
+    if (!fill || !node) continue
+    for (const label of node.querySelectorAll<HTMLElement | SVGElement>('.nodeLabel, text')) {
+      const svgText = label instanceof SVGElement
+      const fg = rgbOf(svgText ? getComputedStyle(label).fill : getComputedStyle(label).color)
+      if (!fg || ratio(fg, fill) >= 3) continue
+      const pick = ratio(DARK, fill) >= ratio(WHITE, fill) ? DARK : WHITE
+      label.style.setProperty(svgText ? 'fill' : 'color', `rgb(${pick.join(',')})`, 'important')
+    }
+  }
+}

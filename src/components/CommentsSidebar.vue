@@ -30,6 +30,9 @@ const replyInputs = ref<Record<string, string>>({})
 const editingReplyId = ref<string | null>(null)
 const editReplyBody = ref('')
 
+/** Comments still open (the header badge). */
+const openCount = computed(() => props.comments.filter((c) => !c.resolved).length)
+
 const filteredComments = computed(() => {
   if (!filterCategory.value) return props.comments
   return props.comments.filter((c) => c.category === filterCategory.value)
@@ -121,7 +124,13 @@ function formatTimeAgo(ts: number): string {
           <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
         <span class="sidebar-title">Comments</span>
-        <span v-if="comments.length" class="badge">{{ comments.length }}</span>
+        <span
+          v-if="comments.length"
+          class="badge"
+          :class="{ done: !openCount }"
+          data-testid="comments-badge"
+          :title="openCount ? `${openCount} open of ${comments.length}` : 'All comments resolved'"
+        >{{ openCount || '✓' }}</span>
       </div>
       <div v-if="!collapsed" class="sidebar-header-actions">
         <button
@@ -381,6 +390,13 @@ function formatTimeAgo(ts: number): string {
   color: var(--text-secondary);
 }
 
+/* The open (unresolved) count; once every comment is resolved, a quiet check instead. */
+.badge.done {
+  background: transparent;
+  color: var(--status-ok-fg);
+  border: 1px solid var(--status-ok);
+}
+
 .badge {
   background: var(--accent);
   color: #fff;
@@ -447,16 +463,16 @@ function formatTimeAgo(ts: number): string {
 
 .comment-card.resolved {
   opacity: 0.7;
-  border-left-color: #059669;
+  border-left-color: var(--status-ok);
 }
 .comment-card.resolved .comment-body {
   text-decoration: line-through;
   color: var(--text-meta);
 }
 
-.resolve-btn { color: #059669 !important; }
+.resolve-btn { color: var(--status-ok-fg) !important; }
 .unresolve-btn {
-  color: #b45309 !important;
+  color: var(--status-warn-text) !important;
   opacity: 1 !important;
   font-weight: 500;
 }

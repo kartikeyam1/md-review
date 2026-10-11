@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import type { ApprovalStatus } from '@/types'
+import { useReviewer } from '@/composables/useReviewer'
 
 const props = defineProps<{
   approvalStatus: ApprovalStatus
@@ -19,8 +20,12 @@ const emit = defineEmits<{
   requestChanges: [approvedBy: string]
 }>()
 
+// One name per browser: the header's reviewer name. The banner only asks for it while none is
+// set, and the name used to approve or request changes here becomes that name (one field, not two).
 const reviewerName = ref(props.defaultReviewer ?? '')
-watch(() => props.defaultReviewer, (n) => { if (n && !reviewerName.value.trim()) reviewerName.value = n })
+watch(() => props.defaultReviewer, (n) => { if (n) reviewerName.value = n })
+const { setReviewerName } = useReviewer()
+function commitName() { if (!props.defaultReviewer && reviewerName.value.trim()) setReviewerName(reviewerName.value) }
 
 const canApprove = computed(() =>
   props.unresolvedMustFixCount === 0 && reviewerName.value.trim().length > 0
@@ -37,12 +42,28 @@ const statusLabel = computed(() => {
 const statusClass = computed(() => props.approvalStatus)
 
 function handleApprove() {
-  if (canApprove.value) emit('approve', reviewerName.value.trim())
+  if (!canApprove.value) return
+  commitName()
+  emit('approve', reviewerName.value.trim())
 }
 
 function handleRequestChanges() {
-  if (reviewerName.value.trim()) emit('requestChanges', reviewerName.value.trim())
+  if (!reviewerName.value.trim()) return
+  commitName()
+  emit('requestChanges', reviewerName.value.trim())
 }
+
+/** #5-style relative time for the approval ("3 min ago"), the exact local time on hover. */
+function relTime(iso: string): string {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return ''
+  const s = Math.max(0, (Date.now() - t) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`
+  return new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+const exactTime = (iso: string) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 </script>
 
 <template>
@@ -51,7 +72,7 @@ function handleRequestChanges() {
       <span class="status-badge" :class="statusClass">{{ statusLabel }}</span>
       <span v-if="approvalStatus === 'approved' && approvedBy" class="approved-info">
         by {{ approvedBy }}
-        <span v-if="approvedAt" class="approved-time">{{ new Date(approvedAt).toLocaleString() }}</span>
+        <time v-if="approvedAt" class="approved-time" :datetime="approvedAt" :title="exactTime(approvedAt)">{{ relTime(approvedAt) }}</time>
       </span>
     </div>
 
@@ -62,11 +83,14 @@ function handleRequestChanges() {
     <span v-if="readOnlyNote" class="approval-note">{{ readOnlyNote }}</span>
     <div v-else-if="approvalStatus !== 'approved' || unresolvedMustFixCount > 0" class="approval-actions">
       <input
+        v-if="!defaultReviewer"
         v-model="reviewerName"
         type="text"
         placeholder="Your name"
+        aria-label="Your name"
         class="reviewer-input"
       />
+      <span v-else class="approval-as" data-testid="approval-as">as {{ defaultReviewer }}</span>
       <button
         class="btn approve"
         :disabled="!canApprove"
@@ -87,6 +111,11 @@ function handleRequestChanges() {
 </template>
 
 <style scoped>
+.approval-as {
+  font-size: 13px;
+  color: var(--text-meta);
+}
+
 .approval-note {
   margin-left: auto;
   font-size: 12px;
@@ -117,9 +146,9 @@ function handleRequestChanges() {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.status-badge.pending { background: #fef3c7; color: #92400e; }
-.status-badge.approved { background: #d1fae5; color: #065f46; }
-.status-badge.changes_requested { background: #fee2e2; color: #991b1b; }
+.status-badge.pending { background: var(--status-warn-bg); color: var(--status-warn-fg); }
+.status-badge.approved { background: var(--status-ok-bg); color: var(--status-ok-fg); }
+.status-badge.changes_requested { background: var(--status-danger-bg); color: var(--status-danger-fg); }
 
 .approved-info {
   font-size: 13px;
@@ -132,8 +161,8 @@ function handleRequestChanges() {
 
 .warning {
   font-size: 13px;
-  color: #b45309;
-  background: #fffbeb;
+  color: var(--status-warn-text);
+  background: var(--status-warn-bg);
   padding: 4px 10px;
   border-radius: 6px;
 }
@@ -185,17 +214,17 @@ function handleRequestChanges() {
   cursor: not-allowed;
 }
 .btn.approve {
-  background: #059669;
-  color: white;
+  background: var(--status-ok);
+  color: var(--status-ok-on);
 }
 .btn.approve:hover:not(:disabled) {
-  background: #047857;
+  background: var(--status-ok-hover);
 }
 .btn.request-changes {
-  background: #dc2626;
-  color: white;
+  background: var(--cat-must-fix);
+  color: var(--cat-must-fix-on);
 }
 .btn.request-changes:hover:not(:disabled) {
-  background: #b91c1c;
+  filter: brightness(0.9);
 }
 </style>

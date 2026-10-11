@@ -457,7 +457,7 @@ describe('paste and blank document', () => {
     assert.ok(await pasteArea.isVisible(), 'Paste textarea should appear')
 
     await pasteArea.fill('# Pasted Title\n\nSome pasted content')
-    await page.click('button:has-text("Start Review")')
+    await page.click('button:has-text("Open document")')
     await page.locator('[data-testid="doc-title"]').waitFor({ timeout: 5000 }).catch(() => {})
 
     const hasPreview = await page.locator('.preview-pane').count()

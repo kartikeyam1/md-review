@@ -130,7 +130,7 @@ function submitPaste() {
       />
       <div class="paste-actions">
         <button class="btn btn-ghost" @click="showPaste = false">Back</button>
-        <button class="btn btn-primary" @click="submitPaste">Start Review</button>
+        <button class="btn btn-primary" @click="submitPaste">Open document</button>
       </div>
     </div>
 

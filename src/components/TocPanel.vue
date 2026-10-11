@@ -27,8 +27,8 @@ const href = (e: TocEntry) => `#${encodeURIComponent(e.id)}`
 // #17 rule 8: Collapse all / Expand all, while the doc on screen has a foldable heading.
 const foldable = foldUi.foldable
 const foldButtons = [
-  { testid: 'fold-collapse-all', label: 'Collapse all sections', icon: ['7 20 12 15 17 20', '7 4 12 9 17 4'], run: () => foldUi.controller.value?.collapseAll() },
-  { testid: 'fold-expand-all', label: 'Expand all sections', icon: ['7 15 12 20 17 15', '7 9 12 4 17 9'], run: () => foldUi.controller.value?.expandAll() },
+  { testid: 'fold-collapse-all', label: 'Collapse all sections', short: 'Collapse', icon: ['7 20 12 15 17 20', '7 4 12 9 17 4'], run: () => foldUi.controller.value?.collapseAll() },
+  { testid: 'fold-expand-all', label: 'Expand all sections', short: 'Expand', icon: ['7 15 12 20 17 15', '7 9 12 4 17 9'], run: () => foldUi.controller.value?.expandAll() },
 ]
 
 /** Rule 12: a plain click behaves like an in-doc anchor (pushState + scroll under the header). */
@@ -178,6 +178,8 @@ onUnmounted(() => {
               @click="b.run"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline v-for="(pts, i) in b.icon" :key="i" :points="pts" /></svg>
+              <!-- The drawer is the touch surface (no hover titles): the two look-alike chevrons get words. -->
+              <span class="toc-btn-label" aria-hidden="true">{{ b.short }}</span>
             </button>
           </template>
           <button
@@ -340,8 +342,26 @@ onUnmounted(() => {
 }
 
 .toc-drawer .toc-icon-btn {
-  width: 40px;
+  width: auto;
+  min-width: 40px;
   height: 40px;
+}
+
+.toc-drawer .toc-icon-btn:has(.toc-btn-label) {
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.toc-btn-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+@media (pointer: coarse) {
+  .toc-drawer .toc-icon-btn {
+    min-width: 44px;
+    height: 44px;
+  }
 }
 
 .toc-drawer .toc-link {

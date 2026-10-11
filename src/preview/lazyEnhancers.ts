@@ -5,6 +5,7 @@ import { codeCopy } from './codeCopy'
 import { folding } from './folding'
 import { zoom } from './zoom'
 import { readerState } from './readerState'
+import { tableScrollHint } from './tableScrollHint'
 
 // The enhancers that load in their own chunk (fetched as soon as the app
 // starts, see enhancers.ts), keeping #6's entry-size budget. Order matters:
@@ -16,4 +17,5 @@ export const LAZY_ENHANCERS: Enhancer[] = [
   folding, // #17
   zoom, // #15
   readerState, // #18
+  tableScrollHint, // wide-table edge fades (persona QA)
 ]

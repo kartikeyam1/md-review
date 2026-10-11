@@ -176,6 +176,18 @@ html.dark.locus-theme {
   --rag-red-bg: #fad4cf;
   --rag-red-fg: #8f1c0e;
   --rag-red-dot: #d93a26;
+  /* Review status colours (approval, resolved comments, warnings) and the unseen-changes dot. */
+  --status-ok: #059669;
+  --status-ok-hover: #047857;
+  --status-ok-on: #ffffff;
+  --status-ok-bg: #d1fae5;
+  --status-ok-fg: #065f46;
+  --status-warn-bg: #fef3c7;
+  --status-warn-fg: #92400e;
+  --status-warn-text: #b45309;
+  --status-danger-bg: #fee2e2;
+  --status-danger-fg: #991b1b;
+  --unseen-dot: var(--accent);
 }
 
 html.dark {
@@ -213,6 +225,17 @@ html.locus-theme {
   --rag-green-dot: #00D273;
   --rag-amber-dot: #FF9F00;
   --rag-red-dot: #FF6429;
+  /* Review statuses in the brand series (green #00D273, amber #FF9F00), deepened where they are text. */
+  --status-ok: #00D273;
+  --status-ok-hover: #00B864;
+  --status-ok-on: #280A38;
+  --status-ok-bg: rgba(0, 210, 115, 0.16);
+  --status-ok-fg: #00703D;
+  --status-warn-bg: rgba(255, 159, 0, 0.16);
+  --status-warn-fg: #8A5300;
+  --status-warn-text: #8A5300;
+  --status-danger-bg: rgba(255, 100, 41, 0.14);
+  --status-danger-fg: #B91C1C;
 }
 
 html.dark.locus-theme {
@@ -222,6 +245,10 @@ html.dark.locus-theme {
   --callout-warning-fg: #FFB84D;
   --callout-caution-fg: var(--cat-must-fix);
   --callout-tint: 14%;
+  --status-ok-fg: #3DE89A;
+  --status-warn-fg: #FFB84D;
+  --status-warn-text: #FFB84D;
+  --status-danger-fg: #fca5a5;
 }
 
 *,
@@ -289,4 +316,33 @@ html.locus-theme .app-menu-list {
 html.locus-theme {
   --slide-title-bg: #280A38;
   --slide-title-fg: #FFFFFF;
+}
+
+/* One focus ring for every chrome control (header, bars, dialogs): the 2px accent ring the
+   theme, style and reading-settings controls already use, instead of the UA's 1px outline. */
+.btn:focus-visible,
+.header :is(button, a[href], input, select):focus-visible,
+.modal :is(button, a[href], input, select, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Touch: no browser tap flash (an off-palette blue); an open menu trigger shows its state in theme colours. */
+button,
+a[href],
+[role='button'],
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-ghost[aria-expanded='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* Touch: every text button (banners, dialogs, approval) is a 44px target. */
+@media (pointer: coarse) {
+  .btn {
+    min-height: 44px;
+  }
 }

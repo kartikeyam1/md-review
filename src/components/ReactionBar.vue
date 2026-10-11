@@ -73,16 +73,33 @@ function touchEnd() { lastTouchAt = Date.now(); if (pressTimer) { clearTimeout(p
 </template>
 
 <style scoped>
+/* Lined up with the reading column (.preview-pane: 50em + its side padding, #18 Wide lifts the cap),
+   like the agent-sections notice above the doc; its rule spans the column, not the window. */
 .reaction-bar {
+  --read-pad: 32px;
   flex: none;
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--read-pad));
+  max-width: 50em;
+  margin: 0 auto;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 10px 32px;
+  padding: 10px 0;
   border-top: 1px solid var(--border);
   background: var(--bg-surface);
+  /* The preview's base size, so 50em matches its column. */
+  font-size: calc(15px * var(--reader-scale, 1));
   user-select: none;
   -webkit-user-select: none;
+}
+
+html[data-reader-width='wide'] .reaction-bar {
+  max-width: none;
+}
+
+@media (max-width: 1099.98px) {
+  .reaction-bar { --read-pad: 24px; }
 }
 
 .reaction-btn {
@@ -119,7 +136,12 @@ function touchEnd() { lastTouchAt = Date.now(); if (pressTimer) { clearTimeout(p
 .reaction-emoji { font-size: 16px; }
 .reaction-count { font-variant-numeric: tabular-nums; font-weight: 500; }
 
-@media (max-width: 640px) {
-  .reaction-bar { padding: 8px 16px; }
+@media (max-width: 640.98px) {
+  .reaction-bar { --read-pad: 16px; padding: 8px 0; }
+}
+
+/* Touch: 44px targets. */
+@media (pointer: coarse) {
+  .reaction-btn { min-height: 44px; min-width: 44px; }
 }
 </style>

@@ -3,6 +3,8 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { useDocState } from '@/composables/useDocState'
 import { tokenFor } from '@/composables/useEditToken'
 import { toast } from '@/composables/useToast'
+import { useFocusTrap } from '@/composables/useFocusTrap'
+import { copyText as writeClipboard } from '@/composables/useCopyLink'
 import { EXPIRY_DAYS } from '@shared/expiry.mjs'
 
 // Share dialog (#23 rule 10). Links are FE-built (00 §6): the view link is
@@ -32,6 +34,15 @@ const copied = ref<string | null>(null)
 const token = ref<string | null>(null)
 const claiming = ref(false)
 const savingExpiry = ref(false)
+
+// 00 §3.4: a modal traps focus (it opens on the first Copy button) and gives it back on close —
+// to Share in the bar, or to the overflow menu that held it.
+const dialogRef = ref<HTMLElement | null>(null)
+useFocusTrap(dialogRef, computed(() => props.visible), {
+  initialFocus: () => dialogRef.value?.querySelector<HTMLElement>('[data-testid="share-copy-view"]'),
+  returnFocus: () => document.querySelector<HTMLElement>('[data-testid="doc-header"] [data-testid="share-btn"]')
+    ?? document.querySelector<HTMLElement>('[data-testid="header-overflow-btn"]'),
+})
 
 // Escape closes the dialog.
 function onEscape(e: KeyboardEvent) { if (e.key === 'Escape' && !e.defaultPrevented) emit('close') }
@@ -124,23 +135,22 @@ const sharePrompt = computed(() => {
   return lines.join('\n')
 })
 
+/** The button says "Copied!" and, like every copy in the app, a toast confirms it. */
 async function copyText(text: string, label: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    copied.value = label
-    setTimeout(() => { copied.value = null }, 2000)
-  } catch {
-    // ignore
-  }
+  const ok = await writeClipboard(text)
+  if (!ok) { toast.error("Couldn't copy. Select the text and copy it by hand."); return }
+  copied.value = label
+  toast.info(label === 'prompt' ? 'Prompt copied' : 'Link copied')
+  setTimeout(() => { copied.value = null }, 2000)
 }
 </script>
 
 <template>
   <div v-if="visible" class="modal-overlay" @click.self="emit('close')">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" data-testid="share-dialog">
+    <div ref="dialogRef" class="modal" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title" data-testid="share-dialog">
       <div class="modal-header">
         <h2 id="share-dialog-title" class="modal-title">Share</h2>
-        <button class="modal-close" aria-label="Close" @click="emit('close')">&times;</button>
+        <button type="button" class="modal-close" aria-label="Close" @click="emit('close')">&times;</button>
       </div>
       <div class="modal-body">
         <div class="url-row">

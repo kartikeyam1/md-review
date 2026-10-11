@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import type { Comment } from '@/types'
 import { generatePrompt } from '@/composables/usePromptGenerator'
+import { useFocusTrap } from '@/composables/useFocusTrap'
+import { copyText } from '@/composables/useCopyLink'
+import { toast } from '@/composables/useToast'
 
 const props = defineProps<{
   visible: boolean
@@ -26,23 +29,37 @@ const prompt = computed(() => {
 })
 
 async function copyToClipboard(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
+  if (await copyText(text)) {
     copied.value = true
+    toast.info('Prompt copied')
     setTimeout(() => { copied.value = false }, 2000)
-  } catch {
+  } else {
     copyFailed.value = true
     setTimeout(() => { copyFailed.value = false }, 3000)
   }
 }
+
+// 00 §3.4: a modal dialog traps focus, Esc closes it, and focus goes back to the overflow menu that opened it.
+const dialogRef = ref<HTMLElement | null>(null)
+const open = computed(() => props.visible)
+useFocusTrap(dialogRef, open, {
+  initialFocus: () => dialogRef.value?.querySelector<HTMLElement>('[data-testid="prompt-copy-btn"]'),
+  returnFocus: () => document.querySelector<HTMLElement>('[data-testid="header-overflow-btn"]'),
+})
+function onEscape(e: KeyboardEvent) { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); emit('close') } }
+watch(open, (v) => {
+  if (v) document.addEventListener('keydown', onEscape)
+  else document.removeEventListener('keydown', onEscape)
+}, { immediate: true })
+onUnmounted(() => document.removeEventListener('keydown', onEscape))
 </script>
 
 <template>
   <div v-if="visible" class="modal-overlay" @click.self="emit('close')">
-    <div class="modal">
+    <div ref="dialogRef" class="modal" role="dialog" aria-modal="true" aria-labelledby="prompt-dialog-title" data-testid="prompt-dialog">
       <div class="modal-header">
-        <h2 class="modal-title">Generated Prompt <span class="modal-title-count" v-if="comments.length">({{ comments.length }} {{ comments.length === 1 ? 'comment' : 'comments' }})</span></h2>
-        <button class="modal-close" @click="emit('close')">&times;</button>
+        <h2 id="prompt-dialog-title" class="modal-title">Generated Prompt <span class="modal-title-count" v-if="comments.length">({{ comments.length }} {{ comments.length === 1 ? 'comment' : 'comments' }})</span></h2>
+        <button type="button" class="modal-close" aria-label="Close" @click="emit('close')">&times;</button>
       </div>
       <div class="modal-body">
         <pre class="prompt-text">{{ prompt }}</pre>
@@ -54,7 +71,7 @@ async function copyToClipboard(text: string) {
         </label>
         <div class="modal-footer-actions">
           <button class="btn btn-ghost" @click="emit('close')">Back to Review</button>
-          <button class="btn btn-primary" @click="copyToClipboard(prompt)">
+          <button type="button" class="btn btn-primary" data-testid="prompt-copy-btn" @click="copyToClipboard(prompt)">
             {{ copyFailed ? 'Copy failed' : copied ? 'Copied!' : 'Copy to Clipboard' }}
           </button>
         </div>

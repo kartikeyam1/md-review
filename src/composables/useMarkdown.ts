@@ -97,11 +97,12 @@ export function useMarkdown() {
   for (const plugin of PLUGINS) plugin(md)
 
   // Front matter renders as a table; the body keeps absolute line numbers (#5 rule 20).
-  function renderHtml(source: string, env: object = {}): string {
+  // `frontMatter: false` drops the table (a viewer's publish-mode reading page) — the body keeps its absolute lines.
+  function renderHtml(source: string, env: object = {}, frontMatter = true): string {
     // A computed render re-runs when a lazy highlight.js language arrives.
     void highlightRevision.value
     const fm = parseFrontMatter(source)
-    if (fm) return frontMatterTable(fm) + md.render(bodyWithAbsoluteLines(fm), env)
+    if (fm) return (frontMatter ? frontMatterTable(fm) : '') + md.render(bodyWithAbsoluteLines(fm), env)
     return md.render(source, env)
   }
 
@@ -110,9 +111,9 @@ export function useMarkdown() {
    * carries (ids + plain text, #3) and the #28 agent sections — their count
    * and, in the human view (default), the heading ids and lines it hid.
    */
-  function renderWithHeadings(source: string, o: { agentView?: AgentView } = {}): RenderResult {
+  function renderWithHeadings(source: string, o: { agentView?: AgentView; frontMatter?: boolean } = {}): RenderResult {
     const env: { headings?: HeadingInfo[] } & AgentEnv = { agentView: o.agentView ?? 'human' }
-    const html = renderHtml(source, env)
+    const html = renderHtml(source, env, o.frontMatter ?? true)
     return {
       html,
       headings: env.headings ?? [],

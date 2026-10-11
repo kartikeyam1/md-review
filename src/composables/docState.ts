@@ -234,6 +234,19 @@ export function createDocState(router: Router) {
     filename: docMeta.value.filename || filename.value,
   }))
 
+  // A blank local doc ("Start blank" → untitled.md) is named after its title once it has one, so the
+  // editor header, downloads, prompts and the share dialog say "capacity-plan.md", not "untitled".
+  // A name the user typed is never touched (only untitled.md or the name set here is replaced).
+  let autoFilename: string | null = null
+  watch(docTitle, (title) => {
+    const name = filename.value
+    if (pasteId.value || contentType.value !== 'markdown' || (name !== 'untitled.md' && name !== autoFilename)) return
+    const slug = title.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '')
+    const next = slug && slug !== 'untitled' ? `${slug}.md` : 'untitled.md'
+    if (next !== name) { filename.value = next; autoFilename = next }
+  })
+
   /** #28: agent-only sections in the markdown on screen (0 for HTML docs). Lazy: read only where shown. */
   const agentSectionCount = computed(() => (contentType.value === 'markdown' ? countAgentSections(markdown.value) : 0))
   /**

@@ -146,8 +146,8 @@ function onAppLinkClick(e: MouseEvent, path: string) {
 }
 
 .notice-bar.warn {
-  color: #b45309;
-  background: rgba(245, 158, 11, 0.08);
+  color: var(--status-warn-text);
+  background: var(--status-warn-bg);
 }
 
 .conflict-bar {

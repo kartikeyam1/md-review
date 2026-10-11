@@ -62,7 +62,10 @@ function close(kind: 'confirm' | 'cancel') {
         data-testid="share-required-dialog"
         @keydown="onKeydown"
       >
-        <h2 id="share-required-title" class="sr-title">Share to add images</h2>
+        <div class="sr-header">
+          <h2 id="share-required-title" class="sr-title">Share to add images</h2>
+          <button type="button" class="sr-close" aria-label="Close" @click="close('cancel')">&times;</button>
+        </div>
         <p id="share-required-text" class="sr-text">Images are stored with the shared document. Share it to add images.</p>
         <div class="sr-actions">
           <button type="button" class="btn btn-ghost btn-sm" data-testid="share-required-cancel" @click="close('cancel')">Cancel</button>
@@ -85,9 +88,12 @@ function close(kind: 'confirm' | 'cancel') {
   padding: 16px;
 }
 
+/* The same anatomy as the Share and prompt dialogs: a header bar with the title and ×, the body,
+   then a footer bar with the actions. */
 .sr-dialog {
   width: min(420px, 100%);
-  padding: 16px;
+  padding: 0;
+  overflow: hidden;
   background: var(--bg-surface);
   color: var(--text-primary);
   border: 1px solid var(--border);
@@ -96,14 +102,36 @@ function close(kind: 'confirm' | 'cancel') {
   font-family: var(--font-body);
 }
 
+.sr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
 .sr-title {
-  margin: 0 0 8px;
-  font-size: 15px;
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 18px;
   font-weight: 600;
 }
 
+.sr-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+}
+
+.sr-close:hover {
+  color: var(--text-primary);
+}
+
 .sr-text {
-  margin: 0 0 16px;
+  margin: 0;
+  padding: 20px;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -113,5 +141,7 @@ function close(kind: 'confirm' | 'cancel') {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
 }
 </style>

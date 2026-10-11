@@ -4,7 +4,7 @@ import { useDocState } from '@/composables/useDocState'
 import { splitSlides, slideForHeading, clampSlide } from '@/composables/useSlides'
 import { decodeFragment, encodeFragment } from '@/composables/useRouter'
 import { isGithub } from '@/composables/useTheme'
-import { mermaidConfigFor, mermaidJob } from '@/preview/mermaidTheme'
+import { mermaidConfigFor, mermaidJob, fixAuthorFillContrast } from '@/preview/mermaidTheme'
 import { codeCopy } from '@/preview/codeCopy'
 import { zoom } from '@/preview/zoom'
 import type { EnhancerContext } from '@/preview/enhancers'
@@ -129,11 +129,20 @@ function toggleFullscreen() {
 const chromeHidden = ref(false)
 /** A short viewport (a landscape phone): the controls float over the slide so the canvas fills the height (rule 17). */
 const compact = ref(typeof window !== 'undefined' && window.innerHeight < 500)
+/** Rail width a short landscape viewport needs to hold the controls beside the canvas instead of over it. */
+const RAIL_MIN = 56
+/** Compact and the letterbox beside the full-height canvas is wide enough: the controls sit in it, clear of the slide. */
+const rails = ref(false)
+function measureRails() {
+  rails.value = compact.value && (window.innerWidth - window.innerHeight * (CANVAS_W / CANVAS_H)) / 2 >= RAIL_MIN
+}
+measureRails()
 let idleTimer: ReturnType<typeof setTimeout> | null = null
 function wake() {
   chromeHidden.value = false
   if (idleTimer) clearTimeout(idleTimer)
-  idleTimer = isFullscreen.value || compact.value ? setTimeout(() => { chromeHidden.value = true }, CHROME_IDLE_MS) : null
+  // Floating controls hide when idle; in the side rails they cover nothing, so they stay.
+  idleTimer = isFullscreen.value || (compact.value && !rails.value) ? setTimeout(() => { chromeHidden.value = true }, CHROME_IDLE_MS) : null
 }
 function onFullscreenChange() {
   isFullscreen.value = document.fullscreenElement === rootRef.value && !!rootRef.value
@@ -158,7 +167,11 @@ function measureStage() {
   if (w > 0 && h > 0) scale.value = Math.min(w / CANVAS_W, h / CANVAS_H)
   portrait.value = window.innerHeight > window.innerWidth
   const short = window.innerHeight < 500
-  if (short !== compact.value) { compact.value = short; wake() }
+  const changed = short !== compact.value
+  const hadRails = rails.value
+  compact.value = short
+  measureRails()
+  if (changed || hadRails !== rails.value) wake()
 }
 const boxStyle = computed(() => ({ width: `${CANVAS_W * scale.value}px`, height: `${CANVAS_H * scale.value}px` }))
 const canvasStyle = computed(() => ({ transform: `scale(${scale.value})` }))
@@ -333,6 +346,7 @@ async function renderDiagrams() {
         const { svg, bindFunctions } = await api.render(`slides-mermaid-${Math.random().toString(36).slice(2)}`, node.dataset.source)
         if (!node.isConnected) continue
         node.innerHTML = svg
+        fixAuthorFillContrast(node)
         bindFunctions?.(node)
         node.dataset.renderedKey = key
         const host = node.closest<HTMLElement>('.slide')
@@ -408,7 +422,7 @@ const currentNotes = computed(() => slides.value[index.value]?.notesHtml ?? '')
   <div
     ref="rootRef"
     class="slides-root"
-    :class="{ 'chrome-hidden': chromeHidden, fullscreen: isFullscreen, compact }"
+    :class="{ 'chrome-hidden': chromeHidden, fullscreen: isFullscreen, compact, rails }"
     data-testid="slides-root"
     tabindex="-1"
     aria-label="Slides"
@@ -595,8 +609,41 @@ const currentNotes = computed(() => slides.value[index.value]?.notesHtml ?? '')
   transition: opacity 0.3s ease;
 }
 
-/* A short viewport (landscape phone): the controls float over the slide; they hide after 3 s idle. */
-.slides-root.compact .slides-controls {
+/* A landscape phone whose letterbox can hold them: the controls sit in the side rails, clear of
+   the full-height canvas — exit / previous / notes on the left, fullscreen / next / counter on the right. */
+.slides-root.compact.rails .slides-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto 1fr auto;
+  align-items: center;
+  justify-items: center;
+  height: auto;
+  padding: 10px 6px;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.slides-root.compact.rails .slides-controls > * {
+  pointer-events: auto;
+}
+
+.slides-root.compact.rails .slides-spacer {
+  display: none;
+}
+
+.slides-root.compact.rails [data-testid='slides-exit'] { grid-area: 1 / 1; align-self: start; }
+.slides-root.compact.rails [data-testid='slides-prev'] { grid-area: 2 / 1; }
+.slides-root.compact.rails [data-testid='slides-notes-btn'] { grid-area: 3 / 1; align-self: end; }
+.slides-root.compact.rails [data-testid='slides-fullscreen-btn'] { grid-area: 1 / 3; align-self: start; }
+.slides-root.compact.rails [data-testid='slides-next'] { grid-area: 2 / 3; }
+.slides-root.compact.rails .slides-counter { grid-area: 3 / 3; align-self: end; min-width: 0; font-size: 12px; }
+
+/* A short viewport with no room beside the canvas: the controls float over the slide; they hide after 3 s idle. */
+.slides-root.compact:not(.rails) .slides-controls {
   position: absolute;
   left: 0;
   right: 0;
@@ -679,6 +726,19 @@ const currentNotes = computed(() => slides.value[index.value]?.notesHtml ?? '')
 .slides-hint-close:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Touch: every control is a 44px target. */
+@media (pointer: coarse) {
+  .slides-btn,
+  .slides-hint-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .slides-rotate-hint {
+    padding: 0 0 0 14px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

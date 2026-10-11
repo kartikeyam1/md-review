@@ -3,7 +3,7 @@ import { isDark, isGithub, isLocus, themeStyle } from '@/composables/useTheme'
 import { PASTE_API } from '@/composables/pasteApi'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { loadFenceLanguages } from '@/markdown/highlight'
-import { mermaidConfigFor, mermaidJob } from '@/preview/mermaidTheme'
+import { mermaidConfigFor, mermaidJob, fixAuthorFillContrast } from '@/preview/mermaidTheme'
 
 // Downloads (#19): filenames, the blob + <a download> save, and the
 // self-contained HTML export. Loaded on demand by downloadActions.ts, off the
@@ -286,6 +286,7 @@ async function renderOffscreen(markdown: string, theme: ThemeMode): Promise<{ el
           try {
             const { svg } = await mermaid.render(`mdr-export-${Date.now().toString(36)}-${++seq}`, source)
             node.innerHTML = svg
+            fixAuthorFillContrast(node)
           } catch {
             node.replaceChildren(Object.assign(document.createElement('pre'), { className: 'mermaid-error' }))
           }

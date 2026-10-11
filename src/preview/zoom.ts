@@ -138,10 +138,15 @@ export const zoom: Enhancer = (container, ctx) => {
   const obs = new MutationObserver(() => scan())
   obs.observe(container, { childList: true, subtree: true })
 
-  let down: { x: number; y: number; t: HTMLElement } | null = null
+  // `moved`: how far the press travelled, pointerdown → pointerup. The click's own coordinates
+  // are not used: on touch the compatibility click can land several px from the touch point.
+  let down: { x: number; y: number; t: HTMLElement; touch: boolean; moved: number } | null = null
   const onPointerDown = (e: PointerEvent) => {
     const t = (e.target as Element | null)?.closest?.<HTMLElement>(TRIGGER)
-    down = t && container.contains(t) && e.button === 0 ? { x: e.clientX, y: e.clientY, t } : null
+    down = t && container.contains(t) && e.button === 0 ? { x: e.clientX, y: e.clientY, t, touch: e.pointerType !== 'mouse', moved: 0 } : null
+  }
+  const onPointerUp = (e: PointerEvent) => {
+    if (down) down.moved = Math.hypot(e.clientX - down.x, e.clientY - down.y)
   }
   const onClick = (e: MouseEvent) => {
     const t = (e.target as Element | null)?.closest?.<HTMLElement>(TRIGGER)
@@ -150,7 +155,7 @@ export const zoom: Enhancer = (container, ctx) => {
     // Rule 3: a click, not the end of a drag-select.
     const d = down
     down = null
-    if (d && (d.t !== t || Math.hypot(e.clientX - d.x, e.clientY - d.y) >= 5)) return
+    if (d && (d.t !== t || d.moved >= (d.touch ? 10 : 5))) return
     const sel = window.getSelection()
     if (sel && !sel.isCollapsed) return
     e.preventDefault()
@@ -166,11 +171,13 @@ export const zoom: Enhancer = (container, ctx) => {
     openViewer(t, ctx.copyText)
   }
   container.addEventListener('pointerdown', onPointerDown, true)
+  container.addEventListener('pointerup', onPointerUp, true)
   container.addEventListener('click', onClick)
   container.addEventListener('keydown', onKeydown)
   return () => {
     obs.disconnect()
     container.removeEventListener('pointerdown', onPointerDown, true)
+    container.removeEventListener('pointerup', onPointerUp, true)
     container.removeEventListener('click', onClick)
     container.removeEventListener('keydown', onKeydown)
   }

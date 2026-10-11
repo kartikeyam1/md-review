@@ -282,7 +282,7 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #2563eb;
+  background: var(--unseen-dot);
   display: inline-block;
   flex-shrink: 0;
 }

@@ -89,14 +89,14 @@ const entries = computed<AppMenuEntry[]>(() => {
     })
   }
   // 6. Open / New / Refresh.
-  const tail: AppMenuEntry[] = [
-    { type: 'item', id: 'open', testid: 'menu-open-file', label: 'Open file…', onSelect: () => actions.handleOpenFile() },
-  ]
+  // Opening a local file is an author's action: not offered to a view-link reader of a shared doc.
+  const tail: AppMenuEntry[] = []
+  if (!docOpen || editor) tail.push({ type: 'item', id: 'open', testid: 'menu-open-file', label: 'Open file…', onSelect: () => actions.handleOpenFile() })
   if (docOpen && editor) tail.push({ type: 'item', id: 'new', testid: 'menu-new-doc', label: 'New document', onSelect: () => actions.handleNewDoc() })
   if (docOpen && doc.filePathParam.value && route.value.kind === 'landing') {
     tail.push({ type: 'item', id: 'refresh', testid: 'menu-refresh', label: 'Reload from disk', title: 'Reload file from disk and reset comments', onSelect: () => { actions.loadFromFilePath() } })
   }
-  if (out.length) out.push({ type: 'separator', id: 'sep-tail' })
+  if (out.length && tail.length) out.push({ type: 'separator', id: 'sep-tail' })
   out.push(...tail)
   return out
 })
@@ -136,6 +136,6 @@ const entries = computed<AppMenuEntry[]>(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #2563eb;
+  background: var(--unseen-dot);
 }
 </style>
