@@ -450,7 +450,7 @@ export function normalizeEntries(entries, known, literals = {}) {
 // Keys later items may ADD (spec 20 rule 5 / 00 §10.5). `content_hash` and
 // `comments` may be added where the legacy server omitted them (rule 5 lists
 // them as always-present on full GETs).
-const ADDITIVE = new Set(['mode', 'id', 'access', 'upsert_key', 'note', 'editToken', 'editUrl', 'url', 'viewUrl', 'app_url', 'expiry_days', 'shareUrl', 'created_by', 'content_hash', 'comments']);
+const ADDITIVE = new Set(['view', 'agentSections', 'mode', 'id', 'access', 'upsert_key', 'note', 'editToken', 'editUrl', 'url', 'viewUrl', 'app_url', 'expiry_days', 'shareUrl', 'created_by', 'content_hash', 'comments']);
 const VALID_MODES = new Set(['publish', 'review']);
 // #2: a pinned revision never GETs /paste/<id>, so a revision body
 // (GET /paste/:id/revisions/:hash, recognised by `is_current`) also carries the

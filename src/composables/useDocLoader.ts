@@ -265,14 +265,21 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       contentType: doc.contentType.value,
     })
     doc.paneMode.value = paneModeFor(view)
+    doc.readerView.value = view === 'agent' ? 'agent' : 'read'
     if (rewrite) router.setQueryParam('view', 'read')
   }
 
-  /** A UI view change (view toggle): replaceState to ?view=<view> (00 §1.3). */
-  function setView(view: DocViewName) {
-    if (view !== 'read' && doc.capability.value !== 'editor') return
+  /**
+   * A UI view change (view toggle, #28 Show / Reader view): replaceState to
+   * ?view=<view> (00 §1.3); `removeParam` drops `view` instead (the exits).
+   * Edit and split are editor-only; agent view needs a markdown doc off a file route.
+   */
+  function setView(view: DocViewName, o: { removeParam?: boolean } = {}) {
+    if ((view === 'edit' || view === 'split') && doc.capability.value !== 'editor') return
+    if (view === 'agent' && (doc.contentType.value !== 'markdown' || doc.routeKind.value === 'file' || doc.routeKind.value === 'embed')) return
     doc.paneMode.value = paneModeFor(view)
-    router.setQueryParam('view', view)
+    doc.readerView.value = view === 'agent' ? 'agent' : 'read'
+    router.setQueryParam('view', o.removeParam ? null : view)
   }
 
   /** Empty landing state (New, or navigating back to the landing route). */

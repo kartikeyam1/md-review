@@ -47,6 +47,7 @@ const ROUTES = [
   require('./routes/github.cjs'),
   require('./routes/sites.cjs'),
   require('./routes/health.cjs'),
+  require('./routes/raw.cjs'), // #28: /d/:x.md and /llms.txt, before meta (00 §6) and the asset fallback
   require('./routes/meta.cjs'),
   require('./routes/site-assets.cjs'),
 ];

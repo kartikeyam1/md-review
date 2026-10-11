@@ -14,6 +14,8 @@ const VIEWS: ViewEntry[] = [
 
 defineProps<{ compact?: boolean }>()
 const { view } = useDocState()
+/** #28: agent view is a reading view — the Read segment shows pressed (clicking it returns to the human view). */
+const pressed = (id: DocViewName) => view.value === id || (id === 'read' && view.value === 'agent')
 const emit = defineEmits<{ change: [view: DocViewName] }>()
 
 /** Intent prefetch (#6 rule 2b): hovering or focusing a view that shows the editor fetches its chunk. */
@@ -30,8 +32,8 @@ function prefetchFor(id: DocViewName) {
       :key="v.id"
       type="button"
       class="toggle-btn"
-      :class="{ active: view === v.id, compact }"
-      :aria-pressed="view === v.id ? 'true' : 'false'"
+      :class="{ active: pressed(v.id), compact }"
+      :aria-pressed="pressed(v.id) ? 'true' : 'false'"
       :aria-label="compact ? v.label : undefined"
       :title="v.label"
       :data-testid="`view-toggle-${v.id}`"

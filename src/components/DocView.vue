@@ -40,6 +40,8 @@ const ShareRequiredDialog = defineAsyncComponent(() => import('@/components/Shar
 const FileUpload = defineAsyncComponent(() => import('@/components/FileUpload.vue'))
 // #13: rendered only in focus mode.
 const FocusControls = defineAsyncComponent(() => import('@/components/FocusControls.vue'))
+// #28: the "N agent-only sections hidden" line, only for docs that have any.
+const AgentSectionsNotice = defineAsyncComponent(() => import('@/components/AgentSectionsNotice.vue'))
 
 const doc = useDocState()
 const actions = useDocActions()
@@ -50,6 +52,7 @@ const {
   showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
   comments, revisionList, showHistory, historyFrom, acknowledge,
   theme, confirmDiscardIfDirty, handleSelection, handleSelectionClear, setHighlightClearer, reactions,
+  agentSectionCount, rawMarkdownUrl,
 } = doc
 
 // The panes belong to the layout; the selection flow only needs to clear the preview's highlight.
@@ -200,8 +203,33 @@ const docScroll = computed(() => onScreen.value && !editorShown.value && !fileVi
 
 // #3: the TOC — read view of a markdown doc only (never edit view, HTML, files or embeds).
 const breakpoint = useBreakpoint()
-const toc = provideToc({ markdown, enabled: docScroll, breakpoint })
+const toc = provideToc({ markdown, enabled: docScroll, breakpoint, agentView: computed(() => view.value === 'agent') })
 const activeHeading = useActiveHeading({ entries: toc.entries, activeId: toc.activeId, enabled: toc.visible })
+
+// ── #28 human view vs agent view ─────────────────────────────────────────────
+/** The preview shows agent-only sections: agent view, and split view's preview (rule 6). */
+const previewAgent = computed(() => view.value === 'agent' || splitShown.value)
+/** Rule 10: the hidden-sections line — human (read) view of a markdown doc with ≥ 1 section. */
+const noticeShown = computed(() => onScreen.value && view.value === 'read' && previewShown.value && contentType.value === 'markdown' && agentSectionCount.value > 0)
+/** Rule 12: a heading/line inside a hidden section was targeted — switch to agent view (replaceState, fragment kept). */
+function revealAgent() {
+  if (view.value === 'read' && contentType.value === 'markdown' && route.value.kind !== 'file') actions.setView('agent')
+}
+
+// Rule 14: <link rel="alternate" type="text/markdown"> to the raw source while a shared markdown doc is on screen.
+const alternateHref = computed(() => (onScreen.value && route.value.kind === 'doc' && !docMissing.value ? rawMarkdownUrl.value : null))
+let alternateLink: HTMLLinkElement | null = null
+watch(alternateHref, (href) => {
+  if (!href) { alternateLink?.remove(); alternateLink = null; return }
+  if (!alternateLink) {
+    alternateLink = document.createElement('link')
+    alternateLink.rel = 'alternate'
+    alternateLink.type = 'text/markdown'
+    document.head.appendChild(alternateLink)
+  }
+  alternateLink.href = href
+}, { immediate: true })
+onUnmounted(() => { alternateLink?.remove(); alternateLink = null })
 
 const isDocRoute = computed(() => ['doc', 'pinned', 'file'].includes(route.value.kind))
 const showHeader = computed(() => route.value.kind !== 'library' && route.value.kind !== 'not-found' && !docMissing.value)
@@ -249,6 +277,7 @@ const embedOpenHref = computed(() => {
     <div v-if="onScreen" class="doc-body review-layout">
       <div class="doc-rail"><TocPanel v-if="toc.railShown.value" :toc="toc" variant="rail" @pin="activeHeading.pin" /></div>
       <main class="doc-content main-pane">
+        <AgentSectionsNotice v-if="noticeShown && !fileView" />
         <div v-if="fileView" class="file-view">
           <img v-if="fileView.kind === 'image'" :src="fileView.url" :alt="fileView.name" />
           <a v-else class="btn btn-primary" :href="fileView.url" :download="fileView.name">Download {{ fileView.name }}</a>
@@ -287,8 +316,10 @@ const embedOpenHref = computed(() => {
               :theme="theme"
               :content-type="contentType"
               :reload-delay="splitShown ? 400 : 0"
+              :agent-view="previewAgent"
               @selection="handleSelection"
               @selection-clear="handleSelectionClear"
+              @reveal-agent="revealAgent"
             />
           </template>
         </SplitView>

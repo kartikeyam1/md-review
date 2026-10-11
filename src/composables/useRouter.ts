@@ -161,7 +161,7 @@ export function docShareUrl(key: string, base: string = import.meta.env.BASE_URL
 export type ViewName = 'read' | 'edit' | 'split' | 'slides' | 'agent'
 const KNOWN_VIEWS: ViewName[] = ['read', 'edit', 'split', 'slides', 'agent']
 /** Views whose item has shipped. Later items add theirs (#7 split, #28 agent, #29 slides). */
-export const SHIPPED_VIEWS = new Set<ViewName>(['read', 'edit', 'split'])
+export const SHIPPED_VIEWS = new Set<ViewName>(['read', 'edit', 'split', 'agent'])
 
 export interface ViewContext {
   capability: 'viewer' | 'editor'

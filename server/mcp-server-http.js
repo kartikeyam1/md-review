@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { createHandlers, editTokenArg, registerSharedTools } from './mcp-server.js';
+import { createHandlers, editTokenArg, viewArg, AGENT_MARKER_HINT, registerSharedTools } from './mcp-server.js';
 import { createSessionRegistry } from './mcp-sessions.js';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
@@ -24,7 +24,7 @@ const CATEGORY_ENUM = z.enum(['suggestion', 'question', 'must-fix', 'nit']);
 function registerTools(server, handlers) {
   server.registerTool('create_session', {
     title: 'Create Review Session',
-    description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.',
+    description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       markdown: z.string().optional().describe('The document content — Markdown or HTML (provide this OR filePath). Markdown extras: GitHub alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]` on the first quote line, optional title after it) and inline RAG status badges `:rag-green[On track]` / `:rag-amber[At risk]` / `:rag-red[Blocked]`.'),
@@ -47,11 +47,12 @@ function registerTools(server, handlers) {
 
   server.registerTool('get_session', {
     title: 'Get Review Session',
-    description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions.",
+    description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions. view: 'human' returns the Markdown without its agent-only sections; the default 'agent' returns the full source. rawUrl is the raw Markdown (GET, no auth).",
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
       editToken: editTokenArg(),
       fields: z.string().optional().describe('Comma-separated fields to load: meta,content,comments,files. Omit for full response.'),
+      view: viewArg(),
     }),
   }, async (args) => {
     const result = await handlers.get_session(args);
@@ -155,7 +156,7 @@ function registerTools(server, handlers) {
 
   server.registerTool('update_markdown', {
     title: 'Update Markdown',
-    description: 'Update the markdown content of a session. Provide markdown, filePath, or patch (unified diff). For large files (>1MB), content is automatically uploaded in chunks.',
+    description: 'Update the markdown content of a session. Provide markdown, filePath, or patch (unified diff). For large files (>1MB), content is automatically uploaded in chunks.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
@@ -279,7 +280,7 @@ function registerTools(server, handlers) {
 
   server.registerTool('patch_markdown', {
     title: 'Patch Markdown',
-    description: 'Apply a unified diff patch to the session markdown. Much more efficient than re-sending the entire file for small changes.',
+    description: 'Apply a unified diff patch to the session markdown. Much more efficient than re-sending the entire file for small changes.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),

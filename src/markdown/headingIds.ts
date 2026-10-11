@@ -68,12 +68,16 @@ export function headingIds(md: MarkdownIt) {
 
 let parser: MarkdownIt | null = null
 
-/** Every markdown heading of `source`, with the id the preview renders and its plain text. */
-export function extractHeadings(source: string): HeadingInfo[] {
+/**
+ * Every markdown heading of `source` that `view` shows (#28: the human view,
+ * by default, leaves out headings inside agent-only sections), with the id the
+ * preview renders and its plain text.
+ */
+export function extractHeadings(source: string, view: 'human' | 'agent' = 'human'): HeadingInfo[] {
   // The preview's own parser (same plugins), so ids and text can never drift from the render.
   parser ??= useMarkdown().md
   const fm = parseFrontMatter(source)
-  const env: { headings?: HeadingInfo[] } = {}
+  const env: { headings?: HeadingInfo[]; agentView?: 'human' | 'agent' } = { agentView: view }
   parser.parse(fm ? bodyWithAbsoluteLines(fm) : source, env)
   return env.headings ?? []
 }

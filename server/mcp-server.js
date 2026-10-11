@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { createTokenStore } from './mcp-token-store.js';
+import { stripAgentSections } from '../shared/agentSections.mjs';
 
 const PASTE_API_URL = process.env.PASTE_API_URL || 'http://localhost:3100';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://kartikeyam1.github.io/md-review';
@@ -15,6 +16,20 @@ const UPSERT_MAX_BYTES = 10 * 1024 * 1024;
 
 /** #23 rule 11: what a write tool returns on 401/403. */
 export const EDIT_PROTECTED_MESSAGE = 'This document is edit-protected. Pass editToken (returned when it was created) or ask the owner for its edit link.';
+
+/**
+ * #28 rule 19: the agent-only marker syntax, appended to the descriptions of
+ * the tools that write a document (both MCP servers).
+ */
+export const AGENT_MARKER_HINT = ' Agent-only sections: wrap supporting evidence that human readers do not need '
+  + '(raw data, queries, logs) in a `<!-- agent -->` … `<!-- /agent -->` marker pair (optional label: '
+  + '`<!-- agent: Raw SQL -->`), each marker on a line of its own at the top level. Human readers see a concise view '
+  + 'without them; agents get the full source (get_session, GET /d/<slug>.md). They are hidden, not secret.';
+
+/** get_session's optional `view` argument (#28 rule 19). */
+export const viewArg = () => z.enum(['agent', 'human']).optional().describe(
+  "Which view of a Markdown doc's content: 'agent' (default) = the full source including agent-only sections; "
+  + "'human' = agent-only sections removed. The result reports view, agentSections (how many there are) and rawUrl.");
 
 /** The optional `editToken` argument every write tool accepts (#23 rule 11). */
 export const editTokenArg = () => z.string().optional().describe(
@@ -51,6 +66,9 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
   // (its /d/ meta page when PUBLIC_BASE_URL is set, else the SPA route); an
   // older backend without it falls back to the same rule from this env.
   const shareBase = publicBaseUrl || frontendUrl;
+  // #28: raw markdown links live on the backend's public origin (PUBLIC_BASE_URL),
+  // else the URL clients already use for it (PASTE_PUBLIC_URL / PASTE_API_URL).
+  const rawBase = String(publicBaseUrl || shellApiUrl).replace(/\/+$/, '');
 
   function escapeShell(s) {
     // Wrap in single quotes, escape existing single quotes
@@ -229,12 +247,26 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       return out;
     },
 
-    async get_session({ sessionId, fields, editToken }) {
-      const qs = fields ? `?fields=${fields}` : '';
+    async get_session({ sessionId, fields, editToken, view = 'agent' }) {
+      if (view !== 'agent' && view !== 'human') return { error: "view must be 'agent' or 'human'" };
+      // The plain full read keeps its legacy URL (the server's default view is agent).
+      const query = [fields ? `fields=${fields}` : '', view === 'human' || fields ? `view=${view}` : ''].filter(Boolean).join('&');
       // The token only makes `access.can_edit` accurate; reads never need one.
-      const result = await apiCall(`/paste/${sessionId}${qs}`, { headers: tokenHeaders(tokenFor(sessionId, editToken)) });
+      const result = await apiCall(`/paste/${sessionId}${query ? `?${query}` : ''}`, { headers: tokenHeaders(tokenFor(sessionId, editToken)) });
       if (result.error) return result;
-      return { ...result, shareUrl: result.url || docUrl(shareBase, result.slug || sessionId) };
+      const out = { ...result, shareUrl: result.url || docUrl(shareBase, result.slug || sessionId) };
+      if (out.view === undefined) {
+        // No view in the request (the plain full read), or a backend without #28:
+        // apply the view here (the same shared strip the server uses).
+        const isHtml = out.contentType === 'html';
+        const v = typeof out.markdown === 'string' && !isHtml ? stripAgentSections(out.markdown) : null;
+        if (v && view === 'human') out.markdown = v.markdown;
+        out.view = view;
+        if (v) out.agentSections = v.count;
+      }
+      // #28: where agents fetch the raw source (00 §6 x = slug if set, else id).
+      out.rawUrl = `${rawBase}/d/${result.slug || result.id || sessionId}.md`;
+      return out;
     },
 
     async list_comments({ sessionId }) {
@@ -590,7 +622,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('create_session', {
     title: 'Create Review Session',
-    description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview; Markdown is rendered as before. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.',
+    description: 'Create a review session from Markdown or HTML content, or a local file path. HTML documents are rendered faithfully in a sandboxed preview; Markdown is rendered as before. For LARGE files (>10KB), use create_via_shell instead — it streams directly from disk without bloating conversation context.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       markdown: z.string().optional().describe('The document content — Markdown or HTML (provide this OR filePath). Markdown extras: GitHub alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]` on the first quote line, optional title after it) and inline RAG status badges `:rag-green[On track]` / `:rag-amber[At risk]` / `:rag-red[Blocked]`.'),
@@ -613,11 +645,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('get_session', {
     title: 'Get Review Session',
-    description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions.",
+    description: "Get a session's full state, including its doc `mode` (publish = read-only page for humans, review = comments and approval). Use 'fields' to load only specific parts for large sessions. view: 'human' returns the Markdown without its agent-only sections; the default 'agent' returns the full source. rawUrl is the raw Markdown (GET, no auth).",
     inputSchema: z.object({
       sessionId: z.string().describe('The session ID'),
       editToken: editTokenArg(),
       fields: z.string().optional().describe('Comma-separated fields to load: meta,content,comments,files. Omit for full response.'),
+      view: viewArg(),
     }),
   }, async (args) => {
     const result = await handlers.get_session(args);
@@ -721,7 +754,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('update_markdown', {
     title: 'Update Markdown',
-    description: 'Update the markdown content of a session. Provide markdown, filePath, or patch (unified diff). For large files (>1MB), content is automatically uploaded in chunks.',
+    description: 'Update the markdown content of a session. Provide markdown, filePath, or patch (unified diff). For large files (>1MB), content is automatically uploaded in chunks.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),
@@ -845,7 +878,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   server.registerTool('patch_markdown', {
     title: 'Patch Markdown',
-    description: 'Apply a unified diff patch to the session markdown. Much more efficient than re-sending the entire file for small changes.',
+    description: 'Apply a unified diff patch to the session markdown. Much more efficient than re-sending the entire file for small changes.' + AGENT_MARKER_HINT,
     inputSchema: z.object({
       author: z.string().optional().describe('Who is writing (recorded on the revision). Defaults to "agent" for updates; use a person\'s name when acting on their behalf.'),
       sessionId: z.string().describe('The session ID'),

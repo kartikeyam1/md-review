@@ -114,8 +114,13 @@ describe('resolveView (00 §1.3)', () => {
     expect(resolveView('split', editor)).toEqual({ view: 'split', rewrite: false })
   })
   it('allowed but not shipped → read without rewriting', () => {
-    expect(resolveView('agent', editor)).toEqual({ view: 'read', rewrite: false })
     expect(resolveView('slides', editor)).toEqual({ view: 'read', rewrite: false })
+  })
+  it('#28: agent is shipped — markdown doc routes (doc, pinned) render it, embeds ignore it', () => {
+    expect(resolveView('agent', editor)).toEqual({ view: 'agent', rewrite: false })
+    expect(resolveView('agent', { ...editor, capability: 'viewer', routeKind: 'pinned' })).toEqual({ view: 'agent', rewrite: false })
+    expect(resolveView('agent', { ...editor, routeKind: 'embed' })).toEqual({ view: 'read', rewrite: false })
+    expect(resolveView('AGENT', editor)).toEqual({ view: 'read', rewrite: true })
   })
   it('agent/slides need a markdown doc, not a file route', () => {
     expect(resolveView('agent', { ...editor, contentType: 'html' })).toEqual({ view: 'read', rewrite: true })

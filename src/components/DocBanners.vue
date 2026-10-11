@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
 import { useDocState } from '@/composables/useDocState'
 import { toast } from '@/composables/useToast'
 import ApprovalBanner from '@/components/ApprovalBanner.vue'
@@ -7,6 +7,8 @@ import SummaryPanel from '@/components/SummaryPanel.vue'
 import ChangesBanner from '@/components/ChangesBanner.vue'
 import LocalCopyBanner from '@/components/LocalCopyBanner.vue'
 import { focusActive } from '@/composables/useFocusMode'
+// #28: lazy, off the #6 entry chunk — only agent views load it.
+const AgentViewBanner = defineAsyncComponent(() => import('@/components/AgentViewBanner.vue'))
 
 // The below-header stack (00 §2.4), top → bottom. doc-meta-row (1) lives in
 // DocHeader. Later items add one line each in their slot:
@@ -15,6 +17,7 @@ const doc = useDocState()
 const {
   router, route, onScreen, pinnedInfo, notice, sync, reviewUI, pasteId, approvalInfo, unresolvedMustFixCount,
   reviewerName, setReviewerName, filename, comments, changeSummary, openHistory, acknowledge,
+  view, contentType, fileView,
 } = doc
 const persistError = doc.persistence.persistError
 /** #13 rule 3/4: focus mode hides the notice, approval, summary and changes banners — never the conflict or persist-error bars. */
@@ -65,7 +68,8 @@ function onAppLinkClick(e: MouseEvent, path: string) {
     >View the latest version</a>
   </div>
 
-  <!-- 3. agent-view-banner (#28) -->
+  <!-- 3. agent-view-banner (#28; markdown docs only — never HTML, rule 21) -->
+  <AgentViewBanner v-if="onScreen && view === 'agent' && contentType === 'markdown' && !fileView" />
 
   <!-- 4. conflict, persist error -->
   <div v-if="onScreen && sync.conflict.value" class="conflict-bar" role="alert" data-testid="conflict-bar">

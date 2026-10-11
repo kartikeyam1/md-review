@@ -6,7 +6,7 @@ import { useShare } from '@/composables/useShare'
 import { useSync } from '@/composables/useSync'
 import { useReviewer } from '@/composables/useReviewer'
 import { docShareUrl, type Router, type RouterLocation, type Route } from '@/composables/useRouter'
-import { useDocAxes, isEmbedLocation, isReadOnlyLocation, DOC_STATE } from '@/composables/useDocState'
+import { useDocAxes, isEmbedLocation, isReadOnlyLocation, DOC_STATE, type ReaderView } from '@/composables/useDocState'
 import { useRevisionTracking } from '@/composables/useRevisionTracking'
 import { useAutosave } from '@/composables/useAutosave'
 import { useCommentSelection } from '@/composables/useCommentSelection'
@@ -18,6 +18,8 @@ import { createReactions } from '@/composables/useReactions'
 import { createViews } from '@/composables/useViews'
 import type { SharedPayload } from '@/composables/useShare'
 import { docTitle as computeDocTitle } from '@/composables/useDocTitle'
+import { PASTE_API } from '@/composables/pasteApi'
+import { countAgentSections } from '@shared/agentSections.mjs'
 
 /** How long the tab title waits after the last keystroke in the editor (#5 rule 18: within 1 s). */
 const TITLE_TYPING_DELAY_MS = 300
@@ -53,6 +55,8 @@ export function createDocState(router: Router) {
 
   const appMode = ref<AppMode>('upload')
   const paneMode = ref<PaneMode>('preview')
+  /** #28: read or agent view (the preview's view while paneMode is 'preview'; set from ?view=). */
+  const readerView = ref<ReaderView>('read')
   const markdown = ref('')
   const filename = ref('')
   const contentType = ref<ContentType>('markdown')
@@ -72,7 +76,7 @@ export function createDocState(router: Router) {
   const access = ref<DocAccess | null>(null)
   const canEdit = computed(() => !pasteId.value || access.value === null || access.value.can_edit)
 
-  const axes = useDocAxes({ route, embed, paneMode, pasteId, mode, canEdit })
+  const axes = useDocAxes({ route, embed, paneMode, pasteId, mode, canEdit, readerView })
   const { capability, reviewUI } = axes
 
   const share = useShare()
@@ -208,6 +212,17 @@ export function createDocState(router: Router) {
     filename: docMeta.value.filename || filename.value,
   }))
 
+  /** #28: agent-only sections in the markdown on screen (0 for HTML docs). Lazy: read only where shown. */
+  const agentSectionCount = computed(() => (contentType.value === 'markdown' ? countAgentSections(markdown.value) : 0))
+  /**
+   * #28 rule 11/14: the shared markdown doc's raw source on the API
+   * (`<API>/d/<slug||id>.md`), else null — never for a pinned revision (the
+   * raw endpoint serves the latest version; revisions are out of scope).
+   */
+  const rawMarkdownUrl = computed(() =>
+    pasteId.value && contentType.value === 'markdown' && route.value.kind === 'doc' && !pinnedInfo.value
+      ? `${PASTE_API}/d/${encodeURIComponent(docMeta.value.slug || pasteId.value)}.md` : null)
+
   /** FE-built link to the doc on screen (00 §6): <origin><base>d/<slug||id>; null for a local doc. */
   const docLink = computed(() => {
     if (pasteId.value) return docShareUrl(docMeta.value.slug || pasteId.value)
@@ -258,7 +273,7 @@ export function createDocState(router: Router) {
     // axes (00 §1) + mode
     ...axes, mode, ...modeSync, applyServerMeta, access, localCopy, setLocalCopy, discardLocalCopy, docTitle, docLink,
     // content
-    appMode, paneMode, markdown, filename, contentType, pasteId, wordCount, charCount, NO_COMMENTS,
+    appMode, paneMode, readerView, agentSectionCount, rawMarkdownUrl, markdown, filename, contentType, pasteId, wordCount, charCount, NO_COMMENTS,
     // UI state
     showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
     // reviewer + comments + sync + reactions (#24)

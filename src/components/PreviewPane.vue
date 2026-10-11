@@ -28,7 +28,13 @@ const props = withDefaults(defineProps<{
    * edits (trailing). 0 = on every change (read view).
    */
   reloadDelay?: number
-}>(), { theme: undefined, contentType: undefined, commenting: true, reloadDelay: 0 })
+  /**
+   * #28: show agent-only sections (agent view, split view's preview). False =
+   * the human view: they leave no DOM, and targeting one asks for the agent
+   * view (`reveal-agent`, rule 12).
+   */
+  agentView?: boolean
+}>(), { theme: undefined, contentType: undefined, commenting: true, reloadDelay: 0, agentView: false })
 
 // Mermaid is loaded on demand — only documents that actually contain a
 // diagram pay for it (it and its plugins are the bulk of the bundle).
@@ -58,6 +64,8 @@ const emit = defineEmits<{
     coords: { x: number; y: number }
   }]
   'selection-clear': []
+  /** #28 rule 12: a fragment or scroll target is inside a hidden agent section. */
+  'reveal-agent': []
 }>()
 
 const { renderWithHeadings } = useMarkdown()
@@ -67,7 +75,7 @@ const isGithubTheme = computed(() => isGithub(props.theme ?? 'light'))
 const isHtml = computed(() => props.contentType === 'html')
 
 // renderHtml now injects data-line-start/data-line-end via the markdown-it plugin
-const rendered = computed(() => renderWithHeadings(props.content))
+const rendered = computed(() => renderWithHeadings(props.content, { agentView: props.agentView ? 'agent' : 'human' }))
 const renderedHtml = computed(() => rendered.value.html)
 
 // ── Preview enhancers (00 §4.5): run after every render ─────────────────────
@@ -353,7 +361,11 @@ function alignToFragment(opts: { initial: boolean }) {
     return
   }
   const el = findAnchor(container, id)
-  if (!el) return
+  if (!el) {
+    // #28 rule 12: the heading is inside a hidden agent section — show the agent view, then align.
+    if (!props.agentView && rendered.value.hiddenIds.includes(id)) requestReveal({ fragment: id })
+    return
+  }
   scrollToAnchorElement(el, { smooth: !opts.initial })
   // A later jump (TOC click, in-doc link) re-aligns too while diagrams/images above can still move it.
   if (opts.initial || layoutPending(container)) scheduleRealign(id)
@@ -610,6 +622,23 @@ watch(
   }
 )
 
+// ── #28 rule 12: reveal a target inside a hidden agent section ──────────────
+// The parent switches to the agent view (replaceState, fragment kept); once the
+// sections render, the pending target is aligned / scrolled to.
+let pendingReveal: { fragment?: string; line?: number } | null = null
+function requestReveal(target: { fragment?: string; line?: number }) {
+  pendingReveal = target
+  emit('reveal-agent')
+}
+function flushReveal() {
+  const target = pendingReveal
+  if (!target || !props.agentView) return
+  pendingReveal = null
+  if (target.fragment !== undefined) {
+    if (router.current.value.fragment === target.fragment) alignToFragment({ initial: true })
+  } else if (target.line !== undefined) scrollToLine(target.line)
+}
+
 // Bumped after every render (invalidates the scroll-sync anchors, #7).
 let renderSeq = 0
 
@@ -621,6 +650,7 @@ watch(
     enhance()
     applyCommentHighlights()
     runMermaid()
+    flushReveal()
   }
 )
 
@@ -759,6 +789,11 @@ function scrollToLine(line: number) {
 
   const container = containerRef.value
   if (!container) return
+  // #28 rule 12: a comment (or other target) inside a hidden agent section.
+  if (!props.agentView && rendered.value.hiddenRanges.some((r) => line >= r.start && line <= r.end)) {
+    requestReveal({ line })
+    return
+  }
 
   const annotated = container.querySelectorAll<HTMLElement>('[data-line-start]')
   for (const el of annotated) {

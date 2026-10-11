@@ -77,7 +77,7 @@ function notModified(req, etag) {
 
 // ── the meta page ───────────────────────────────────────────────────────────
 
-function renderPage({ title, description, shareHref, imageHref, modified, target, bot, notice }) {
+function renderPage({ title, description, shareHref, rawHref, imageHref, modified, target, bot, notice }) {
   const head = [
     '<meta charset="utf-8">',
     `<title>${esc(title)} · md-review</title>`,
@@ -85,6 +85,8 @@ function renderPage({ title, description, shareHref, imageHref, modified, target
     '<meta name="robots" content="noindex, nofollow">',
   ];
   if (shareHref) head.push(`<link rel="canonical" href="${esc(shareHref)}">`);
+  // #28 rule 14: agents find the raw source (agent-only sections included) here.
+  if (rawHref) head.push(`<link rel="alternate" type="text/markdown" href="${esc(rawHref)}">`);
   head.push(
     '<meta property="og:site_name" content="md-review">',
     '<meta property="og:type" content="article">',
@@ -216,10 +218,12 @@ function metaPage(req, res, { x, rev, file, query }) {
   const target = appUrl(`${cx}${suffix}`) + query;
   const shareHref = shareUrl(`${cx}${suffix}`);
   const { title, description } = text;
+  // #28: the live markdown doc's raw source (pinned revisions and session files have no raw route).
+  const rawHref = !rev && !file && doc.typed.contentType !== 'html' ? `${PUBLIC_BASE_URL}/d/${cx}.md` : null;
 
   // Rule 7: the ETag covers everything the page shows, per bot/human variant.
-  const etag = `"${md5(JSON.stringify([title, description, imageHref ? doc.cover.key : '', bot ? 'bot' : 'human', modified, target, shareHref]))}"`;
-  const html = renderPage({ title, description, shareHref, imageHref, modified, target, bot });
+  const etag = `"${md5(JSON.stringify([title, description, imageHref ? doc.cover.key : '', bot ? 'bot' : 'human', modified, target, shareHref, rawHref]))}"`;
+  const html = renderPage({ title, description, shareHref, rawHref, imageHref, modified, target, bot });
   return sendHtml(req, res, 200, html, etag);
 }
 
@@ -274,7 +278,7 @@ module.exports = async function metaRoute(req, res) {
   if (!m) return invalid();
   const [, x, rev, fileRaw] = m;
 
-  // #28 owns /d/:x.md; until then it is just an unparseable path.
+  // /d/:x.md is #28's (routes/raw.cjs, registered before this one); any other dotted path is unparseable.
   if (!rev && fileRaw === 'cover.png') return coverImage(req, res, { x, query });
   if (rev && fileRaw) return invalid();
 

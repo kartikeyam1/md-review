@@ -38,9 +38,10 @@ export interface TocState {
 
 const TOC_STATE: InjectionKey<TocState> = Symbol('toc-state')
 
-export function provideToc(o: { markdown: Ref<string>; enabled: Ref<boolean>; breakpoint: Ref<Breakpoint> }): TocState {
+export function provideToc(o: { markdown: Ref<string>; enabled: Ref<boolean>; breakpoint: Ref<Breakpoint>; agentView?: Ref<boolean> }): TocState {
   // Parsed only while a TOC can show (computed is lazy and `enabled` gates it).
-  const entries = computed<TocEntry[]>(() => (o.enabled.value ? buildToc(extractHeadings(o.markdown.value)) : []))
+  // #28: the human view leaves out headings inside agent-only sections; the agent view lists them.
+  const entries = computed<TocEntry[]>(() => (o.enabled.value ? buildToc(extractHeadings(o.markdown.value, o.agentView?.value ? 'agent' : 'human')) : []))
   const visible = computed(() => o.enabled.value && entries.value.length >= 2)
   const drawerMode = computed(() => o.breakpoint.value !== 'desktop')
   const collapsed = ref(readCollapsed())

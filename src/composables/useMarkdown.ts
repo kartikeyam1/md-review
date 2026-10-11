@@ -10,7 +10,19 @@ import { codeBlock } from '@/markdown/codeBlock'
 import { alerts } from '@/markdown/alerts'
 import { rag } from '@/markdown/rag'
 import { inlineToc } from '@/markdown/inlineToc'
+import { agentSections, type AgentView, type AgentEnv } from '@/markdown/agentSections'
 import { parseFrontMatter, frontMatterTable, bodyWithAbsoluteLines } from '@/markdown/frontMatter'
+
+export interface RenderResult {
+  html: string
+  headings: HeadingInfo[]
+  /** #28: agent sections in the source (both views). */
+  agentSections: number
+  /** #28 human view: ids of the headings inside hidden sections. */
+  hiddenIds: string[]
+  /** #28 human view: hidden source line ranges (inclusive). */
+  hiddenRanges: { start: number; end: number }[]
+}
 
 export interface LineMapEntry {
   startLine: number
@@ -80,11 +92,12 @@ export function useMarkdown() {
     alerts, // #16 rules 1–9
     rag, // #16 rules 10–15
     inlineToc, // #12 rule 18
+    agentSections, // #28 rules 1–9 (after headingIds: ids over the full source)
   ]
   for (const plugin of PLUGINS) plugin(md)
 
   // Front matter renders as a table; the body keeps absolute line numbers (#5 rule 20).
-  function renderHtml(source: string, env: Record<string, unknown> = {}): string {
+  function renderHtml(source: string, env: object = {}): string {
     // A computed render re-runs when a lazy highlight.js language arrives.
     void highlightRevision.value
     const fm = parseFrontMatter(source)
@@ -92,11 +105,21 @@ export function useMarkdown() {
     return md.render(source, env)
   }
 
-  /** The HTML plus the headings it carries (ids + plain text, #3), from one parse. */
-  function renderWithHeadings(source: string): { html: string; headings: HeadingInfo[] } {
-    const env: { headings?: HeadingInfo[] } = {}
+  /**
+   * The HTML plus what the same parse found (one parse): the headings it
+   * carries (ids + plain text, #3) and the #28 agent sections — their count
+   * and, in the human view (default), the heading ids and lines it hid.
+   */
+  function renderWithHeadings(source: string, o: { agentView?: AgentView } = {}): RenderResult {
+    const env: { headings?: HeadingInfo[] } & AgentEnv = { agentView: o.agentView ?? 'human' }
     const html = renderHtml(source, env)
-    return { html, headings: env.headings ?? [] }
+    return {
+      html,
+      headings: env.headings ?? [],
+      agentSections: env.agentSections ?? 0,
+      hiddenIds: env.hiddenIds ?? [],
+      hiddenRanges: env.hiddenRanges ?? [],
+    }
   }
 
   function getLineMap(source: string): LineMapEntry[] {

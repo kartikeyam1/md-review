@@ -9,6 +9,8 @@ const { handedOutUrl } = require('../links.cjs');
 const { readMode, modeOf } = require('../mode.cjs');
 const { requireEdit, accessInfo } = require('./edit-tokens.cjs');
 const { normalizeExpiryDays, expiresAtFor } = require('../../shared/expiry.mjs');
+const { readView, viewEtag, viewOf, VIEW_ERROR } = require('../agent-view.cjs');
+const { effectiveContentType } = require('../doc-text.cjs');
 
 module.exports = async function session(req, res) {
   // DELETE /paste/:id — delete a session and all its data
@@ -80,6 +82,8 @@ module.exports = async function session(req, res) {
   // GET /paste/:id — read full paste (supports ?fields=meta,content,comments,files)
   // GET /paste/:id/comments — read comments only
   // GET /paste/:id/markdown — read markdown only
+  // #28 rule 17: /markdown and GET /paste/:id take ?view=agent|human (default
+  // agent = the stored source); it changes the `markdown` field only.
   const match = req.url.match(/^\/paste\/([a-zA-Z0-9][a-zA-Z0-9-]*)(\/comments|\/markdown)?(\?.*)?$/);
   if (req.method === 'GET' && match) {
     const resolvedId = resolveId(match[1]);
@@ -97,9 +101,27 @@ module.exports = async function session(req, res) {
       return res.end(JSON.stringify({ error: 'Session expired' }));
     }
 
-    // ETag from the session's write version + content hash, and (#23) the caller's access
+    const sub = match[2];
+    const params = new URL(req.url, `http://${req.headers.host}`);
+    const fields = params.searchParams.get('fields');
+    // #28: the view (comments have none); an explicit ?view= is echoed on GET /paste/:id.
+    const view = sub === '/comments' ? 'agent' : readView(params.searchParams);
+    if (!view) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(VIEW_ERROR));
+    }
+    // `view` + `agentSections` are reported only alongside a `markdown` field: always on
+    // /markdown, and on GET /paste/:id when ?view= is given and the content is in the response.
+    const wanted = fields ? new Set(fields.split(',').map(f => f.trim())) : null;
+    const hasMarkdown = sub === '/markdown' || (!sub && (!wanted || wanted.has('content')));
+    const viewed = hasMarkdown && (sub === '/markdown' || params.searchParams.has('view'));
+
+    // ETag from the session's write version + content hash, and (#23) the caller's access;
+    // (#28 rule 18) one variant per distinct body: human (`-h`), and an explicit
+    // ?view=agent on GET /paste/:id (`-a`, its body adds view/agentSections).
     const access = accessInfo(req, resolvedId);
-    const etag = sessionEtag(resolvedId, access.protected ? (access.can_edit ? 'edit' : 'view') : '');
+    const variant = !viewed ? 'plain' : view === 'human' ? 'human' : sub === '/markdown' ? 'plain' : 'agent';
+    const etag = viewEtag(sessionEtag(resolvedId, access.protected ? (access.can_edit ? 'edit' : 'view') : ''), variant);
 
     // The body (access.can_edit) and the ETag depend on the presented token (#23).
     const VARY = 'Authorization, X-Edit-Token';
@@ -109,19 +131,13 @@ module.exports = async function session(req, res) {
       return res.end();
     }
 
-    const sub = match[2];
-    const params = new URL(req.url, `http://${req.headers.host}`);
-    const fields = params.searchParams.get('fields');
-
     let result;
     if (sub === '/comments') {
       result = { filename: meta.filename, comments: meta.comments || [] };
     } else if (sub === '/markdown') {
-      const markdown = loadContent(resolvedId) || '';
-      result = { filename: meta.filename, markdown };
+      result = { filename: meta.filename, markdown: loadContent(resolvedId) || '' };
     } else if (fields) {
       // Selective field loading: ?fields=meta,content,comments,files
-      const wanted = new Set(fields.split(',').map(f => f.trim()));
       result = {};
       if (wanted.has('meta')) {
         const { comments, content_hash, revisions, ...rest } = meta;
@@ -143,6 +159,14 @@ module.exports = async function session(req, res) {
       result = { ...metaRest, markdown, ...revisionSummary(resolvedId), url: handedOutUrl(meta.slug || resolvedId), mode: modeOf(meta), id: resolvedId, access };
       const sessionFiles = listSessionFiles(resolvedId);
       if (sessionFiles.length > 0) result.files = sessionFiles;
+    }
+
+    if (viewed) {
+      const html = effectiveContentType(meta) === 'html';
+      const v = viewOf(result.markdown, view, html);
+      result.markdown = v.markdown;
+      result.view = view;
+      result.agentSections = v.count;
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json', ETag: etag, Vary: VARY });

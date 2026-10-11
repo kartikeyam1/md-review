@@ -1,9 +1,11 @@
 'use strict';
 // Derived text for a session: the server docTitle (00 §5) and the plain text
 // the search index holds (00 §8). Pure functions, no I/O.
+// Display derivations (docTitle, the #22 description) read the #28 human view
+// (agent-only sections removed by shared/agentSections.mjs, the same strip as
+// the FE); the search index keeps the full source.
 
-const AGENT_OPEN = /^ {0,3}<!--\s*agent(?:\s*:\s*(.*?))?\s*-->\s*$/i;
-const AGENT_CLOSE = /^ {0,3}<!--\s*\/agent\s*-->\s*$/i;
+const { humanMarkdown } = require('./agent-view.cjs');
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 const collapse = (s) => String(s).replace(/\s+/g, ' ').trim();
@@ -356,22 +358,20 @@ function atxH1Content(line) {
   return c.slice(0, e);
 }
 
-/** First ATX `# ` heading outside fences and (top-level) agent sections. */
+/** First ATX `# ` heading outside fences (agent sections are already stripped). */
 function firstH1(body) {
-  let fence = null; let inAgent = false;
+  let fence = null;
   for (const fullLine of body.split(/\r?\n/)) {
     // Marker regexes only see a bounded prefix of a line.
     const line = fullLine.length > LINE_CAP ? fullLine.slice(0, LINE_CAP) : fullLine;
-    // Fast path: fences, agent markers and headings start with one of ` ~ < # (after ≤3 spaces).
+    // Fast path: fences and headings start with one of ` ~ # (after ≤3 spaces).
     let lead = 0;
     while (lead < 3 && line[lead] === ' ') lead++;
     const c = line[lead];
-    if (c !== '`' && c !== '~' && c !== '<' && c !== '#') continue;
+    if (c !== '`' && c !== '~' && c !== '#') continue;
     if (fence) { if (new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(line)) fence = null; continue; }
     const f = FENCE.exec(line);
     if (f) { fence = f[1]; continue; }
-    if (inAgent) { if (AGENT_CLOSE.test(line)) inAgent = false; continue; }
-    if (AGENT_OPEN.test(line)) { inAgent = true; continue; }
     const h = atxH1Content(line);
     if (h !== null) {
       const t = plainInline(h);
@@ -506,7 +506,7 @@ const TLDR_HINT = /tl;?dr/i;
 // A paragraph that opens with a TL;DR label, bold or not: "**TL;DR:** x", "TL;DR – x", "__tldr__: x".
 const TLDR_LABEL = /^(?:\*\*|__)?\s*tl;?dr\b\s*(?:\*\*|__)?\s*[:\-–—]?\s*(?:\*\*|__)?\s*/i;
 
-/** Remove HTML comments (not agent markers) from markdown, keeping line structure; linear. */
+/** Remove HTML comments from markdown, keeping line structure; linear. */
 function stripMarkdownComments(md) {
   let out = ''; let i = 0;
   for (;;) {
@@ -514,12 +514,6 @@ function stripMarkdownComments(md) {
     if (j === -1) return out + md.slice(i);
     out += md.slice(i, j);
     const end = md.indexOf('-->', j + 4);
-    if (/^<!--\s*\/?agent\b/i.test(md.slice(j, j + 64))) {
-      // agent markers stay for the block scanner
-      const stop = end === -1 ? md.length : end + 3;
-      out += md.slice(j, stop); i = stop;
-      continue;
-    }
     if (end === -1) return out; // unterminated: the rest is comment
     out += md.slice(j, end + 3).replace(/[^\n]/g, '');
     i = end + 3;
@@ -537,7 +531,7 @@ function blockText(b) {
 /**
  * Markdown body → [{ kind: 'heading' | 'para', raw }] in document order
  * (plain text via blockText). Skipped: code fences, indented code, tables, HTML comments,
- * (top-level) agent sections, thematic breaks; front matter is removed first.
+ * thematic breaks; front matter is removed first. Callers pass the human view (#28).
  */
 function markdownBlocks(md) {
   const { body } = splitFrontMatter(md);
@@ -567,17 +561,15 @@ function markdownBlocks(md) {
     // Paragraph text without quote markers and list bullets.
     push('para', raw.map((l) => l.replace(/^ {0,3}(?:>\s?)+/, '').replace(/^\s*(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?/, '')).join('\n'));
   };
-  let fence = null; let inAgent = false;
+  let fence = null;
   for (const fullLine of lines) {
     const line = fullLine.length > LINE_CAP ? fullLine.slice(0, LINE_CAP) : fullLine;
     const c = leadChar(line);
     if (fence) { if (c === fence[0] && new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(line)) fence = null; continue; }
-    if (inAgent) { if (c === '<' && AGENT_CLOSE.test(line)) inAgent = false; continue; }
     if (c === '`' || c === '~') {
       const f = FENCE.exec(line);
       if (f) { flush(); fence = f[1]; continue; }
     }
-    if (c === '<' && AGENT_OPEN.test(line)) { flush(); inAgent = true; continue; }
     if (!line.trim()) { flush(); continue; }
     if (c === '#') {
       const h = /^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/.exec(line);
@@ -693,7 +685,7 @@ function docDescription(meta = {}, source = '', max = 200) {
   const html = effectiveContentType(meta) === 'html';
   let blocks; let metaDescription = null;
   if (html) ({ blocks, metaDescription } = htmlBlocks(src));
-  else blocks = markdownBlocks(src);
+  else blocks = markdownBlocks(humanMarkdown(src));
   let text = tldrText(blocks);
   if (!text && metaDescription) text = metaDescription;
   if (!text) {
@@ -707,7 +699,8 @@ function docDescription(meta = {}, source = '', max = 200) {
 
 /**
  * docTitle per 00 §5 (server, line-based): sessionName → front matter title /
- * HTML <title> → first H1 / HTML <h1> → filename without extension → Untitled.
+ * HTML <title> → first human-visible H1 (#28) / HTML <h1> → filename without
+ * extension → Untitled.
  */
 function docTitle({ sessionName, filename, contentType } = {}, markdown = '') {
   const candidates = [];
@@ -718,7 +711,7 @@ function docTitle({ sessionName, filename, contentType } = {}, markdown = '') {
     candidates.push(() => inner('title'));
     candidates.push(() => inner('h1'));
   } else {
-    const { front, body } = splitFrontMatter(src);
+    const { front, body } = splitFrontMatter(humanMarkdown(src));
     candidates.push(() => (front ? frontMatterTitle(front) : ''));
     candidates.push(() => firstH1(body));
   }

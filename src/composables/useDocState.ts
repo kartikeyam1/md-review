@@ -15,7 +15,9 @@ import type { DocState } from '@/composables/docState'
 
 export type RouteKind = 'doc' | 'pinned' | 'file' | 'embed'
 export type Capability = 'viewer' | 'editor'
-export type DocViewName = 'read' | 'edit' | 'split'
+export type DocViewName = 'read' | 'edit' | 'split' | 'agent'
+/** The views that show the doc in the reader (not the editor): read and #28's agent view. */
+export type ReaderView = 'read' | 'agent'
 
 export interface DocAxesInput {
   routeKind: Route['kind']
@@ -28,6 +30,8 @@ export interface DocAxesInput {
    * latest GET (legacy docs and older servers: true). Ignored for local docs.
    */
   canEdit?: boolean
+  /** #28: the reader view ?view= resolved to (read unless `agent` was allowed). */
+  readerView?: ReaderView
 }
 
 export interface DocAxes {
@@ -57,7 +61,8 @@ export function resolveDocAxes(input: DocAxesInput): DocAxes {
   const canEdit = !input.pasteId || input.canEdit !== false
   const capability: Capability = routeKind === 'doc' && canEdit ? 'editor' : 'viewer'
   // Edit and split are editing views (#7): only an editor gets them.
-  const view: DocViewName = capability === 'editor' && input.paneMode !== 'preview' ? input.paneMode : 'read'
+  const view: DocViewName = capability === 'editor' && input.paneMode !== 'preview' ? input.paneMode
+    : routeKind === 'embed' ? 'read' : input.readerView ?? 'read'
   return { routeKind, capability, view, isShared: !!input.pasteId, mode: input.mode, reviewUI: input.mode === 'review' }
 }
 
@@ -73,6 +78,7 @@ export function useDocAxes(inputs: {
   pasteId: Ref<string | null>
   mode: Ref<DocMode>
   canEdit?: Ref<boolean>
+  readerView?: Ref<ReaderView>
 }) {
   const axes = computed(() => resolveDocAxes({
     routeKind: inputs.route.value.kind,
@@ -81,6 +87,7 @@ export function useDocAxes(inputs: {
     pasteId: inputs.pasteId.value,
     mode: inputs.mode.value,
     canEdit: inputs.canEdit?.value ?? true,
+    readerView: inputs.readerView?.value ?? 'read',
   }))
   return {
     routeKind: computed(() => axes.value.routeKind),

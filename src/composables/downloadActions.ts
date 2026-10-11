@@ -2,6 +2,7 @@ import { ref, nextTick } from 'vue'
 import type { DocState } from '@/composables/docState'
 import type { DocViewName } from '@/composables/useDocState'
 import { toast } from '@/composables/useToast'
+import { stripAgentSections } from '@shared/agentSections.mjs'
 
 // #19: what each Download item does, shared by the bar's DownloadMenu and the
 // overflow menu's "Download" group (both lazy). The work itself lives in
@@ -38,7 +39,9 @@ export async function runDownload(kind: DownloadKind, doc: DocState, setView: (v
     // A pinned revision's `filename` is its id; the doc's own name rides on its meta.
     const name = (doc.pinnedInfo.value && doc.docMeta.value.filename) || doc.filename.value
     if (kind === 'md') {
-      d.saveBlob(source, 'text/markdown;charset=utf-8', d.mdFilename(name))
+      // #28 rule 13: the human view's file has no agent-only sections; agent/edit/split keep the full source.
+      const md = doc.view.value === 'read' && doc.contentType.value === 'markdown' ? stripAgentSections(source).markdown : source
+      d.saveBlob(md, 'text/markdown;charset=utf-8', d.mdFilename(name))
     } else if (kind === 'html-source') {
       d.saveBlob(source, 'text/html;charset=utf-8', d.htmlSourceFilename(name))
     } else if (kind === 'html') {

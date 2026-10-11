@@ -1153,3 +1153,34 @@ html.locus-theme .preview-pane details {
     break-inside: avoid;
   }
 }
+
+/* ── Agent-only sections (#28 rule 9): agent view and the split preview ──
+   A dashed accent rule on the left and a faint accent tint, distinct in every
+   theme; the label chip is not part of the copied text. */
+.preview-pane section.agent-only {
+  margin: 1.25em 0;
+  padding: 0.5em 1em 0.25em;
+  border-left: 2px dashed var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
+}
+
+.preview-pane section.agent-only > .agent-section-label {
+  display: inline-block;
+  margin: 0.25em 0 0.5em;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: calc(12 * var(--rpx));
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.preview-pane section.agent-only > :last-child {
+  margin-bottom: 0.5em;
+}
