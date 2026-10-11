@@ -8,6 +8,7 @@ export type ToastKind = 'info' | 'success' | 'error'
 
 export interface ToastAction {
   label: string
+  /** Rendered as a link; with `onClick` too, a plain click runs onClick (in-app navigation) instead. */
   href?: string
   onClick?: () => void
 }

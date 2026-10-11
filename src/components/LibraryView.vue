@@ -19,6 +19,8 @@ import LibraryCollections from '@/components/LibraryCollections.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import ReviewerName from '@/components/ReviewerName.vue'
 import ThemeSwitcher from '@/components/ThemeSwitcher.vue'
+import LibraryTemplates from '@/components/LibraryTemplates.vue'
+import { newFromTemplate } from '@/composables/templateEntry'
 
 const emit = defineEmits<{ 'new-doc': [] }>()
 
@@ -34,6 +36,15 @@ let clock: ReturnType<typeof setInterval> | null = null
 const docKey = (x: { id: string; slug: string | null }) => x.slug || x.id
 const docHref = (x: { id: string; slug: string | null }) => `${router.base}d/${docKey(x)}`
 function openDoc(x: { id: string; slug: string | null }) { router.pushRoute({ kind: 'doc', id: docKey(x) }) }
+
+// ── Sections (#27 rule 18): Documents | Templates (`?tab=templates`) — links, since each is a URL ──
+const tab = computed(() => (new URLSearchParams(router.current.value.search).get('tab') === 'templates' ? 'templates' : 'docs'))
+const tabHref = (t: 'docs' | 'templates') => `${router.base}library${t === 'templates' ? '?tab=templates' : ''}`
+function goTab(e: MouseEvent, t: 'docs' | 'templates') {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  if (t !== tab.value) router.push(tabHref(t))
+}
 
 // ── Search (rule 5): debounced 250 ms, replaceState while typing, Esc clears ──
 const SEARCH_DEBOUNCE_MS = 250
@@ -232,9 +243,18 @@ const rowProps = (item: LibraryItem) => ({
       <div class="lib-header-actions">
         <ReviewerName />
         <ThemeSwitcher />
+        <button type="button" class="btn btn-ghost lib-new" data-testid="library-new-from-template" aria-label="New from template" title="New from template" @click="newFromTemplate()">{{ phone ? 'Template' : 'From template' }}</button>
         <button type="button" class="btn btn-primary lib-new" @click="emit('new-doc')">New<span v-if="!phone"> document</span></button>
       </div>
     </header>
+
+    <nav class="lib-tabs" aria-label="Library sections">
+      <a class="lib-tab" :href="tabHref('docs')" :aria-current="tab === 'docs' ? 'page' : undefined" @click="goTab($event, 'docs')">Documents</a>
+      <a class="lib-tab" :href="tabHref('templates')" :aria-current="tab === 'templates' ? 'page' : undefined" data-testid="library-tab-templates" @click="goTab($event, 'templates')">Templates</a>
+    </nav>
+
+    <LibraryTemplates v-if="tab === 'templates'" :phone="phone" />
+    <template v-else>
 
     <div class="lib-toolbar">
       <div class="lib-search-wrap">
@@ -410,6 +430,7 @@ const rowProps = (item: LibraryItem) => ({
         </div>
       </main>
     </div>
+    </template>
 
     <div v-if="phone && sheetOpen" class="lib-sheet-backdrop" @click.self="sheetOpen = false">
       <div ref="sheetEl" class="lib-sheet" role="dialog" aria-modal="true" aria-label="Filters and collections" @keydown="onSheetKeydown">
@@ -470,9 +491,18 @@ const rowProps = (item: LibraryItem) => ({
 .lib-header-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .phone .lib-title { font-size: 22px; }
 /* Phone: the actions get their own full-width line, so "Set your name" (or a name) is clipped only when it truly cannot fit. */
-.phone .lib-header-actions { flex: 1 1 100%; }
+.phone .lib-header-actions { flex: 1 1 100%; gap: 6px; }
+.phone .lib-new { padding: 6px 10px; white-space: nowrap; }
 .phone .lib-header-actions :deep(.reviewer) { flex: 0 1 auto; min-width: 0; margin-right: auto; overflow: hidden; }
 
+.lib-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.lib-tab {
+  border: none; background: transparent; color: var(--text-meta); font-family: var(--font-body); font-size: 14px; font-weight: 600; text-decoration: none;
+  padding: 8px 12px; margin-bottom: -1px; border-bottom: 2px solid transparent; cursor: pointer;
+}
+.lib-tab:hover { color: var(--text-primary); }
+.lib-tab[aria-current="page"] { color: var(--text-primary); border-bottom-color: var(--accent); }
+.lib-tabs + .tpl-tab { margin-top: 14px; }
 .lib-toolbar {
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px;
   padding: 12px 0 14px; border-bottom: 1px solid var(--border); margin-bottom: 16px;

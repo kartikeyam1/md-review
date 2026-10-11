@@ -7,8 +7,8 @@
 import { ref, computed } from 'vue'
 import { useFocusTrap } from '@/composables/useFocusTrap'
 
-withDefaults(defineProps<{ title: string; text?: string; okLabel?: string; danger?: boolean; testid?: string }>(), {
-  text: '', okLabel: 'Delete', danger: true, testid: 'library-confirm',
+withDefaults(defineProps<{ title: string; text?: string; okLabel?: string; danger?: boolean; testid?: string; dialogTestid?: string }>(), {
+  text: '', okLabel: 'Delete', danger: true, testid: 'library-confirm', dialogTestid: '', // #27: template-delete-confirm
 })
 const emit = defineEmits<{ ok: []; cancel: [] }>()
 
@@ -34,7 +34,7 @@ const titleId = `confirm-${Math.random().toString(36).slice(2, 8)}`
         role="alertdialog"
         aria-modal="true"
         :aria-labelledby="titleId"
-        :data-testid="`${testid}-dialog`"
+        :data-testid="dialogTestid || `${testid}-dialog`"
         @keydown="onKeydown"
       >
         <h2 :id="titleId" class="confirm-dlg-title">{{ title }}</h2>

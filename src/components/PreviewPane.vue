@@ -36,7 +36,14 @@ const props = withDefaults(defineProps<{
   agentView?: boolean
   /** Show a leading front-matter block as its Field/Value table (off on a viewer's publish-mode reading page). */
   frontMatter?: boolean
-}>(), { theme: undefined, contentType: undefined, commenting: true, reloadDelay: 0, agentView: false, frontMatter: true })
+  /**
+   * Rendered outside a doc (#27's template picker preview): links never
+   * navigate the app (an in-page `#anchor` scrolls inside the preview), no
+   * enhancers (section links, reactions), no URL-fragment alignment, and the
+   * HTML frame's anchor messages are ignored.
+   */
+  standalone?: boolean
+}>(), { theme: undefined, contentType: undefined, commenting: true, reloadDelay: 0, agentView: false, frontMatter: true, standalone: false })
 
 // Mermaid is loaded on demand — only documents that actually contain a
 // diagram pay for it (it and its plugins are the bulk of the bundle).
@@ -110,7 +117,7 @@ function enhance() {
   enhancerCleanup?.()
   enhancerCleanup = null
   const container = containerRef.value
-  if (container) enhancerCleanup = runEnhancers(container, { headings: rendered.value.headings, docState, router, toast, copyText, copySectionLink })
+  if (container && !props.standalone) enhancerCleanup = runEnhancers(container, { headings: rendered.value.headings, docState, router, toast, copyText, copySectionLink })
 }
 
 // ── HTML preview (sandboxed iframe) ─────────────────────────────────────────
@@ -302,6 +309,7 @@ const router = useRouter()
 
 /** Parent -> frame: scroll the HTML doc to the URL's fragment. */
 function postAnchorToFrame(smooth: boolean) {
+  if (props.standalone) return
   const win = frameRef.value?.contentWindow
   const id = router.current.value.fragment
   if (win && id) win.postMessage({ __mdreview: true, type: 'anchor', id, smooth }, '*')
@@ -346,7 +354,21 @@ function scrollReaderTo(el: HTMLElement) {
 
 function onPreviewClick(e: MouseEvent) {
   const container = containerRef.value
-  if (container) router.handleLinkClick(e, container, scrollReaderTo)
+  if (!container) return
+  if (props.standalone) { standaloneLinkClick(e, container); return }
+  router.handleLinkClick(e, container, scrollReaderTo)
+}
+
+/** Standalone: a link never leaves the preview; an in-page `#anchor` scrolls to its target inside it. */
+function standaloneLinkClick(e: MouseEvent, container: HTMLElement) {
+  const a = (e.target as Element | null)?.closest?.('a[href]')
+  if (!a || !container.contains(a)) return
+  e.preventDefault()
+  const href = a.getAttribute('href') || ''
+  if (!href.startsWith('#')) return
+  let id = href.slice(1)
+  try { id = decodeURIComponent(id) } catch { /* keep it raw */ }
+  findAnchor(container, id)?.scrollIntoView({ block: 'nearest' })
 }
 
 // Rule 14: after the first render, put the fragment's target at the top of the
@@ -356,6 +378,7 @@ let mermaidRun: Promise<unknown> = Promise.resolve()
 let realignCleanup: (() => void) | null = null
 
 function alignToFragment(opts: { initial: boolean }) {
+  if (props.standalone) return
   if (isHtml.value) { postAnchorToFrame(!opts.initial); return }
   const container = containerRef.value
   if (!container) return
@@ -430,6 +453,7 @@ function onFrameMessage(e: MessageEvent) {
   if (!data || data.__mdreview !== true) return
 
   if (data.type === 'anchor-changed') {
+    if (props.standalone) return
     const id = data.id
     if (typeof id === 'string' && id.length <= 256) queueFrameAnchor(id)
     return

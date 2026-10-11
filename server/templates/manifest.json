@@ -1,0 +1,42 @@
+[
+  {
+    "id": "seed-weekly-update",
+    "name": "Weekly leadership update",
+    "description": "One-screen status for leadership, readable on a phone.",
+    "file": "weekly-update.md",
+    "contentType": "markdown",
+    "mode": "publish"
+  },
+  {
+    "id": "seed-design-doc",
+    "name": "Design doc",
+    "description": "Problem, options, decision — for a change others must agree on.",
+    "file": "design-doc.md",
+    "contentType": "markdown",
+    "mode": "publish"
+  },
+  {
+    "id": "seed-qa-findings",
+    "name": "QA findings",
+    "description": "Test run results with severity, for triage.",
+    "file": "qa-findings.md",
+    "contentType": "markdown",
+    "mode": "review"
+  },
+  {
+    "id": "seed-pr-review",
+    "name": "PR review",
+    "description": "Structured review of a pull request.",
+    "file": "pr-review.md",
+    "contentType": "markdown",
+    "mode": "review"
+  },
+  {
+    "id": "seed-research-brief",
+    "name": "Research brief",
+    "description": "Question, evidence, recommendation.",
+    "file": "research-brief.md",
+    "contentType": "markdown",
+    "mode": "publish"
+  }
+]

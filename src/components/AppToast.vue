@@ -12,6 +12,16 @@ function runAction(t: ToastItem) {
   dismiss(t.id)
 }
 
+/** A link action with an onClick too (an in-app page): a plain click runs it instead of a reload; modified clicks open the href. */
+function onActionLink(e: MouseEvent, t: ToastItem) {
+  if (t.action?.onClick && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault()
+    runAction(t)
+    return
+  }
+  dismiss(t.id)
+}
+
 function onFocusOut(e: FocusEvent, id: number) {
   const el = e.currentTarget as HTMLElement
   if (!el.contains(e.relatedTarget as Node | null)) resume(id)
@@ -39,7 +49,7 @@ function onFocusOut(e: FocusEvent, id: number) {
     >
       <span class="app-toast-text">{{ t.text }}</span>
       <template v-if="t.action">
-        <a v-if="t.action.href" class="app-toast-action" :href="t.action.href" @click="dismiss(t.id)">{{ t.action.label }}</a>
+        <a v-if="t.action.href" class="app-toast-action" :href="t.action.href" @click="onActionLink($event, t as ToastItem)">{{ t.action.label }}</a>
         <button v-else type="button" class="app-toast-action" @click="runAction(t as ToastItem)">{{ t.action.label }}</button>
       </template>
       <button type="button" class="app-toast-close" data-testid="app-toast-close" aria-label="Dismiss" @click="dismiss(t.id)">×</button>

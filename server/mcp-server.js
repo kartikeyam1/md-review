@@ -653,6 +653,48 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
       return result;
     },
 
+    // ── Templates (#27) ──────────────────────────────────────────────────────
+    async list_templates() {
+      const list = await apiCall('/templates');
+      if (list.error) return list;
+      return list.map((t) => ({
+        id: t.id, name: t.name, description: t.description, contentType: t.contentType, mode: t.mode,
+        builtin: t.builtin, variables: t.variables, collection: t.collection ?? null,
+      }));
+    },
+
+    async create_from_template({ template, title, author, variables, collection, slug, expiryDays, timezone }) {
+      // `template` is an id or a name (case-insensitive); nothing is created when it is unknown.
+      const list = await apiCall('/templates');
+      if (list.error) return list;
+      const ref = String(template ?? '').trim();
+      const t = list.find((x) => x.id === ref) || list.find((x) => x.name.trim().toLowerCase() === ref.toLowerCase());
+      if (!t) {
+        return { error: `Unknown template "${ref}". Available templates: ${list.map((x) => x.name).join(', ')}.`, available: list.map((x) => ({ id: x.id, name: x.name })) };
+      }
+      const body = { title };
+      if (author !== undefined) body.author = author;
+      if (variables !== undefined) body.variables = variables;
+      if (collection !== undefined) body.collection = collection; // id, slug or name; resolved by the backend
+      if (slug !== undefined) body.slug = slug;
+      if (expiryDays !== undefined) body.expiryDays = expiryDays;
+      if (timezone !== undefined) body.timezone = timezone;
+      const result = await apiCall(`/templates/${encodeURIComponent(t.id)}/instantiate`, { method: 'POST', body: JSON.stringify(body) });
+      // apiCall reports every 404 as a missing document; here a 404 means the template went away after the list call.
+      if (result && result.status === 404) return { error: `Template "${t.name}" no longer exists. Call list_templates for the current list.` };
+      if (result.error) return result;
+      const shareId = result.slug || result.id;
+      const url = result.url || docUrl(shareBase, shareId);
+      const out = { id: result.id, slug: result.slug || null, mode: result.mode ?? null, template: { id: t.id, name: t.name }, collection: result.collection ?? null, shareUrl: url, url };
+      if (result.editToken) {
+        // #23 rule 11: remember the token for later write tools (any connection, any restart).
+        tokenStore.save([result.id, result.slug], result.editToken);
+        const appUrl = result.app_url || docUrl(frontendUrl, shareId);
+        Object.assign(out, { app_url: appUrl, editToken: result.editToken, editUrl: result.editUrl || `${appUrl}?edit=${result.editToken}` });
+      }
+      return out;
+    },
+
     // ── Shell command generators (curl — runs on any client machine) ──────────
 
     async create_via_shell({ filePath, sessionName, slug, expiryDays, callbackUrl, contentType, mode }) {
@@ -745,7 +787,7 @@ export function createHandlers({ pasteApiUrl, pastePublicUrl, frontendUrl, publi
 // ── Tools registered identically by both servers (stdio here, HTTP in mcp-server-http.js) ──
 
 
-/** Register the tools added by the view-and-share items: #21 upsert_session, #24 get_reactions, #25 get_views. */
+/** Register the tools added by the view-and-share items: #21 upsert_session, #24 get_reactions, #25 get_views, #27 list_templates + create_from_template. */
 export function registerSharedTools(server, handlers) {
   server.registerTool('upsert_session', {
     title: 'Upsert Session by Key',
@@ -787,6 +829,34 @@ export function registerSharedTools(server, handlers) {
       editToken: editTokenArg(),
     }),
   }, async (args) => toolResult(await handlers.get_views(args)));
+
+  // #27 templates
+  server.registerTool('list_templates', {
+    title: 'List Templates',
+    description: 'List document templates (built-in seeds such as "Weekly leadership update", "Design doc", "QA findings", '
+      + '"PR review", "Research brief", plus templates people saved): id, name, description, contentType, mode, builtin, '
+      + 'the {{variables}} each uses, and its default collection. Read-only. Use create_from_template to start a doc from one.',
+    inputSchema: z.object({}),
+  }, async () => toolResult(await handlers.list_templates()));
+
+  server.registerTool('create_from_template', {
+    title: 'Create Doc from Template',
+    description: 'Create a new document from a template (see list_templates) and get its share link. Always pass author (the person or agent '
+      + 'the doc is by): it fills {{author}} and is recorded as the creator. Built-in variables: title, date, week (ISO, e.g. 2026-W41), '
+      + 'author, collection; date/week use timezone (IANA, default UTC). Placeholders with no value (no author, no collection, '
+      + 'unknown names) stay verbatim in the doc, e.g. {{author}}, so fill them in afterwards with update_markdown. '
+      + 'The edit token is returned and remembered by this server for later writes. Unknown template or collection: an error listing the options; nothing is created.',
+    inputSchema: z.object({
+      template: z.string().describe('Template id or name (case-insensitive), e.g. "weekly leadership update"'),
+      title: z.string().describe('Title of the new doc (1-200 chars): its name, slug source and {{title}}'),
+      author: z.string().optional().describe('Who the doc is by — pass it: fills {{author}} and records the creator'),
+      variables: z.record(z.string(), z.string()).optional().describe('Custom {{name}} values (max 20, each ≤ 500 chars); they override built-ins'),
+      collection: z.string().optional().describe("Collection id or name to file the doc in (default: the template's collection)"),
+      slug: z.string().optional().describe('Custom URL slug (default: derived from the title)'),
+      expiryDays: z.number().nullable().optional().describe('Expiry in days (1, 7, 30, 90, or null for never). Default 30'),
+      timezone: z.string().optional().describe('IANA timezone for {{date}} / {{week}}, e.g. "Asia/Kolkata" (default UTC)'),
+    }),
+  }, async (args) => toolResult(await handlers.create_from_template(args)));
 }
 
 // ── MCP Server Setup (only when run directly) ───────────────────────────────

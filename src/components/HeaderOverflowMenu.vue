@@ -4,9 +4,10 @@ import AppMenu, { type AppMenuEntry } from '@/components/AppMenu.vue'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
 import { copyDocLink } from '@/composables/useCopyLink'
+import { saveAsTemplate } from '@/composables/templateEntry'
 
 // The header overflow menu (00 §2.3), fixed order, items only when they apply:
-// controls demoted at this width → history → prompt → Document mode → open/new/refresh.
+// controls demoted at this width → history → prompt → Document mode → save as template → open/new/refresh.
 const props = defineProps<{
   /** Bar controls that live in this menu at the current width (00 §2.2). */
   demoted: { reviewer?: boolean; share?: boolean; copyLink?: boolean; library?: boolean; home?: boolean; download?: boolean; reader?: boolean; slides?: boolean }
@@ -92,6 +93,10 @@ const entries = computed<AppMenuEntry[]>(() => {
         ? { text: `${hidden} comment${hidden === 1 ? '' : 's'} hidden in Publish mode`, testid: 'doc-mode-hidden-comments' }
         : null,
     })
+  }
+  // 5. Save as template (#27): anyone who can view (it copies), not on file routes or pinned revisions.
+  if (docOpen && route.value.kind !== 'file' && route.value.kind !== 'pinned') {
+    out.push({ type: 'item', id: 'tpl', testid: 'doc-save-as-template', label: 'Save as template…', onSelect: () => { void saveAsTemplate(doc) } })
   }
   // 6. Open / New / Refresh.
   // Opening a local file is an author's action: not offered to a view-link reader of a shared doc.

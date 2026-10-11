@@ -22,6 +22,7 @@ import { useBreakpoint } from '@/composables/useBreakpoint'
 import ReactionBar from '@/components/ReactionBar.vue'
 import ReactionOverlays from '@/components/ReactionOverlays.vue'
 import { useSessionFilesStore, docKeyOfScreen } from '@/composables/useSessionFiles'
+import { lazyFileUpload } from '@/components/lazyLanding'
 
 // The doc layout (00 §4.2): header, the below-header stack (DocBanners), the
 // body, and the modals. App.vue is the router shell; this renders the
@@ -40,7 +41,6 @@ const RevisionsModal = defineAsyncComponent(() => import('@/components/Revisions
 const PromptModal = defineAsyncComponent(() => import('@/components/PromptModal.vue'))
 const ShareModal = defineAsyncComponent(() => import('@/components/ShareModal.vue'))
 const ShareRequiredDialog = defineAsyncComponent(() => import('@/components/ShareRequiredDialog.vue'))
-const FileUpload = defineAsyncComponent(() => import('@/components/FileUpload.vue'))
 // #13: rendered only in focus mode.
 const FocusControls = defineAsyncComponent(() => import('@/components/FocusControls.vue'))
 // #28: the "N agent-only sections hidden" line, only for docs that have any.
@@ -51,6 +51,9 @@ const SlidesView = defineAsyncComponent(() => import('@/components/SlidesView.vu
 const DocBreadcrumb = defineAsyncComponent(() => import('@/components/DocBreadcrumb.vue'))
 const FileTabs = defineAsyncComponent(() => import('@/components/FileTabs.vue'))
 const FileView = defineAsyncComponent(() => import('@/components/FileView.vue'))
+// The landing upload screen (and #27's template entry point): its own chunk, requested at boot on the
+// landing route, with a reload prompt when the chunk cannot load (#6 AC-06.8 budget).
+const FileUpload = lazyFileUpload()
 
 const doc = useDocState()
 const actions = useDocActions()

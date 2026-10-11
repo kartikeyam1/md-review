@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { detectContentType, defaultFilename } from '@/composables/useContentType'
 import { PASTE_API } from '@/composables/pasteApi'
 import { useRouter } from '@/composables/useRouter'
+import { newFromTemplate } from '@/composables/templateEntry'
 
 const emit = defineEmits<{
   'file-loaded': [content: string, filename: string]
@@ -126,6 +127,8 @@ function submitPaste() {
         <button class="btn btn-ghost" @click.stop="showGithub = true; showPaste = false">From GitHub</button>
         <span class="alt-divider">or</span>
         <button class="btn btn-ghost" @click.stop="startBlank">Start blank</button>
+        <span class="alt-divider">or</span>
+        <button class="btn btn-ghost" data-testid="landing-new-from-template" @click.stop="newFromTemplate">From template</button>
       </div>
       <p class="library-link-row">
         <a class="library-link" :href="libraryHref" data-testid="nav-library" @click="goLibrary">Browse the library →</a>
@@ -231,6 +234,8 @@ function submitPaste() {
 
 .alt-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 12px;
   margin-top: 20px;

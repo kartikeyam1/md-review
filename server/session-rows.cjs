@@ -33,7 +33,7 @@ const NOT_EXTRA = new Set(['markdown', 'content_hash', 'revisions', 'comments', 
  * with one of these names is dropped, never stored in extra_json — otherwise it
  * would round-trip into responses (e.g. a forged `edit_token_hash`).
  */
-const COLUMN_OWNED = new Set(['id', 'upsert_key', 'edit_token_hash', 'created_by', 'from_template_json', 'extra_json',
+const COLUMN_OWNED = new Set(['id', 'upsert_key', 'edit_token_hash', 'created_by', 'from_template_json', 'from_template', 'extra_json',
   'version', 'created_at', 'updated_at', 'title', 'fts_rowid', 'comments_sig', 'source_sig']);
 
 /**
@@ -66,6 +66,10 @@ function decodeMeta(row, contentRow) {
   const meta = JSON.parse(row.extra_json || '{}');
   for (const [key, col] of META_COLUMNS) if (row[col] !== null && row[col] !== undefined) meta[key] = row[col];
   meta.mode = row.mode;
+  // #27: provenance lives only in its column (from_template is COLUMN_OWNED, so a client can neither set nor drop it).
+  if (typeof row.from_template_json === 'string') {
+    try { const ft = JSON.parse(row.from_template_json); if (ft && typeof ft === 'object') meta.from_template = ft; } catch { /* corrupt: omit */ }
+  }
   if (contentRow && !contentRow.hashless) meta.content_hash = contentRow.content_hash;
   return meta;
 }
