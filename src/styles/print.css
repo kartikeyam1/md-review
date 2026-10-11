@@ -89,6 +89,8 @@
   }
 
   :root .preview-pane {
+    /* #18: the reader's on-screen text size is a screen preference; print at 100%. */
+    --reader-scale: 1 !important;
     max-width: none;
     margin: 0;
     padding: 0;

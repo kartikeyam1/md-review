@@ -94,7 +94,7 @@ describe('#17 collapsible sections', () => {
     try {
       await ready(page)
       const textLeft = () => H(page, 'a').evaluate((h) => {
-        const w = document.createTreeWalker(h, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.parentElement.closest('button,[data-testid]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT })
+        const w = document.createTreeWalker(h, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.parentElement.closest('button,[data-testid]:not([data-testid="preview-pane"])') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT })
         const t = w.nextNode()
         const r = document.createRange(); r.selectNodeContents(t)
         return r.getBoundingClientRect().left

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, shallowRef } from 'vue'
 import AppMenu, { type AppMenuEntry } from '@/components/AppMenu.vue'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
@@ -9,11 +9,15 @@ import { copyDocLink } from '@/composables/useCopyLink'
 // controls demoted at this width → history → prompt → Document mode → open/new/refresh.
 const props = defineProps<{
   /** Bar controls that live in this menu at the current width (00 §2.2). */
-  demoted: { reviewer?: boolean; share?: boolean; copyLink?: boolean; library?: boolean; home?: boolean }
+  demoted: { reviewer?: boolean; share?: boolean; copyLink?: boolean; library?: boolean; home?: boolean; reader?: boolean }
   /** Phone: open as a full-width sheet (#5 rule 7). */
   sheet?: boolean
 }>()
 const emit = defineEmits<{ 'edit-reviewer': [] }>()
+
+// Entries for lazy header controls (#18 reading settings) come from a lazy chunk (#6 budget).
+const extras = shallowRef<typeof import('@/components/headerMenuExtras') | null>(null)
+import('@/components/headerMenuExtras').then((m) => { extras.value = m }, () => {})
 
 const doc = useDocState()
 const actions = useDocActions()
@@ -38,6 +42,8 @@ const entries = computed<AppMenuEntry[]>(() => {
     const url = docLink.value
     out.push({ type: 'item', id: 'copy', testid: 'copy-link-btn', label: 'Copy link', onSelect: () => { copyDocLink(url) } })
   }
+  const reader = extras.value?.readerEntry({ demoted: props.demoted, docOpen })
+  if (reader) out.push(reader)
   if (props.demoted.library) {
     out.push({ type: 'item', id: 'library', testid: 'nav-library', label: 'Library', onSelect: () => router.push(`${router.base}library`) })
   }

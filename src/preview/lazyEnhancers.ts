@@ -4,6 +4,7 @@ import { sectionReactions } from './sectionReactions'
 import { codeCopy } from './codeCopy'
 import { folding } from './folding'
 import { zoom } from './zoom'
+import { readerState } from './readerState'
 
 // The enhancers that load in their own chunk (fetched as soon as the app
 // starts, see enhancers.ts), keeping #6's entry-size budget. Order matters:
@@ -14,4 +15,5 @@ export const LAZY_ENHANCERS: Enhancer[] = [
   codeCopy, // #14
   folding, // #17
   zoom, // #15
+  readerState, // #18
 ]

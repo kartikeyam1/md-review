@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, defineAsyncComponent } from 'vue'
 import { useDocState } from '@/composables/useDocState'
 import { useDocActions } from '@/composables/useDocLoader'
 import { useBreakpoint } from '@/composables/useBreakpoint'
@@ -17,13 +17,16 @@ import HeaderOverflowMenu from '@/components/HeaderOverflowMenu.vue'
 import { truncateTitle } from '@/composables/useDocTitle'
 import { useToc } from '@/composables/useToc'
 
+// #18: the reading-settings control and its panel load on demand (the #6 entry budget).
+const ReaderSettings = defineAsyncComponent(() => import('@/components/ReaderSettings.vue'))
+
 // The doc header (00 §2): one line, never wraps. `reader` in the read view,
 // `editor` in the edit view (editors only). Order and per-width placement are
 // 00 §2.2; a control demoted at a width lives in the overflow menu instead,
 // under the same testid. Below 1100px the meta items sit in doc-meta-row.
 const doc = useDocState()
 const actions = useDocActions()
-const { router, onScreen, capability, view, reviewUI, pasteId, docLink, docTitle } = doc
+const { router, onScreen, capability, view, reviewUI, pasteId, docLink, docTitle, contentType } = doc
 const bp = useBreakpoint()
 const toc = useToc()
 
@@ -46,6 +49,7 @@ const demoted = computed(() => ({
   copyLink: phone.value,
   library: phone.value,
   home: phone.value,
+  reader: phone.value,
 }))
 
 function onHomeClick(e: MouseEvent) {
@@ -140,6 +144,7 @@ function onLibraryClick(e: MouseEvent) {
     >{{ sharing ? 'Sharing…' : 'Share' }}</button>
     <CopyLinkButton v-if="!phone" :icon-only="!desktop" />
     <ThemeSwitcher />
+    <ReaderSettings v-if="onScreen" :sheet="phone" :html="contentType === 'html'" />
     <HeaderOverflowMenu :demoted="demoted" :sheet="phone" @edit-reviewer="editingNameFromMenu = true" />
   </header>
   <div v-if="variant === 'reader' && onScreen && !desktop" class="doc-meta-row" data-testid="doc-meta-row">
@@ -182,8 +187,8 @@ function onLibraryClick(e: MouseEvent) {
   min-height: 40px;
 }
 
-/* Let an open header menu (overflow, Style) escape the header box. */
-.header:has([role='menu']) {
+/* Let an open header menu (overflow, Style) or the reading-settings panel escape the header box. */
+.header:has([role='menu'], [role='dialog']) {
   overflow: visible;
 }
 

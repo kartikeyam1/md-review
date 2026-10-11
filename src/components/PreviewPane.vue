@@ -890,6 +890,7 @@ defineExpose({ scrollToLine, clearSelectionHighlight, scrollElement, offsetForLi
     v-else
     ref="containerRef"
     :class="['preview-pane', { 'markdown-body': isGithubTheme, 'github-mode': isGithubTheme }]"
+    data-testid="preview-pane"
     @mouseup="onMouseUp"
     @mousedown="onMouseDown"
     @click="onPreviewClick"

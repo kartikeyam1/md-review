@@ -1,17 +1,24 @@
 /* Preview styles (00 §4.6): every rule lives under .preview-pane. Not scoped,
-   so later items can reuse this sheet (#18 em units, #19 inlines it into
-   HTML exports). Extracted verbatim from PreviewPane.vue's scoped block. */
+   so later items can reuse this sheet (#19 inlines it into HTML exports).
+   Extracted verbatim from PreviewPane.vue's scoped block.
+
+   #18 reader text size: every type size is `calc(N * var(--rpx))`, a px that
+   follows the reader's scale (--reader-scale on <html>: 0.8–1.5),
+   so N is the size at 100%. Not em: nested text (code in a table cell or a
+   heading, the frontmatter table) must keep today's sizes at 100% (rule 3).
+   The reading column is capped in em (50em of the pane's scaled size). */
 
 :root .preview-pane {
   /* #5 rule 4: a centred reading column of 50em (#18 later owns the width),
      side padding 32px desktop / 24px tablet / 16px phone. */
   --read-pad: 32px;
   --read-width: 50em;
+  --rpx: calc(1px * var(--reader-scale, 1));
   max-width: calc(var(--read-width) + 2 * var(--read-pad));
   margin: 0 auto;
   padding: 24px var(--read-pad);
   font-family: var(--font-body);
-  font-size: 15px;
+  font-size: calc(15 * var(--rpx));
   line-height: 1.7;
   color: var(--text-primary);
   background: var(--bg-surface);
@@ -25,9 +32,20 @@
 
 @media (max-width: 640.98px) {
   /* Body text is at least 16px on a phone. */
-  :root .preview-pane { --read-pad: 16px; font-size: 16px; }
+  :root .preview-pane { --read-pad: 16px; font-size: calc(16 * var(--rpx)); }
   html.locus-theme .preview-pane p,
-  html.locus-theme .preview-pane li { font-size: 16px; }
+  html.locus-theme .preview-pane li { font-size: calc(16 * var(--rpx)); }
+}
+
+/* #18: the GitHub look keeps github-markdown-css's 16px base (its sizes are em). */
+:root .preview-pane.github-mode {
+  font-size: calc(16 * var(--rpx));
+}
+
+/* #18 rule 4: Wide lifts the 50em cap (the read view's max-width and split view's padding both use it).
+   The reader's prefs live on <html> (--reader-scale, data-reader-width: useReaderPrefs + the index.html boot). */
+html[data-reader-width='wide'] .preview-pane {
+  --read-width: 100%;
 }
 
 /* ── Heading anchors (#3 rules 15, 16, 19) ── */
@@ -143,7 +161,7 @@
 
 .preview-pane:not(.github-mode) h1 {
   font-family: var(--font-heading);
-  font-size: 24px;
+  font-size: calc(24 * var(--rpx));
   font-weight: 600;
   color: var(--text-primary);
   margin: 24px 0 12px;
@@ -153,7 +171,7 @@
 
 .preview-pane:not(.github-mode) h2 {
   font-family: var(--font-heading);
-  font-size: 20px;
+  font-size: calc(20 * var(--rpx));
   font-weight: 600;
   color: var(--text-primary);
   margin: 20px 0 10px;
@@ -161,7 +179,7 @@
 
 .preview-pane:not(.github-mode) h3 {
   font-family: var(--font-heading);
-  font-size: 16px;
+  font-size: calc(16 * var(--rpx));
   font-weight: 600;
   color: var(--text-primary);
   margin: 16px 0 8px;
@@ -188,7 +206,7 @@
   background: var(--bg-code, var(--bg-page));
   padding: 2px 5px;
   border-radius: 3px;
-  font-size: 13px;
+  font-size: calc(13 * var(--rpx));
 }
 
 .preview-pane:not(.github-mode) pre {
@@ -235,7 +253,7 @@
   border-collapse: collapse;
   width: 100%;
   margin: 0 0 12px;
-  font-size: 14px;
+  font-size: calc(14 * var(--rpx));
 }
 
 .preview-pane:not(.github-mode) th,
@@ -268,7 +286,7 @@
 
 /* YAML frontmatter table */
 .preview-pane .frontmatter {
-  font-size: 13px;
+  font-size: calc(13 * var(--rpx));
   margin-bottom: 0;
   opacity: 0.85;
 }
@@ -353,7 +371,7 @@
 /* h4 / h5 / h6 */
 .preview-pane:not(.github-mode) h4 {
   font-family: var(--font-heading);
-  font-size: 15px;
+  font-size: calc(15 * var(--rpx));
   font-weight: 600;
   color: var(--text-primary);
   margin: 14px 0 6px;
@@ -361,7 +379,7 @@
 
 .preview-pane:not(.github-mode) h5 {
   font-family: var(--font-heading);
-  font-size: 14px;
+  font-size: calc(14 * var(--rpx));
   font-weight: 600;
   color: var(--text-primary);
   margin: 12px 0 6px;
@@ -369,7 +387,7 @@
 
 .preview-pane:not(.github-mode) h6 {
   font-family: var(--font-heading);
-  font-size: 13px;
+  font-size: calc(13 * var(--rpx));
   font-weight: 600;
   color: var(--text-primary);
   text-transform: uppercase;
@@ -434,17 +452,17 @@ html.locus-theme .preview-pane h6 {
   letter-spacing: normal;
 }
 
-html.locus-theme .preview-pane h1 { font-size: 30px; line-height: 1.25; color: var(--text-primary); }
-html.locus-theme .preview-pane h2 { font-size: 22px; line-height: 1.3; color: var(--text-primary); }
-html.locus-theme .preview-pane h3 { font-size: 16px; color: var(--accent); }
-html.locus-theme .preview-pane h4 { font-size: 15px; color: var(--accent); }
-html.locus-theme .preview-pane h5 { font-size: 14px; color: var(--accent); }
-html.locus-theme .preview-pane h6 { font-size: 13px; color: var(--accent); }
+html.locus-theme .preview-pane h1 { font-size: calc(30 * var(--rpx)); line-height: 1.25; color: var(--text-primary); }
+html.locus-theme .preview-pane h2 { font-size: calc(22 * var(--rpx)); line-height: 1.3; color: var(--text-primary); }
+html.locus-theme .preview-pane h3 { font-size: calc(16 * var(--rpx)); color: var(--accent); }
+html.locus-theme .preview-pane h4 { font-size: calc(15 * var(--rpx)); color: var(--accent); }
+html.locus-theme .preview-pane h5 { font-size: calc(14 * var(--rpx)); color: var(--accent); }
+html.locus-theme .preview-pane h6 { font-size: calc(13 * var(--rpx)); color: var(--accent); }
 
 html.locus-theme .preview-pane p,
 html.locus-theme .preview-pane li {
   font-weight: 400;
-  font-size: 15px;
+  font-size: calc(15 * var(--rpx));
   line-height: 1.5;
   color: var(--text-secondary);
 }
@@ -556,7 +574,7 @@ html.locus-theme .preview-pane .mermaid .slice {
   text-align: left;
   white-space: pre-wrap;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: calc(13 * var(--rpx));
   color: var(--text-secondary);
 }
 
@@ -571,7 +589,7 @@ html.locus-theme .preview-pane .mermaid .slice {
   user-select: none;
   -webkit-user-select: none;
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: calc(13 * var(--rpx));
   font-weight: 400;
   line-height: 1;
   white-space: nowrap;
@@ -694,7 +712,7 @@ html.locus-theme .preview-pane .mermaid .slice {
   padding: 0 4px 0 calc(var(--code-pad) - 1px);
   border-bottom: 1px solid var(--border);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12 * var(--rpx));
   line-height: 1.2;
   color: var(--text-secondary);
   user-select: none;
@@ -724,7 +742,7 @@ html.locus-theme .preview-pane .mermaid .slice {
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-body);
-  font-size: 12px;
+  font-size: calc(12 * var(--rpx));
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
