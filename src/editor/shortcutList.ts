@@ -1,6 +1,6 @@
 /**
  * The rows of the keyboard-shortcuts overlay (spec #9 rule 11b), as data so later
- * items append theirs (#11 "Format table", #13 "Focus mode"). No CodeMirror import:
+ * items append theirs (#11 "Format table", #12 slash menu, #13 "Focus mode"). No CodeMirror import:
  * this module is also reachable from the app shell.
  *
  * A combo is written CodeMirror-style: `Mod-Shift-x`, `Alt-ArrowUp`, `Escape Tab`
@@ -28,6 +28,8 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { label: 'Duplicate line up / down', keys: ['Shift-Alt-ArrowUp', 'Shift-Alt-ArrowDown'] },
   { label: 'Toggle HTML comment', keys: ['Mod-/'] },
   { label: 'Format table', keys: ['Shift-Alt-f'], note: 'cursor in a table' },
+  { label: 'Insert block (slash menu)', keys: ['/'], note: 'at line start or after a space' },
+  { label: 'Slash menu: pick an item', keys: ['ArrowUp', 'ArrowDown'], note: 'Enter or Tab inserts, Esc closes' },
   { label: 'Paste as plain text', keys: ['Mod-Shift-v'] },
   { label: 'Undo', keys: ['Mod-z'] },
   { label: 'Redo', keys: ['Mod-Shift-z', 'Mod-y'] },

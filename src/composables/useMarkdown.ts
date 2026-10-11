@@ -48,12 +48,25 @@ const LANGUAGES: Record<string, Parameters<typeof hljs.registerLanguage>[1]> = {
 }
 for (const [name, def] of Object.entries(LANGUAGES)) hljs.registerLanguage(name, def)
 // Common fence names that are not built-in aliases.
-hljs.registerAliases(['html', 'vue', 'svelte'], { languageName: 'xml' })
-hljs.registerAliases(['jsonc', 'json5'], { languageName: 'json' })
-hljs.registerAliases(['gradle'], { languageName: 'groovy' })
-hljs.registerAliases(['toml'], { languageName: 'ini' })
-hljs.registerAliases(['zsh', 'sh'], { languageName: 'bash' })
-hljs.registerAliases(['text', 'txt', 'plain'], { languageName: 'plaintext' })
+const EXTRA_ALIASES: Record<string, string[]> = {
+  xml: ['html', 'vue', 'svelte'],
+  json: ['jsonc', 'json5'],
+  groovy: ['gradle'],
+  ini: ['toml'],
+  bash: ['zsh', 'sh'],
+  plaintext: ['text', 'txt', 'plain'],
+}
+for (const [languageName, aliases] of Object.entries(EXTRA_ALIASES)) hljs.registerAliases(aliases, { languageName })
+export interface FenceLanguage {
+  name: string
+  /** highlight.js's own aliases (`py`, `js`): typed, they find `name`. */
+  aliases: readonly string[]
+}
+/** Fence languages the preview highlights: registered names + the aliases above (the #12 language step). */
+export const FENCE_LANGUAGES: readonly FenceLanguage[] = [
+  ...Object.keys(LANGUAGES).map((name) => ({ name, aliases: hljs.getLanguage(name)?.aliases ?? [] })),
+  ...Object.values(EXTRA_ALIASES).flat().map((name) => ({ name, aliases: [] })),
+].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 import taskLists from 'markdown-it-task-lists'
 import { tableScroll } from '@/markdown/tableScroll'
 import { headingIds, type HeadingInfo } from '@/markdown/headingIds'
@@ -61,6 +74,7 @@ import { autolink } from '@/markdown/autolink'
 import { codeBlock } from '@/markdown/codeBlock'
 import { alerts } from '@/markdown/alerts'
 import { rag } from '@/markdown/rag'
+import { inlineToc } from '@/markdown/inlineToc'
 import { parseFrontMatter, frontMatterTable, bodyWithAbsoluteLines } from '@/markdown/frontMatter'
 
 export interface LineMapEntry {
@@ -139,6 +153,7 @@ export function useMarkdown() {
     codeBlock, // #14 rules 1–3 (wraps lineDataPlugin's fence/code_block output)
     alerts, // #16 rules 1–9
     rag, // #16 rules 10–15
+    inlineToc, // #12 rule 18
   ]
   for (const plugin of PLUGINS) plugin(md)
 

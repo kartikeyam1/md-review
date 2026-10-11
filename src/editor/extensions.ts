@@ -7,6 +7,7 @@ import { svgPaste } from '@/editor/svgPaste'
 import { imagePaste } from '@/editor/imagePaste'
 import { plainPasteChord, tablePaste } from '@/editor/tablePaste'
 import { markdownCommands } from '@/editor/markdownCommands'
+import { slashMenu } from '@/editor/slashMenu'
 
 /**
  * The editor's feature extensions, in one list (00 §4.7). Feature items add
@@ -24,6 +25,7 @@ export function editorExtensions(opts: { restoredHistory?: Extension | null } = 
     drawSelection(),
     search(),
     markdownCommands,
+    slashMenu, // its keys are Prec.highest while open (beat #9's Enter/Tab)
     keymap.of([...defaultKeymap, ...searchKeymap]),
     plainPasteChord,
     imagePaste,

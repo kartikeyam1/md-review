@@ -1,0 +1,99 @@
+/* Slash menu (#12 rule 4): a fixed layer on the body, part of the lazy editor chunk. Stacking: 00 §3.7. */
+.slash-menu {
+  position: fixed;
+  outline: none;
+  z-index: 200;
+  box-sizing: border-box;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  max-height: min(320px, calc(100vh - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--shadow-color);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.slash-menu-item,
+.slash-menu-lang-option {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.slash-menu-item[aria-selected='true'],
+.slash-menu-lang-option[aria-selected='true'] {
+  background: var(--selection-bg);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.slash-menu-label {
+  font-weight: 500;
+}
+
+.slash-menu-hint {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.slash-menu-empty {
+  padding: 8px;
+  color: var(--text-secondary);
+}
+
+.slash-menu-lang {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.slash-menu-lang-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  outline: none;
+}
+
+.slash-menu-lang-input:focus-visible,
+.slash-menu-lang-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.slash-menu-lang-list {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.slash-menu-lang-option {
+  font-family: var(--font-mono);
+}
+
+@media (pointer: coarse) {
+  .slash-menu-item,
+  .slash-menu-lang-option {
+    min-height: 44px;
+    justify-content: center;
+  }
+}

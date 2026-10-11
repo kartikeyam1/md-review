@@ -1092,3 +1092,46 @@ html.locus-theme .preview-pane details {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* ── Inline table of contents (#12 rule 18): `[[toc]]` rendered at view time ── */
+.preview-pane .inline-toc {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.preview-pane .inline-toc ul {
+  margin: 0;
+  padding-left: 1.25em;
+}
+
+.preview-pane .inline-toc > ul {
+  padding-left: 1em;
+}
+
+.preview-pane .inline-toc li {
+  margin: 0.2em 0;
+}
+
+.preview-pane .inline-toc a {
+  text-decoration: none;
+}
+
+.preview-pane .inline-toc a:hover,
+.preview-pane .inline-toc a:focus-visible {
+  text-decoration: underline;
+}
+
+.preview-pane .inline-toc-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+@media print {
+  .preview-pane .inline-toc {
+    break-inside: avoid;
+  }
+}
