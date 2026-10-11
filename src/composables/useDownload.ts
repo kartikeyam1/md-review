@@ -2,6 +2,7 @@ import type { ThemeMode } from '@/types'
 import { isDark, isGithub, isLocus, themeStyle } from '@/composables/useTheme'
 import { PASTE_API } from '@/composables/pasteApi'
 import { useMarkdown } from '@/composables/useMarkdown'
+import { loadFenceLanguages } from '@/markdown/highlight'
 import { mermaidConfigFor, mermaidJob } from '@/preview/mermaidTheme'
 
 // Downloads (#19): filenames, the blob + <a download> save, and the
@@ -351,6 +352,10 @@ export async function inlineImages(root: HTMLElement, opts: { apiBase?: string; 
 
 /** The self-contained HTML file for the doc on screen (rule 7). `live` = the on-screen preview, if any. */
 export async function buildHtmlExport(o: { live: HTMLElement | null; markdown: string; theme: ThemeMode; title: string }): Promise<string> {
+  // Lazy highlight.js languages still on their way: wait, so the export has colours.
+  // A macrotask later the live preview has re-rendered with them (highlightRevision).
+  await loadFenceLanguages(o.markdown)
+  if (o.live) await new Promise((r) => setTimeout(r))
   const off = o.live ? null : await renderOffscreen(o.markdown, o.theme)
   try {
     const source = o.live ?? off!.el

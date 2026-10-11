@@ -7,6 +7,7 @@ import { detectContentType } from '@/composables/useContentType'
 import { historyBarrier } from '@/composables/useExternalChange'
 import { resolveView, routeKey, type RouterLocation } from '@/composables/useRouter'
 import { paneModeFor, type DocState, type DocViewName } from '@/composables/useDocState'
+import { loadFenceLanguages } from '@/markdown/highlight'
 
 // ── Doc loaders (spec #4 routes, #2 shell split) ─────────────────────────────
 // What happens when a route is entered: load the shared doc / pinned revision
@@ -18,6 +19,11 @@ const MARKDOWN_FILE = /\.(md|markdown|txt)$/i
 const HTML_FILE = /\.html?$/i
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i
 const LEAVE_FLUSH_MS = 1500
+// A doc's first render waits this long at most for the lazy highlight.js
+// languages its fences name (one small chunk each), so its code paints with
+// colours instead of swapping from plain text a moment later. On a slower
+// network the doc paints plain and re-renders when they arrive.
+const FENCE_LANGUAGES_WAIT_MS = 300
 
 /** Resolves to `fallback` when `p` takes longer than `ms` (a stalled save). */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -69,6 +75,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (doc.pasteId.value) detachFromShare()
 
     const { data, status } = await loadShareDetailed(shareId)
+    if (data?.markdown) await withTimeout(loadFenceLanguages(data.markdown), FENCE_LANGUAGES_WAIT_MS, undefined)
     if (isStale(token)) return // navigated away meanwhile
 
     if (!data) {
@@ -148,6 +155,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     const key = routeKey({ kind: 'pinned', id, rev })
     if (doc.screenKey.value === key) { applyViewParam(); return }
     const { data, status } = await getRevision(id, rev)
+    if (data?.markdown) await withTimeout(loadFenceLanguages(data.markdown), FENCE_LANGUAGES_WAIT_MS, undefined)
     if (isStale(token)) return
     if (!data) {
       if (status === 404) doc.docMissing.value = 'missing'
