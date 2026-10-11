@@ -9,7 +9,9 @@ import { copyDocLink } from '@/composables/useCopyLink'
 // controls demoted at this width → history → prompt → Document mode → open/new/refresh.
 const props = defineProps<{
   /** Bar controls that live in this menu at the current width (00 §2.2). */
-  demoted: { reviewer?: boolean; share?: boolean; copyLink?: boolean; library?: boolean; home?: boolean; download?: boolean; reader?: boolean }
+  demoted: { reviewer?: boolean; share?: boolean; copyLink?: boolean; library?: boolean; home?: boolean; download?: boolean; reader?: boolean; slides?: boolean }
+  /** #29: the doc can be presented (the bar's Present button, demoted below 1100px). */
+  canPresent?: boolean
   /** Phone: open as a full-width sheet (#5 rule 7). */
   sheet?: boolean
 }>()
@@ -34,6 +36,9 @@ const entries = computed<AppMenuEntry[]>(() => {
   // 1. Demoted bar controls, in 00 §2.2 order.
   if (props.demoted.reviewer && docOpen && reviewUI.value) {
     out.push({ type: 'item', id: 'reviewer', testid: 'reviewer-name', label: reviewerName.value ? `Name: ${reviewerName.value}` : 'Set your name', onSelect: () => emit('edit-reviewer') })
+  }
+  if (props.demoted.slides && props.canPresent) {
+    out.push({ type: 'item', id: 'slides', testid: 'slides-enter-btn', label: 'Present', onSelect: () => actions.setView('slides') })
   }
   if (props.demoted.share && docOpen && editor) {
     out.push({ type: 'item', id: 'share', testid: 'share-btn', label: 'Share…', disabled: doc.share.sharing.value, onSelect: () => actions.handleShare() })

@@ -15,9 +15,9 @@ import type { DocState } from '@/composables/docState'
 
 export type RouteKind = 'doc' | 'pinned' | 'file' | 'embed'
 export type Capability = 'viewer' | 'editor'
-export type DocViewName = 'read' | 'edit' | 'split' | 'agent'
-/** The views that show the doc in the reader (not the editor): read and #28's agent view. */
-export type ReaderView = 'read' | 'agent'
+export type DocViewName = 'read' | 'edit' | 'split' | 'agent' | 'slides'
+/** The views that show the doc in the reader (not the editor): read, #28's agent view and #29's slides. */
+export type ReaderView = 'read' | 'agent' | 'slides'
 
 export interface DocAxesInput {
   routeKind: Route['kind']
@@ -30,7 +30,7 @@ export interface DocAxesInput {
    * latest GET (legacy docs and older servers: true). Ignored for local docs.
    */
   canEdit?: boolean
-  /** #28: the reader view ?view= resolved to (read unless `agent` was allowed). */
+  /** #28/#29: the reader view ?view= resolved to (read unless `agent`/`slides` was allowed). */
   readerView?: ReaderView
 }
 

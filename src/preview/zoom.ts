@@ -112,7 +112,8 @@ async function openViewer(trigger: HTMLElement, copyText: (t: string) => Promise
   if (current) return
   const host = document.createElement('div')
   host.className = 'zoom-viewer-host'
-  document.body.appendChild(host)
+  // In fullscreen (#29 slides) only the fullscreen element's subtree is drawn.
+  ;(document.fullscreenElement ?? document.body).appendChild(host)
   const scrollY = window.scrollY
   const overflow = document.documentElement.style.overflow
   document.documentElement.style.overflow = 'hidden'

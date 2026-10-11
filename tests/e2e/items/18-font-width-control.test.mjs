@@ -390,7 +390,9 @@ describe('#18 reader font size + width', () => {
       await page.locator('body').click({ position: { x: 5, y: 300 } })
       await page.evaluate(() => document.activeElement?.blur())
       let found = false
-      for (let i = 0; i < 40; i++) {
+      // Tab order starts after the click point (in the doc), runs through the doc's own controls and wraps to the header:
+      // the bound covers every focus stop on the page (header controls grow with later items, e.g. #29's Present).
+      for (let i = 0; i < 150; i++) {
         await page.keyboard.press('Tab')
         if (await page.evaluate(() => document.activeElement?.dataset?.testid === 'reader-settings-btn')) { found = true; break }
       }

@@ -20,6 +20,8 @@ import { useToc } from '@/composables/useToc'
 // #18 reading settings and #19 Download menu load on demand (the #6 entry budget).
 const ReaderSettings = defineAsyncComponent(() => import('@/components/ReaderSettings.vue'))
 const DownloadMenu = defineAsyncComponent(() => import('@/components/DownloadMenu.vue'))
+// #29: Present (desktop bar).
+const SlidesEnterButton = defineAsyncComponent(() => import('@/components/SlidesEnterButton.vue'))
 
 // The doc header (00 §2): one line, never wraps. `reader` in the read view,
 // `editor` in the edit view (editors only). Order and per-width placement are
@@ -38,6 +40,9 @@ const isLocal = computed(() => onScreen.value && !pasteId.value && !docLink.valu
 const phone = computed(() => bp.value === 'phone')
 const desktop = computed(() => bp.value === 'desktop')
 const sharing = computed(() => doc.share.sharing.value)
+/** #29 rule 1: Present — reader variant of a markdown doc in the read or agent view, not on a file route. */
+const canPresent = computed(() => onScreen.value && variant.value === 'reader' && contentType.value === 'markdown'
+  && (view.value === 'read' || view.value === 'agent') && doc.routeKind.value !== 'file' && doc.routeKind.value !== 'embed' && !doc.fileView.value)
 
 /** reviewer-name sits in the bar on desktop only (00 §2.2). */
 const reviewerInBar = computed(() => desktop.value)
@@ -52,6 +57,7 @@ const demoted = computed(() => ({
   home: phone.value,
   download: !desktop.value,
   reader: phone.value,
+  slides: !desktop.value,
 }))
 
 function onHomeClick(e: MouseEvent) {
@@ -136,6 +142,7 @@ function onLibraryClick(e: MouseEvent) {
       @done="editingNameFromMenu = false"
     />
     <ViewToggle v-if="onScreen && editor" :compact="phone" @change="actions.setView($event)" />
+    <SlidesEnterButton v-if="canPresent && desktop" />
     <button
       v-if="onScreen && editor && !phone"
       type="button"
@@ -148,7 +155,7 @@ function onLibraryClick(e: MouseEvent) {
     <DownloadMenu v-if="onScreen && desktop" />
     <ThemeSwitcher />
     <ReaderSettings v-if="onScreen" :sheet="phone" :html="contentType === 'html'" />
-    <HeaderOverflowMenu :demoted="demoted" :sheet="phone" @edit-reviewer="editingNameFromMenu = true" />
+    <HeaderOverflowMenu :demoted="demoted" :can-present="canPresent" :sheet="phone" @edit-reviewer="editingNameFromMenu = true" />
   </header>
   <div v-if="variant === 'reader' && onScreen && !desktop" class="doc-meta-row" data-testid="doc-meta-row">
     <DocUpdated v-if="!isLocal" />

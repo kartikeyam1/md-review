@@ -70,7 +70,7 @@ slides for HTML docs, editing in slides view, per-slide layouts/backgrounds from
 17. **Phone.** At 390×844 (portrait) the canvas fills the width, letterboxed vertically, and a dismissible hint `slides-rotate-hint`
     ("Rotate for a larger slide") shows on the first slide only for coarse pointers. Landscape phones fill the height.
 18. **Print** (rules scoped under `.app[data-view=slides]`; #5's read-view print rules exclude that scope — 00 §10.2). Printing from slides view outputs every slide, one per page (`@page { size: 13.333in 7.5in; margin: 0 }`,
-    `break-after: page`), canvas unscaled to the page, no chrome, no notes, no hint, backgrounds printed (`print-color-adjust: exact`).
+    `break-after: page` on every slide but the last), canvas unscaled to the page, no chrome, no notes, no hint, backgrounds printed (`print-color-adjust: exact`).
 19. **Live updates.** If the doc changes (polling sync) while presenting, slides recompute; the current index is kept (clamped).
 20. **A11y.** The visible slide is `role="group"` `aria-roledescription="slide"` `aria-label="Slide N of T"`; a polite live region
     announces `Slide N of T: <heading>` on change. Only the current slide is in the accessibility tree / tab order.
@@ -91,7 +91,7 @@ AC-29.12 Given `F` Then `document.fullscreenElement` is the slides root; `F` aga
 AC-29.13 Given a slide containing the three lines `<!-- notes -->`, `Say hi`, `<!-- /notes -->` Then "Say hi" is not in the canvas; `N` shows `slides-notes` containing "Say hi"; a slide without notes shows `No notes for this slide.`; in read view "Say hi" is visible.   [verify: e2e]
 AC-29.14 Given a doc with an agent-only section (#28) inside `## A` Then its text appears on no slide and in no notes panel.   [verify: e2e]
 AC-29.15 Given `locus-light` and `locus-dark` Then the title slide's computed background is `rgb(40, 10, 56)` and H1 colour `rgb(255, 255, 255)`; in `light` the title slide background equals `--bg-surface`.   [verify: visual]
-AC-29.16 Given print emulation in slides view of a 4-slide doc Then 4 slide elements are displayed, each with `break-after: page`, and `slides-counter`, `slides-progress`, `slides-notes`, header are `display: none`.   [verify: e2e]
+AC-29.16 Given print emulation in slides view of a 4-slide doc Then 4 slide elements are displayed, each but the last with `break-after: page` (the last `auto`: a forced break after the final slide prints a blank extra page in Chromium — DECISIONS #29), the PDF has exactly 4 pages, and `slides-counter`, `slides-progress`, `slides-notes`, header are `display: none`.   [verify: e2e]
 AC-29.17 Given an HTML doc with `?view=slides` Then the URL is rewritten without `view=slides`, the iframe preview shows, and `slides-enter-btn` is absent.   [verify: e2e]
 AC-29.18 Given a doc with no headings Then exactly 1 slide is shown with counter `1 / 1` and `slides-prev`/`slides-next` disabled.   [verify: e2e]
 AC-29.19 Given slides view at desktop Then axe reports no serious violations and the current slide has `aria-label="Slide 1 of T"`.   [verify: a11y]

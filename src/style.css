@@ -278,3 +278,15 @@ html.locus-theme .btn-primary {
 html.locus-theme .app-menu-list {
   box-shadow: none;
 }
+
+/* Slides (#29 rule 16): the title slide's colours. Default and GitHub themes use
+   the surface; both Locus themes use the brand purple with white text. */
+:root {
+  --slide-title-bg: var(--bg-surface);
+  --slide-title-fg: var(--text-primary);
+}
+
+html.locus-theme {
+  --slide-title-bg: #280A38;
+  --slide-title-fg: #FFFFFF;
+}

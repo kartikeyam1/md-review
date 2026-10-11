@@ -280,3 +280,14 @@ Decisions made autonomously while the owner was AFK. Each line: decision — rea
 - #28: `tests/composables/useRouter.test.ts` "allowed but not shipped" no longer uses `agent` (it ships with #28); a new case pins agent resolution (doc/pinned allowed, embed read, `AGENT` rewritten). Pre-existing test change, not a frozen item test.
 - #28: the shared line scanner tracks every CommonMark HTML block type (1–7; type 7 only when it cannot be a paragraph continuation), so a marker line inside an HTML block is literal for the server and the FE alike; a differential unit test asserts the human render shows exactly the stripped text for every fixture.
 - #28: no raw link (`agent-raw-link`, head alternate link) on pinned revisions — the raw endpoint serves the latest version.
+- #29: printing slides, every slide but the last has `break-after: page`; the last is `auto`, because Chromium prints a blank extra page after a forced break at the end of the document (AC-29.16's "each with break-after: page" read as "one slide per page").
+- #29: slides print with #5's light print palette (like the read view), except the title slide, which keeps `--slide-title-bg/fg` (so the Locus title slide prints purple with white text); backgrounds are printed (`print-color-adjust: exact`).
+- #29: an in-doc `#heading` link on a slide goes to the slide holding that heading (instead of changing the URL fragment); other links behave as links and never count as a half-canvas click.
+- #29: the canvas renders every slide (only the current one is visible, in the accessibility tree and in the tab order — `inert` + `aria-hidden` on the others), so diagrams lay out off screen, fit is measured once per render and print emits all slides.
+- #29: on-canvas type scales with the preview's own unit (`--rpx` = 1.6px × the fit factor); fit steps down by 5% to 70%, then the slide scrolls.
+- #29: a heading inside a `<!-- notes -->` block is on no slide (notes are off the canvas), so `#that-id` opens slide 1.
+- #29: diagrams on a slide are sized to fit (≤ the body width, ≤ the room under the content before them, never upscaled past mermaid's own width); the read view's diagram sizing is unchanged.
+- #29: below 500px of viewport height (landscape phones) the slide controls float over the canvas and auto-hide after 3 s idle like in fullscreen, so the canvas fills the height (rule 17).
+- #29: #5's print sheet still styles slides (light palette, chrome hidden); the deck's print block undoes what clips a fixed-size slide (#5's printed link URLs) and hides mermaid's body-level tooltip (which added a blank page).
+- #29: the zoom viewer (#15) mounts inside the fullscreen element when there is one (in fullscreen only its subtree is drawn).
+- #29: on a portrait phone the 1280-wide canvas makes body text small (~5px); that is the spec's scaled-canvas model, and the rotate hint is the remedy.

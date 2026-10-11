@@ -42,6 +42,8 @@ const FileUpload = defineAsyncComponent(() => import('@/components/FileUpload.vu
 const FocusControls = defineAsyncComponent(() => import('@/components/FocusControls.vue'))
 // #28: the "N agent-only sections hidden" line, only for docs that have any.
 const AgentSectionsNotice = defineAsyncComponent(() => import('@/components/AgentSectionsNotice.vue'))
+// #29: the deck, only for ?view=slides.
+const SlidesView = defineAsyncComponent(() => import('@/components/SlidesView.vue'))
 
 const doc = useDocState()
 const actions = useDocActions()
@@ -199,7 +201,9 @@ function goHome() {
  * header is sticky); edit view, HTML (iframe) docs and file views keep the
  * fixed-viewport layout with internally scrolling panes.
  */
-const docScroll = computed(() => onScreen.value && !editorShown.value && !fileView.value && contentType.value !== 'html')
+// #29: the deck replaces the header, banners and body (declared before anything that reads it).
+const slidesShown = computed(() => onScreen.value && view.value === 'slides' && contentType.value === 'markdown' && !fileView.value && !docMissing.value)
+const docScroll = computed(() => onScreen.value && !editorShown.value && !fileView.value && contentType.value !== 'html' && !slidesShown.value)
 
 // #3: the TOC — read view of a markdown doc only (never edit view, HTML, files or embeds).
 const breakpoint = useBreakpoint()
@@ -232,7 +236,7 @@ watch(alternateHref, (href) => {
 onUnmounted(() => { alternateLink?.remove(); alternateLink = null })
 
 const isDocRoute = computed(() => ['doc', 'pinned', 'file'].includes(route.value.kind))
-const showHeader = computed(() => route.value.kind !== 'library' && route.value.kind !== 'not-found' && !docMissing.value)
+const showHeader = computed(() => route.value.kind !== 'library' && route.value.kind !== 'not-found' && !docMissing.value && !slidesShown.value)
 
 /** Rule 16: the same URL without `embed`, for "Open in md-review". */
 const embedOpenHref = computed(() => {
@@ -269,12 +273,13 @@ const embedOpenHref = computed(() => {
   >
     <!-- Focus mode hides the header but keeps it mounted (a filename edit in progress survives). -->
     <div v-if="showHeader" v-show="!focusShown" class="doc-header-slot"><DocHeader /></div>
-    <DocBanners />
+    <DocBanners v-if="!slidesShown" />
+    <SlidesView v-if="slidesShown" />
 
     <RouteNotFound v-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" @home="goHome" />
     <FileUpload v-else-if="route.kind === 'landing' && booted && !onScreen" @file-loaded="actions.handleFileLoaded" />
 
-    <div v-if="onScreen" class="doc-body review-layout">
+    <div v-if="onScreen && !slidesShown" class="doc-body review-layout">
       <div class="doc-rail"><TocPanel v-if="toc.railShown.value" :toc="toc" variant="rail" @pin="activeHeading.pin" /></div>
       <main class="doc-content main-pane">
         <AgentSectionsNotice v-if="noticeShown && !fileView" />
@@ -327,7 +332,7 @@ const embedOpenHref = computed(() => {
       </main>
       <aside class="doc-aside" :class="{ collapsed: sidebarHidden }"><CommentsLayer v-if="reviewUI" @scroll-to="scrollToLine" /></aside>
     </div>
-    <div v-else-if="isDocRoute && !docMissing" class="doc-loading" aria-busy="true"></div>
+    <div v-else-if="!onScreen && isDocRoute && !docMissing" class="doc-loading" aria-busy="true"></div>
     <TocPanel v-if="toc.visible.value && toc.drawerMode.value" :toc="toc" variant="drawer" @pin="activeHeading.pin" />
     <FocusControls v-if="focusShown" @exit="setFocusMode(false)" />
 

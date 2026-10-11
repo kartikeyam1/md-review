@@ -55,7 +55,7 @@ export function createDocState(router: Router) {
 
   const appMode = ref<AppMode>('upload')
   const paneMode = ref<PaneMode>('preview')
-  /** #28: read or agent view (the preview's view while paneMode is 'preview'; set from ?view=). */
+  /** #28/#29: read, agent or slides (the reader's view while paneMode is 'preview'; set from ?view=). */
   const readerView = ref<ReaderView>('read')
   const markdown = ref('')
   const filename = ref('')

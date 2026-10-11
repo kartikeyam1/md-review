@@ -265,7 +265,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
       contentType: doc.contentType.value,
     })
     doc.paneMode.value = paneModeFor(view)
-    doc.readerView.value = view === 'agent' ? 'agent' : 'read'
+    doc.readerView.value = view === 'agent' || view === 'slides' ? view : 'read'
     if (rewrite) router.setQueryParam('view', 'read')
   }
 
@@ -276,9 +276,20 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
    */
   function setView(view: DocViewName, o: { removeParam?: boolean } = {}) {
     if ((view === 'edit' || view === 'split') && doc.capability.value !== 'editor') return
-    if (view === 'agent' && (doc.contentType.value !== 'markdown' || doc.routeKind.value === 'file' || doc.routeKind.value === 'embed')) return
+    if ((view === 'agent' || view === 'slides') && (doc.contentType.value !== 'markdown' || doc.routeKind.value === 'file' || doc.routeKind.value === 'embed')) return
     doc.paneMode.value = paneModeFor(view)
-    doc.readerView.value = view === 'agent' ? 'agent' : 'read'
+    doc.readerView.value = view === 'agent' || view === 'slides' ? view : 'read'
+    if (view === 'slides') {
+      // A comment popover or action bar from the read view would swallow the deck's first Esc.
+      doc.dismissAll()
+      // #29 rule 1: other params kept, the fragment dropped (a slide is `?slide=N`, never a fragment).
+      const l = window.location
+      const params = new URLSearchParams(l.search)
+      params.set('view', 'slides')
+      params.delete('slide')
+      router.replace(`${l.pathname}?${params.toString()}`)
+      return
+    }
     router.setQueryParam('view', o.removeParam ? null : view)
   }
 
