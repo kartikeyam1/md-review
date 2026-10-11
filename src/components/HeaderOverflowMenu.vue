@@ -113,7 +113,9 @@ const entries = computed<AppMenuEntry[]>(() => {
 </script>
 
 <template>
+  <!-- Persona-QA m5: no items (a viewer on a file route at desktop width) → no dead button. -->
   <AppMenu
+    v-if="entries.length"
     :entries="entries"
     :label="triggerLabel"
     trigger-class="btn btn-ghost overflow-btn"

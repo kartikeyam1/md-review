@@ -153,12 +153,17 @@ export function useShare() {
 
   async function loadShareDetailed(id: string): Promise<{ data: SharedPayload | null; status: number }> {
     try {
-      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}`, { headers: editHeaders(id) })
-      if (!res.ok) return { data: null, status: res.status }
-      const data = await res.json() as SharedPayload
-      data.etag = res.headers.get('etag')
-      settleAccess(id, data)
-      return { data, status: res.status }
+      // Twice at most: when the first GET went out without a token we hold for
+      // this doc (its slug was not known yet), re-send it with the token.
+      for (let attempt = 0; ; attempt++) {
+        const headers = editHeaders(id)
+        const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}`, { headers })
+        if (!res.ok) return { data: null, status: res.status }
+        const data = await res.json() as SharedPayload
+        data.etag = res.headers.get('etag')
+        const retry = settleAccess(id, data, headers['X-Edit-Token'] ?? null)
+        if (!retry || attempt > 0) return { data, status: res.status }
+      }
     } catch {
       return { data: null, status: 0 }
     }
@@ -426,7 +431,7 @@ export function useShare() {
     } catch { return null }
   }
 
-  async function pollPaste(pasteId: string, etag: string | null): Promise<{
+  async function pollPaste(pasteId: string, etag: string | null, retried = false): Promise<{
     data: SharedPayload | null; etag: string | null; notModified: boolean; status: number
   }> {
     try {
@@ -438,7 +443,10 @@ export function useShare() {
       const newEtag = res.headers.get('etag')
       const data = await res.json() as SharedPayload
       data.etag = newEtag
-      settleAccess(pasteId, data)
+      if (settleAccess(pasteId, data, headers['X-Edit-Token'] ?? null) && !retried) {
+        // We hold a token this poll did not present: re-poll with it.
+        return pollPaste(pasteId, null, true)
+      }
       return { data, etag: newEtag, notModified: false, status: res.status }
     } catch { return { data: null, etag: null, notModified: false, status: 0 } }
   }

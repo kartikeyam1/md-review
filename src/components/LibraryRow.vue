@@ -5,7 +5,7 @@
 // phone (rule 17) it is a stacked card: title, then badges + updated, then tags
 // (that line only when it has something in it). Its height is known up front
 // (libraryRowHeight — the list is virtualised); text never wraps past its line.
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onBeforeUnmount } from 'vue'
 import { normalizeTag, MAX_TAGS_PER_DOC } from '@shared/tags.mjs'
 import { relativeTime } from '@/composables/docMeta'
 import { cardHasTagsLine, type LibraryItem } from '@/composables/useLibrary'
@@ -81,6 +81,28 @@ function onTitleClick(e: MouseEvent) {
 }
 
 const snippet = computed(() => props.item.match?.snippet ?? null)
+
+// Phone cards: the chip strip scrolls sideways; a fade on the edge(s) with more
+// chips beyond says so (persona-QA m4 follow-up). `data-more` = start|end|both.
+const tagStrip = ref<HTMLElement | null>(null)
+const more = ref<'' | 'start' | 'end' | 'both'>('')
+function updateMore() {
+  const el = tagStrip.value
+  if (!el) { more.value = ''; return }
+  const start = el.scrollLeft > 1
+  const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+  more.value = start && end ? 'both' : start ? 'start' : end ? 'end' : ''
+}
+let ro: ResizeObserver | null = null
+onMounted(() => {
+  updateMore()
+  if (typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(updateMore)
+    watch(tagStrip, (el, old) => { if (old) ro?.unobserve(old); if (el) ro?.observe(el); updateMore() }, { immediate: true })
+  }
+})
+onBeforeUnmount(() => { ro?.disconnect(); ro = null })
+watch(() => [props.item.tags.length, adding.value, props.phone], () => { void nextTick(updateMore) })
 </script>
 
 <template>
@@ -152,7 +174,9 @@ const snippet = computed(() => props.item.match?.snippet ?? null)
       </div>
       <div v-if="phone && cardHasTagsLine(item, canEdit)" class="lib-line lib-line-tags">
         <span v-if="item.collection" class="lib-collection">{{ item.collection.name }}</span>
-        <span class="lib-tags">
+        <!-- Persona-QA m4: the card's height is fixed (virtualised list), so the chips scroll
+             sideways instead of wrapping, and "+ tag" sits outside them: always visible. -->
+        <span ref="tagStrip" class="lib-tags lib-tags-scroll" data-testid="library-row-tags" :data-more="more || undefined" @scroll.passive="updateMore">
           <template v-if="adding">
             <input ref="tagInput" v-model="draft" class="lib-tag-input" placeholder="tag" maxlength="64" aria-label="New tag" @keydown="onTagKeydown" @blur="onTagBlur" />
             <span v-if="tagError" class="lib-tag-error" role="alert" data-testid="library-tag-error">{{ tagError }}</span>
@@ -161,9 +185,9 @@ const snippet = computed(() => props.item.match?.snippet ?? null)
             <button type="button" class="lib-tag-name" @click="emit('tag', t)">{{ t }}</button>
             <button v-if="canEdit" type="button" class="lib-tag-x" :aria-label="`Remove tag ${t}`" data-testid="library-tag-remove" @click="removeTag(t)">×</button>
           </span>
-          <button v-if="canEdit && !adding" type="button" class="lib-tag-add" data-testid="library-row-tag-add" aria-label="Add a tag" @click="startAdd">+ tag</button>
           <span v-if="tagError && !adding" class="lib-tag-error" role="alert" data-testid="library-tag-error">{{ tagError }}</span>
         </span>
+        <button v-if="canEdit && !adding" type="button" class="lib-tag-add" data-testid="library-row-tag-add" aria-label="Add a tag" @click="startAdd">+ tag</button>
       </div>
       <div v-if="snippet" class="lib-line lib-snippet" data-testid="library-row-snippet">
         <span v-if="item.match?.field === 'file' && item.match.file" class="lib-snippet-file">{{ item.match.file }}:&nbsp;</span>
@@ -235,6 +259,11 @@ const snippet = computed(() => props.item.match?.snippet ?? null)
 }
 .lib-tags { display: inline-flex; align-items: center; gap: 4px; min-width: 0; margin-left: 4px; }
 .phone .lib-tags { margin-left: 0; }
+.lib-tags-scroll { flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.lib-tags-scroll::-webkit-scrollbar { display: none; }
+.lib-tags-scroll[data-more='end'] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.lib-tags-scroll[data-more='start'] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+.lib-tags-scroll[data-more='both'] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .lib-tag {
   flex: none; display: inline-flex; align-items: center; border-radius: 999px;
   background: var(--bg-code); color: var(--text-secondary); font-size: 11px; line-height: 18px;

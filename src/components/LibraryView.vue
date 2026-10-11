@@ -153,7 +153,7 @@ async function bulkMove(collectionId: string | null) {
 }
 const moveEntries = computed<AppMenuEntry[]>(() => [
   { type: 'item', id: 'none', label: 'Unfiled', onSelect: () => void bulkMove(null) },
-  ...lib.collections.value.map((c): AppMenuEntry => ({ type: 'item', id: c.id, label: c.name, onSelect: () => void bulkMove(c.id) })),
+  ...lib.collections.value.map((c): AppMenuEntry => ({ type: 'item', id: c.id, label: c.name, title: c.name, onSelect: () => void bulkMove(c.id) })),
 ])
 
 // ── Confirm dialog (bulk delete, collection delete) ──
@@ -238,7 +238,7 @@ const rowProps = (item: LibraryItem) => ({
       <div class="lib-title-block">
         <a class="lib-home" :href="router.base" title="Home" @click.prevent="router.push(router.base)">md<span class="lib-home-accent">review</span></a>
         <h1 class="lib-title">Library</h1>
-        <span class="lib-count" data-testid="library-count" aria-live="polite">{{ countLabel(lib.total.value) }}</span>
+        <span v-if="tab !== 'templates'" class="lib-count" data-testid="library-count" aria-live="polite">{{ countLabel(lib.total.value) }}</span>
       </div>
       <div class="lib-header-actions">
         <ReviewerName />
@@ -313,7 +313,7 @@ const rowProps = (item: LibraryItem) => ({
       </aside>
 
       <main class="lib-main">
-        <div v-if="selected.size" class="lib-bulk-bar" data-testid="library-bulk-bar" role="region" aria-label="Bulk actions">
+        <div v-if="selected.size" class="lib-bulk-bar" :class="{ 'tag-open': bulkTagOpen }" data-testid="library-bulk-bar" role="region" aria-label="Bulk actions">
           <span class="lib-bulk-count">{{ selected.size }} selected</span>
           <template v-if="bulkTagOpen">
             <input ref="bulkTagInput" v-model="bulkTag" class="lib-bulk-tag-input" placeholder="tag to add" aria-label="Tag to add" @keydown="onBulkTagKeydown" />
@@ -321,7 +321,7 @@ const rowProps = (item: LibraryItem) => ({
             <span v-if="bulkTagError" class="lib-bulk-error" role="alert">{{ bulkTagError }}</span>
           </template>
           <button v-else type="button" class="btn btn-ghost" data-testid="library-bulk-tag" @click="openBulkTag">Add tag</button>
-          <AppMenu :entries="moveEntries" label="Move to collection" trigger-testid="library-bulk-move">
+          <AppMenu :entries="moveEntries" label="Move to collection" trigger-testid="library-bulk-move" truncate align="start">
             <template #trigger>Move</template>
           </AppMenu>
           <button type="button" class="btn btn-ghost lib-danger" data-testid="library-bulk-delete" @click="askBulkDelete">Delete</button>
@@ -575,6 +575,10 @@ const rowProps = (item: LibraryItem) => ({
 .lib-danger { color: var(--cat-must-fix); border-color: color-mix(in srgb, var(--cat-must-fix) 40%, var(--border)); }
 .lib-bulk-clear { margin-left: auto; border: none; background: transparent; color: var(--text-meta); font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
 .lib-bulk-clear:hover { color: var(--text-primary); background: var(--bg-code); }
+/* Persona-QA c7a: on a phone the bar is one line (count, three actions, ×) — the × never wraps alone. */
+.phone .lib-bulk-bar:not(.tag-open) { flex-wrap: nowrap; gap: 4px; padding: 6px 8px; }
+.phone .lib-bulk-bar:not(.tag-open) .btn { padding-left: 10px; padding-right: 10px; }
+.phone .lib-bulk-bar .lib-bulk-count { white-space: nowrap; }
 
 .lib-loading { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .phone .lib-loading { border: none; gap: 8px; }

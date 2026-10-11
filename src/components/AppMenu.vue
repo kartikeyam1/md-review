@@ -12,7 +12,7 @@ let menuSeq = 0
 </script>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { useMenu } from '@/composables/useMenu'
 
 withDefaults(defineProps<{
@@ -29,6 +29,10 @@ withDefaults(defineProps<{
   triggerAttrs?: Record<string, string | undefined>
   /** Phone (#5 rule 7): open as a full-width sheet under the doc header instead of a dropdown. */
   sheet?: boolean
+  /** Long labels (user-named collections): cap the width and truncate items with an ellipsis. */
+  truncate?: boolean
+  /** Which trigger edge the dropdown lines up with: 'end' (right, the default) or 'start' (left). */
+  align?: 'start' | 'end'
 }>(), {
   triggerTestid: undefined,
   menuTestid: undefined,
@@ -37,6 +41,8 @@ withDefaults(defineProps<{
   triggerAttrs: undefined,
   menuLabel: undefined,
   sheet: false,
+  truncate: false,
+  align: 'end',
 })
 
 const triggerRef = ref<HTMLButtonElement>()
@@ -44,6 +50,23 @@ const triggerRef = ref<HTMLButtonElement>()
 const uid = `app-menu-${++menuSeq}`
 const listRef = ref<HTMLElement>()
 const menu = useMenu(triggerRef, listRef)
+
+// 00 §3.2: a dropdown opens fully inside the viewport. It is anchored to the
+// trigger's right edge; a trigger near the left (the library's bulk "Move" on a
+// phone, persona-QA M3) would push it off-screen, so shift it back in.
+const VIEWPORT_GUTTER = 8
+const shiftX = ref(0)
+watch(() => menu.open.value, async (isOpen) => {
+  shiftX.value = 0
+  if (!isOpen) return
+  await nextTick()
+  const el = listRef.value
+  if (!el || el.classList.contains('app-menu-sheet')) return
+  const r = el.getBoundingClientRect()
+  const vw = document.documentElement.clientWidth || window.innerWidth
+  if (r.left < VIEWPORT_GUTTER) shiftX.value = VIEWPORT_GUTTER - r.left
+  else if (r.right > vw - VIEWPORT_GUTTER) shiftX.value = Math.max(VIEWPORT_GUTTER - r.left, vw - VIEWPORT_GUTTER - r.right)
+})
 
 function select(entry: AppMenuEntry) {
   if (entry.type !== 'item' && entry.type !== 'radio') return
@@ -76,7 +99,8 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
       v-if="menu.open.value"
       ref="listRef"
       class="app-menu-list"
-      :class="{ 'app-menu-sheet': sheet }"
+      :class="{ 'app-menu-sheet': sheet, 'app-menu-truncate': truncate, 'app-menu-start': align === 'start' }"
+      :style="shiftX ? { transform: `translateX(${shiftX}px)` } : undefined"
       role="menu"
       :aria-label="menuLabel ?? label"
       :data-testid="menuTestid"
@@ -178,6 +202,23 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
   display: flex;
   flex-direction: column;
+}
+
+/* A menu whose trigger sits at the start of a toolbar opens rightwards (not over what is to its left). */
+.app-menu-list.app-menu-start {
+  left: 0;
+  right: auto;
+}
+
+/* Persona-QA M3 / c7c: user-named labels (60 chars max) never widen the menu past this. */
+.app-menu-list.app-menu-truncate {
+  max-width: min(320px, calc(100vw - 16px));
+}
+
+.app-menu-truncate .app-menu-item {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* #5 rule 7: a full-width sheet anchored under the header, internal scroll. */

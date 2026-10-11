@@ -1,5 +1,6 @@
 import { watch, provide, inject, type InjectionKey } from 'vue'
-import { loadLocalCopy } from '@/composables/localCopy'
+import { loadLocalCopy, saveLocalCopy } from '@/composables/localCopy'
+import { docIdOf } from '@/composables/useEditToken'
 import type { ContentType, DocMode } from '@/types'
 import { payloadMode } from '@/composables/docMeta'
 import { toast } from '@/composables/useToast'
@@ -88,21 +89,24 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (!data) {
       const draft = takeRestoredDraft(shareId)
       if (status === 404 || status === 410) {
-        // #26: only unsaved edits make a local copy worth showing; a clean draft
-        // (just viewed, e.g. a recent-list entry for a doc deleted elsewhere) is not-found.
-        if (!draft || draft.clean || doc.embed.value) {
-          // Rule 10: no local copy — a definitive "not found", never the upload screen.
-          doc.docMissing.value = 'missing'
-          return
+        // Rule 10: a definitive "not found", never the upload screen — and never
+        // the deleted doc's content (persona-QA M2: the boot restore had already
+        // put this browser's cached copy on screen, under the not-found page).
+        const copyKey = docIdOf(shareId)
+        let copy = loadLocalCopy(copyKey) ?? (copyKey !== shareId ? loadLocalCopy(shareId) : null)
+        // Unsaved edits are never lost: kept (persisted) and offered as a download.
+        // A clean draft (just viewed, e.g. a recent-list entry for a doc deleted
+        // elsewhere) holds nothing of the user's: it is dropped.
+        if (draft && !draft.clean && !doc.embed.value) {
+          copy = { markdown: draft.markdown, filename: draft.filename, at: new Date().toISOString(), reason: 'gone' }
+          saveLocalCopy(copyKey, copy)
         }
-        // Session gone, but this browser has a copy: keep it as a plain local document.
-        handleFileLoaded(draft.markdown, draft.filename, undefined, { shared: true })
-        doc.mode.value = draft.mode
-        doc.screenKey.value = 'landing'
-        router.replace(router.base)
-        doc.notice.value = status === 410
-          ? 'This shared session has expired. Showing your local copy.'
-          : 'This shared session no longer exists. Showing your local copy.'
+        resetToEmpty()
+        doc.screenKey.value = null
+        // (an embed never saves the copy above, so it leaves a dirty draft where it is)
+        if (draft && (draft.clean || !doc.embed.value)) void clearPersisted({ keepLocal: true })
+        doc.docMissing.value = 'missing'
+        doc.missingCopy.value = copy && !doc.embed.value ? { ...copy, key: copyKey } : null
         return
       }
       // Server unreachable (offline is not "not found"). If the persisted copy
@@ -369,6 +373,7 @@ export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean })
     if (from && !(await guardLeave(to, from, token))) return
     if (isStale(token)) return
     doc.docMissing.value = null
+    doc.missingCopy.value = null
     const r = to.route
     if (r.kind !== 'file') sessionFiles.closeFile()
     switch (r.kind) {

@@ -14,9 +14,10 @@ export interface LocalCopy {
   at: string
   /**
    * Why it was set aside: the link turned view-only (#23, the default), or the user
-   * chose "Use server version" in a conflict (QA M6) — that copy can be restored.
+   * chose "Use server version" in a conflict (QA M6) — that copy can be restored —
+   * or the doc was deleted / expired while this browser held unsaved edits ('gone').
    */
-  reason?: 'view-only' | 'conflict'
+  reason?: 'view-only' | 'conflict' | 'gone'
 }
 
 type CopyMap = Record<string, LocalCopy>

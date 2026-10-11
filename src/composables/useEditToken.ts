@@ -16,8 +16,16 @@ import { setEditTokenHandler } from '@/composables/useRouter'
 //  - "Make view-only" (claim, POST /paste/:id/edit-token).
 // A write refused with 401/403 drops the stored token and tells the listeners
 // (the doc state switches to viewer and shows the "view-only" toast).
+//
+// Tokens are stored by id but docs are usually opened by slug, so the slug → id
+// aliases of the docs we hold tokens for are persisted too
+// (`md-review-edit-token-slugs`). Without them a full page load of /d/<slug>
+// sent its first GET without the token, the server answered can_edit: false,
+// and the stored token was dropped as "refused" (persona-QA blocker). A token
+// is now dropped only when the GET that was refused actually presented it.
 
 export const EDIT_TOKENS_KEY = 'md-review-edit-tokens'
+export const EDIT_TOKEN_SLUGS_KEY = 'md-review-edit-token-slugs'
 
 type TokenMap = Record<string, string>
 
@@ -36,6 +44,37 @@ function writeMap(map: TokenMap) {
   } catch { /* storage unavailable: tokens last for this page only (pending) */ }
 }
 
+function readSlugs(): TokenMap {
+  try {
+    const raw = localStorage.getItem(EDIT_TOKEN_SLUGS_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as TokenMap : {}
+  } catch { return {} }
+}
+
+function writeSlugs(map: TokenMap) {
+  try {
+    if (Object.keys(map).length) localStorage.setItem(EDIT_TOKEN_SLUGS_KEY, JSON.stringify(map))
+    else localStorage.removeItem(EDIT_TOKEN_SLUGS_KEY)
+  } catch { /* storage unavailable: aliases last for this page only */ }
+}
+
+/** Persist `slug → id` (only for docs whose token is stored; a slug names one doc at a time). */
+function persistSlug(id: string, slug: string) {
+  const map = readSlugs()
+  if (map[slug] === id) return
+  map[slug] = id
+  writeSlugs(map)
+}
+
+/** Forget the persisted slugs of doc `id`. */
+function forgetSlugs(id: string) {
+  const map = readSlugs()
+  let changed = false
+  for (const [slug, target] of Object.entries(map)) if (target === id) { delete map[slug]; changed = true }
+  if (changed) writeSlugs(map)
+}
+
 /** `?edit=` tokens not yet confirmed by the server, by the slug or id they arrived on. */
 const pending = new Map<string, string>()
 /** slug → id, learned from server responses (tokens are stored by id). */
@@ -43,11 +82,13 @@ const aliases = new Map<string, string>()
 /** Tokens kept in memory when localStorage is unavailable (private mode, blocked storage). */
 const memory: TokenMap = {}
 
-const idOf = (key: string) => aliases.get(key) ?? key
+const idOf = (key: string) => aliases.get(key) ?? readSlugs()[key] ?? key
 
-/** Remember that `slug` names doc `id`. */
+/** Remember that `slug` names doc `id` (persisted when we hold that doc's token). */
 export function learnAlias(id: string, slug?: string | null) {
-  if (slug && slug !== id) aliases.set(slug, id)
+  if (!slug || slug === id) return
+  aliases.set(slug, id)
+  if (readMap()[id]) persistSlug(id, slug)
 }
 
 /** The token this browser holds for a doc (by id or slug), pending ones included. */
@@ -60,11 +101,12 @@ export function tokenFor(key: string | null | undefined): string | null {
 /** Store a token the server confirmed (or just issued) for a doc (by id, or by a slug already learned). */
 export function saveToken(key: string, token: string, slug?: string | null) {
   const id = idOf(key)
-  learnAlias(id, slug)
   memory[id] = token
   const map = readMap()
   map[id] = token
   writeMap(map)
+  learnAlias(id, slug)
+  if (key !== id) learnAlias(id, key)
 }
 
 /** Forget the token for a doc (by id or slug). */
@@ -74,6 +116,7 @@ export function dropToken(key: string) {
   delete memory[id]
   const map = readMap()
   if (id in map) { delete map[id]; writeMap(map) }
+  forgetSlugs(id)
 }
 
 /** Headers presenting this browser's token for the doc `key` ({} when none). */
@@ -85,23 +128,36 @@ export function editHeaders(key: string | null | undefined): Record<string, stri
 export interface DocAccess { protected: boolean; can_edit: boolean }
 
 /**
- * A doc GET for `key` came back (sent with editHeaders(key)): settle what we hold.
+ * A doc GET for `key` came back: settle what we hold. `sent` is the X-Edit-Token
+ * that GET carried (null: none); omitted, the token we hold for `key` is assumed.
  * can_edit → a pending token is confirmed and stored under the server's id;
  * a protected doc with can_edit false → the token we sent is no good: drop it.
+ * Returns true when we hold a token for the doc that the GET did NOT present
+ * (its slug was not known yet): the caller should re-send the GET with it
+ * rather than treat the doc as view-only.
  */
-export function settleAccess(key: string, data: { id?: string; slug?: string | null; access?: DocAccess }) {
+export function settleAccess(
+  key: string,
+  data: { id?: string; slug?: string | null; access?: DocAccess },
+  sent?: string | null,
+): boolean {
+  const presented = sent === undefined ? tokenFor(key) : sent
   const id = data.id || idOf(key)
   learnAlias(id, data.slug ?? (key !== id ? key : null))
   const access = data.access
-  if (!access) return
+  if (!access) return false
   const held = pending.get(key) ?? pending.get(id)
   pending.delete(key)
   pending.delete(id)
   if (access.can_edit) {
     if (held && access.protected) saveToken(id, held, data.slug)
-  } else if (access.protected && tokenFor(id)) {
-    dropToken(id)
+    return false
   }
+  if (!access.protected) return false
+  const stored = tokenFor(id)
+  if (!stored) return false
+  if (presented && presented === stored) { dropToken(id); return false }
+  return true
 }
 
 type RejectListener = (key: string) => void

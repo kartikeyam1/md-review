@@ -9,7 +9,7 @@ const { isDocMode } = require('../mode.cjs');
 const { NEXT } = require('../http-util.cjs');
 const { db } = require('../storage.cjs');
 const { snippetText, markdownToPlain } = require('../doc-text.cjs');
-const { ftsQuery, queryTerms, excerpt } = require('../search-query.cjs');
+const { ftsQuery, queryTerms, excerpt, titleSubstringTerms, substringExcerpt } = require('../search-query.cjs');
 const { readerKeyOf } = require('./library.cjs');
 const { compareTags } = require('../../shared/tags.mjs');
 
@@ -21,6 +21,9 @@ const send = (res, status, body) => {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
 };
+
+/** bm25 scores are negative (lower = better): a title holding the query as a substring ranks first. */
+const TITLE_SUBSTRING_SCORE = -1e6;
 
 /** Characters of a document scanned for its snippet (the match itself comes from the index). */
 const SNIPPET_SCAN_CHARS = 256 * 1024;
@@ -41,13 +44,18 @@ const hitForms = (segs) => new Set(segs.filter((x) => x.hit).map((x) => x.text.t
  * scan is capped at SNIPPET_SCAN_CHARS: a hit only beyond it yields the body's
  * opening words, unmarked.
  */
-function matchFor(row, terms) {
+function matchFor(row, terms, subs = []) {
   // #26: the best-ranked index row is a document file's → the snippet comes from that file
   const best = row.fts_rowid != null ? db.prepare('SELECT file_name, content FROM doc_fts WHERE rowid = ?').get(row.fts_rowid) : null;
   if (best && best.file_name) {
     const text = capped(best.content || '');
     const plain = /\.(md|markdown)$/i.test(best.file_name) ? markdownToPlain(text, { keepTags: true }) : text.replace(/\s+/g, ' ').trim();
     return { field: 'file', file: best.file_name, snippet: excerpt(plain, terms) || excerpt(plain, terms, { fallback: true }) };
+  }
+  // persona-QA m6: matched as a title substring only (CJK mid-run, emoji)
+  if (row.fts_rowid == null) {
+    const sub = substringExcerpt(row.title || '', subs);
+    if (sub) return { field: 'title', file: null, snippet: sub };
   }
   const md = db.prepare('SELECT markdown FROM contents WHERE session_id = ?').get(row.id);
   const body = snippetText(row.content_type, capped(md ? md.markdown : ''));
@@ -139,16 +147,29 @@ function libraryDocs(req, res) {
   let from = 'sessions s';
   let expr = null;
   const fromArgs = [];
+  const subs = q ? titleSubstringTerms(q) : [];
   if (q) {
     expr = ftsQuery(q);
-    if (!expr) return empty();
-    // best-ranked index row per session (a session and its document files collapse into one item)
+    const sources = [];
+    if (expr) {
+      sources.push('SELECT session_id, rowid AS fts_rowid, bm25(doc_fts, 10, 5, 1) AS score FROM doc_fts WHERE doc_fts MATCH ?');
+      fromArgs.push(expr);
+    }
+    if (subs.length) {
+      // persona-QA m6: CJK mid-run words and emoji, as title substrings (every token must occur)
+      sources.push(`SELECT id AS session_id, NULL AS fts_rowid, ${TITLE_SUBSTRING_SCORE} AS score FROM sessions
+                    WHERE ${subs.map(() => 'instr(lower(title), ?) > 0').join(' AND ')}`);
+      fromArgs.push(...subs);
+    }
+    if (!sources.length) return empty();
+    // best-ranked index row per session (a session and its document files collapse into one item);
+    // the session's score is its best source's, its snippet row the best index row
     from = `(SELECT session_id, fts_rowid, score FROM (
-               SELECT session_id, fts_rowid, score, row_number() OVER (PARTITION BY session_id ORDER BY score, fts_rowid) AS rn
-               FROM (SELECT session_id, rowid AS fts_rowid, bm25(doc_fts, 10, 5, 1) AS score FROM doc_fts WHERE doc_fts MATCH ?)
+               SELECT session_id, fts_rowid, min(score) OVER (PARTITION BY session_id) AS score,
+                      row_number() OVER (PARTITION BY session_id ORDER BY fts_rowid IS NULL, score, fts_rowid) AS rn
+               FROM (${sources.join(' UNION ALL ')})
              ) WHERE rn = 1) m
             JOIN sessions s ON s.id = m.session_id`;
-    fromArgs.push(expr);
   }
   const orderArgs = sort === 'pinned' ? [reader.key, reader.key] : [];
   const order = {
@@ -208,7 +229,7 @@ function libraryDocs(req, res) {
     must_fix_unresolved: r.must_fix_unresolved,
     pinned: pinned.has(r.id), // #26: for the X-MdReview-Reader reader
     protected: r.protected === 1, // #26: has an edit token (legacy link-editable docs: false)
-    match: q ? matchFor(r, terms) : null,
+    match: q ? matchFor(r, terms, subs) : null,
   }));
   const next = offset + page.length < total ? encodeCursor({ o: offset + page.length, f: fingerprint }) : null;
   return send(res, 200, { query: q, total, next_cursor: next, items });

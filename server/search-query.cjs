@@ -91,4 +91,55 @@ function excerpt(text, terms, { fallback = false } = {}) {
   return out;
 }
 
-module.exports = { ftsQuery, queryTerms, excerpt, SNIPPET_TOKENS };
+// ── title substrings (persona-QA m6) ─────────────────────────────────────────
+// unicode61 keeps an unbroken CJK run as ONE token ("日本語のレポート：配送ルート"
+// → "日本語のレポート", "配送ルート"), so prefix matching only finds the start of
+// a run, and a token with no letter/number (an emoji) is not indexed at all.
+// For a query holding such a token every query token is also tried as a
+// case-insensitive substring of the title (a scan of sessions.title — titles
+// only; contents keep token matching). See DECISIONS.md.
+
+/** Scripts written without spaces between words. */
+const NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+const MAX_SUBSTRING_TERMS = 8;
+
+/**
+ * The lower-cased query tokens to look for as title substrings, or [] when the
+ * query has no token the index cannot find (no CJK-like script, no symbol-only token).
+ */
+function titleSubstringTerms(q) {
+  const tokens = String(q).replace(/\p{Cc}/gu, ' ').split(/\s+/).filter(Boolean).map((t) => t.normalize('NFC'));
+  const symbolOnly = (t) => !/[\p{L}\p{N}]/u.test(t) && /[^\p{P}]/u.test(t); // an emoji, →, …; not bare punctuation
+  const needs = tokens.some((t) => NO_SPACE_SCRIPT.test(t) || symbolOnly(t));
+  if (!needs) return [];
+  // pure punctuation (", -, *) is FTS syntax noise, not something to look for
+  return tokens.filter((t) => /[^\p{P}]/u.test(t)).slice(0, MAX_SUBSTRING_TERMS).map((t) => t.toLowerCase());
+}
+
+/** Plain-text segments of `text` with every occurrence of `subs` marked as hits, or null when none occurs. */
+function substringExcerpt(text, subs) {
+  text = String(text ?? '');
+  if (!text || !subs.length) return null;
+  const lower = text.toLowerCase();
+  if (lower.length !== text.length) return null; // case folding changed offsets: no safe marks
+  const hits = [];
+  for (const sub of subs) {
+    if (!sub) continue;
+    for (let i = lower.indexOf(sub); i !== -1; i = lower.indexOf(sub, i + sub.length)) hits.push([i, i + sub.length]);
+  }
+  if (!hits.length) return null;
+  hits.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  const out = [];
+  let pos = 0;
+  for (const [a, b] of hits) {
+    if (b <= pos) continue;
+    const start = Math.max(a, pos);
+    if (start > pos) out.push({ text: text.slice(pos, start), hit: false });
+    out.push({ text: text.slice(start, b), hit: true });
+    pos = b;
+  }
+  if (pos < text.length) out.push({ text: text.slice(pos), hit: false });
+  return out;
+}
+
+module.exports = { ftsQuery, queryTerms, excerpt, titleSubstringTerms, substringExcerpt, SNIPPET_TOKENS };

@@ -63,4 +63,31 @@ describe('useEditToken (#23 rule 9)', () => {
     dropToken('seven')
     expect(stored()).toEqual({})
   })
+
+  // Persona-QA blocker: a full page load of /d/<slug> lost the stored token.
+  it('a stored token survives a page reload: the slug alias is persisted', () => {
+    saveToken('id5', 'mre_5', 'five')
+    __resetEditTokensForTests() // a reload forgets everything held in memory
+    expect(tokenFor('five')).toBe('mre_5')
+    expect(editHeaders('five')).toEqual({ 'X-Edit-Token': 'mre_5' })
+  })
+
+  it('a ?edit= token confirmed by slug survives a reload', () => {
+    onEditToken('my-doc', 'mre_e')
+    settleAccess('my-doc', { id: 'idE', slug: 'my-doc', access: { protected: true, can_edit: true } }, 'mre_e')
+    __resetEditTokensForTests()
+    expect(tokenFor('my-doc')).toBe('mre_e')
+  })
+
+  it('a refused GET that did not present the held token keeps it and asks for a retry', () => {
+    localStorage.setItem(EDIT_TOKENS_KEY, JSON.stringify({ id6: 'mre_6' })) // stored before slugs were persisted
+    const retry = settleAccess('six', { id: 'id6', slug: 'six', access: { protected: true, can_edit: false } }, null)
+    expect(retry).toBe(true)
+    expect(stored()).toEqual({ id6: 'mre_6' })
+    expect(tokenFor('six')).toBe('mre_6')
+    // the retry presents it; a refusal of the presented token drops it
+    expect(settleAccess('six', { id: 'id6', slug: 'six', access: { protected: true, can_edit: false } }, 'mre_6')).toBe(false)
+    expect(stored()).toEqual({})
+    expect(localStorage.getItem('md-review-edit-token-slugs')).toBeNull()
+  })
 })

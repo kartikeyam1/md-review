@@ -49,6 +49,12 @@ export function createDocState(router: Router) {
   const screenKey = ref<string | null>(null)
   /** The current doc route answered 404/410 (rule 10) — 'expired-revision' for a pinned 410. */
   const docMissing = ref<null | 'missing' | 'revision-gone'>(null)
+  /**
+   * Persona-QA M2: unsaved edits this browser held for a doc the server says is
+   * gone (404/410). The not-found page offers them as a download — the deleted
+   * doc's content is never rendered. `key` is where the copy is stored.
+   */
+  const missingCopy = ref<(LocalCopy & { key: string }) | null>(null)
   /** Pinned revision on screen (rule 7). */
   const pinnedInfo = ref<{ id: string; at: string | null } | null>(null)
 
@@ -300,7 +306,7 @@ export function createDocState(router: Router) {
   return {
     router,
     // route / screen
-    held, viewLoc, route, embed, readOnly, screenKey, docMissing, pinnedInfo, onScreen, booted,
+    held, viewLoc, route, embed, readOnly, screenKey, docMissing, missingCopy, pinnedInfo, onScreen, booted,
     filePathParam,
     // axes (00 §1) + mode
     ...axes, mode, ...modeSync, applyServerMeta, onServerPayload, access, localCopy, setLocalCopy, discardLocalCopy, useServerVersion, restoreLocalCopy, docTitle, docLink,

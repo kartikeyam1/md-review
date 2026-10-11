@@ -2,6 +2,7 @@
 import { ref, computed, defineAsyncComponent, nextTick, onMounted, onBeforeUnmount, onUnmounted, watch } from 'vue'
 import type { RevisionEntry } from '@/composables/useShare'
 import { useDocState } from '@/composables/useDocState'
+import { clearLocalCopy } from '@/composables/localCopy'
 import { useDocActions } from '@/composables/useDocLoader'
 import { markExternalChange } from '@/composables/useExternalChange'
 import { setAttachmentHost } from '@/composables/attachments'
@@ -58,7 +59,7 @@ const FileUpload = lazyFileUpload()
 const doc = useDocState()
 const actions = useDocActions()
 const {
-  router, route, embed, readOnly, docMissing, onScreen, booted, screenKey,
+  router, route, embed, readOnly, docMissing, missingCopy, onScreen, booted, screenKey,
   view, mode, capability, reviewUI, historyId, historyCurrent, historyLive,
   paneMode, markdown, filename, contentType, pasteId, NO_COMMENTS,
   showPromptModal, sidebarHidden, notice, showShareModal, shareResult,
@@ -249,6 +250,12 @@ function goHome() {
   router.push(router.base)
 }
 
+/** Persona-QA M2: the user discarded the unsaved edits kept for a doc that is gone. */
+function discardMissingCopy() {
+  clearLocalCopy(missingCopy.value?.key)
+  missingCopy.value = null
+}
+
 /**
  * #5 rule 2: the read view of a markdown doc scrolls the document itself (the
  * header is sticky); edit view, HTML (iframe) docs and file views keep the
@@ -345,11 +352,11 @@ const embedOpenHref = computed(() => {
       <FileTabs />
     </template>
 
-    <RouteNotFound v-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" @home="goHome" />
+    <RouteNotFound v-if="docMissing" :kind="docMissing === 'revision-gone' ? 'revision-gone' : 'doc'" :home="router.base" :copy="missingCopy" @home="goHome" @discard="discardMissingCopy" />
     <FileUpload v-else-if="route.kind === 'landing' && booted && !onScreen" @file-loaded="actions.handleFileLoaded" />
 
     <div
-      v-if="onScreen && !slidesShown"
+      v-if="onScreen && !slidesShown && !docMissing"
       id="doc-tabpanel"
       ref="bodyEl"
       class="doc-body review-layout"
