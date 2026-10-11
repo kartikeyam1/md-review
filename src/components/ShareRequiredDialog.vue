@@ -121,7 +121,7 @@ function close(kind: 'confirm' | 'cancel') {
   background: none;
   border: none;
   font-size: 20px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   padding: 4px 8px;
 }
 

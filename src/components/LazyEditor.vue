@@ -125,7 +125,7 @@ defineExpose({ scrollToLine, focus, scrollElement, topLine, scrollTopForLine })
 
 .skeleton-label {
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-family: var(--font-body);
 }
 
@@ -157,7 +157,7 @@ defineExpose({ scrollToLine, focus, scrollElement, topLine, scrollTopForLine })
 .editor-state-hint {
   margin: 0;
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .editor-state-actions {

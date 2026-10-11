@@ -497,7 +497,7 @@ const embedOpenHref = computed(() => {
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--bg-surface);
-  color: var(--text-muted);
+  color: var(--text-meta);
   text-decoration: none;
 }
 

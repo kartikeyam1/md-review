@@ -398,7 +398,7 @@ function restore() {
 }
 
 .modal-title-count {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-weight: 400;
   font-size: 13px;
 }
@@ -406,7 +406,7 @@ function restore() {
 .modal-close {
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 22px;
   cursor: pointer;
   line-height: 1;
@@ -420,7 +420,7 @@ function restore() {
 
 .rev-footer-hint {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .revisions-body {
@@ -458,7 +458,7 @@ function restore() {
 
 .rev-list-hint {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   padding: 4px 8px 8px;
 }
 
@@ -492,7 +492,7 @@ function restore() {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .rev-main {
@@ -503,7 +503,7 @@ function restore() {
 }
 
 .rev-by { font-size: 13px; font-weight: 500; }
-.rev-at, .rev-meta { font-size: 11px; color: var(--text-muted); }
+.rev-at, .rev-meta { font-size: 11px; color: var(--text-meta); }
 /* #21: an upsert run's change note — plain text, wrapped, never HTML; at most 3 lines (full text in title). */
 .rev-note {
   font-size: 12px;
@@ -553,9 +553,9 @@ function restore() {
 }
 .rev-summary-notes li { display: flex; flex-direction: column; gap: 1px; }
 .rev-summary-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.rev-summary-note-by { font-size: 11px; color: var(--text-muted); }
+.rev-summary-note-by { font-size: 11px; color: var(--text-meta); }
 .rev-summary-sections { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; }
-.rev-summary-label { color: var(--text-muted); font-size: 12px; }
+.rev-summary-label { color: var(--text-meta); font-size: 12px; }
 .rev-section-chip {
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -571,7 +571,7 @@ function restore() {
   gap: 12px;
   padding: 8px 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   border-bottom: 1px solid var(--border);
 }
 
@@ -581,7 +581,7 @@ function restore() {
 
 .rev-status {
   padding: 24px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 13px;
 }
 
@@ -607,14 +607,14 @@ function restore() {
 .diff-row.del .seg-changed { background: color-mix(in srgb, var(--rag-red-dot) 30%, var(--rag-red-bg)); border-radius: 2px; }
 
 .diff-no {
-  color: var(--text-muted);
+  color: var(--text-meta);
   text-align: right;
   padding-right: 8px;
   user-select: none;
   opacity: 0.7;
 }
 
-.diff-sign { color: var(--text-muted); user-select: none; }
+.diff-sign { color: var(--text-meta); user-select: none; }
 
 .diff-skip {
   display: block;
@@ -624,7 +624,7 @@ function restore() {
   border-top: 1px dashed var(--border);
   border-bottom: 1px dashed var(--border);
   background: var(--bg-page);
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-family: var(--font-body);
   font-size: 12px;
   padding: 4px 12px;

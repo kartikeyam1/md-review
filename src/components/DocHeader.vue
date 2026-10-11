@@ -356,7 +356,7 @@ function onLibraryClick(e: MouseEvent) {
   border-radius: 999px;
   white-space: nowrap;
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .mode-badge {

@@ -93,7 +93,7 @@ onUnmounted(() => {
 
 .focus-save-state {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   white-space: nowrap;
   padding: 2px 6px;
   border-radius: 4px;

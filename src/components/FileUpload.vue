@@ -198,7 +198,7 @@ function submitPaste() {
 }
 
 .upload-icon {
-  color: var(--text-muted);
+  color: var(--text-meta);
   margin-bottom: 20px;
 }
 
@@ -212,7 +212,7 @@ function submitPaste() {
 }
 
 .upload-subtitle {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 14px;
   margin-bottom: 12px;
 }
@@ -224,7 +224,7 @@ function submitPaste() {
   border-radius: 4px;
   padding: 4px 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-family: var(--font-mono);
 }
 
@@ -242,7 +242,7 @@ function submitPaste() {
 }
 
 .alt-divider {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 13px;
 }
 

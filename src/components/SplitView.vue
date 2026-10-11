@@ -523,7 +523,7 @@ const rootStyle = computed(() => (wide.value ? { '--split': String(effective.val
   background: var(--bg-surface);
   font-family: var(--font-body);
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .split-preview-label {

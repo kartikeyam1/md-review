@@ -119,14 +119,14 @@ onUnmounted(() => document.removeEventListener('keydown', onEscape))
 .modal-title-count {
   font-size: 14px;
   font-weight: 400;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .modal-close {
   background: none;
   border: none;
   font-size: 20px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   padding: 4px 8px;
 }
 

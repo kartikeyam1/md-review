@@ -67,7 +67,7 @@ html[data-reader-width='wide'] .preview-pane {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   cursor: pointer;
   opacity: 0;
   user-select: none;
@@ -272,7 +272,7 @@ html .preview-pane .mermaid svg :is(p, li, span, div) {
 .preview-pane:not(.github-mode) blockquote {
   border-left: 3px solid var(--border);
   padding-left: 16px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   margin: 0 0 12px;
 }
 
@@ -283,7 +283,7 @@ html .preview-pane .mermaid svg :is(p, li, span, div) {
 }
 
 .preview-pane:not(.github-mode) a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 
@@ -354,7 +354,7 @@ html .preview-pane .mermaid svg :is(p, li, span, div) {
 .preview-pane:not(.github-mode) .hljs-keyword,
 .preview-pane:not(.github-mode) .hljs-selector-tag,
 .preview-pane:not(.github-mode) .hljs-tag {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
 }
 
@@ -366,14 +366,13 @@ html .preview-pane .mermaid svg :is(p, li, span, div) {
 
 .preview-pane:not(.github-mode) .hljs-comment,
 .preview-pane:not(.github-mode) .hljs-quote {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-style: italic;
 }
 
 .preview-pane:not(.github-mode) .hljs-number,
 .preview-pane:not(.github-mode) .hljs-literal {
-  color: var(--accent);
-  opacity: 0.85;
+  color: var(--accent-text);
 }
 
 .preview-pane:not(.github-mode) .hljs-function,
@@ -402,12 +401,12 @@ html .preview-pane .mermaid svg :is(p, li, span, div) {
 
 .preview-pane:not(.github-mode) .hljs-meta,
 .preview-pane:not(.github-mode) .hljs-meta-keyword {
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .preview-pane:not(.github-mode) .hljs-punctuation,
 .preview-pane:not(.github-mode) .hljs-operator {
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 /* h4 / h5 / h6 */
@@ -470,7 +469,7 @@ html .preview-pane .mermaid svg :is(p, li, span, div) {
 
 .preview-pane:not(.github-mode) .task-list-item input[type='checkbox']:checked + span,
 .preview-pane:not(.github-mode) .task-list-item input[type='checkbox']:checked ~ * {
-  color: var(--text-muted);
+  color: var(--text-meta);
   text-decoration: line-through;
   text-decoration-color: var(--text-muted);
 }
@@ -588,7 +587,7 @@ html.dark.locus-theme .preview-pane .hljs-tag {
 
 html.locus-theme .preview-pane .hljs-comment,
 html.locus-theme .preview-pane .hljs-quote {
-  color: var(--text-muted);
+  color: var(--text-muted); /* brand-mandated #9B8FA8, exempt in Locus light (AC-01.13) */
   font-style: italic;
 }
 
@@ -1212,7 +1211,7 @@ html.locus-theme .preview-pane details {
 
 .preview-pane .inline-toc-empty {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-style: italic;
 }
 

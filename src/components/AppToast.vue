@@ -128,7 +128,7 @@ function onFocusOut(e: FocusEvent, id: number) {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;

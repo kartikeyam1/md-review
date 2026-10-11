@@ -43,7 +43,7 @@ function onFilenameKeydown(e: KeyboardEvent) {
 
 <style scoped>
 .filename {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 13px;
   cursor: pointer;
   border-radius: 3px;

@@ -268,7 +268,7 @@ const attachmentEntries = computed<AppMenuEntry[]>(() => {
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   cursor: pointer;
   flex-shrink: 0;
 }

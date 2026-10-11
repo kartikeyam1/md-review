@@ -17,10 +17,11 @@
   --shadow-color: rgba(26, 22, 18, 0.08);
   --overlay-bg: rgba(26, 22, 18, 0.5);
   /* #1: accent used as text, small meta text, the preview table header, and the
-     comment categories (hue + text on a hue fill; all >= 4.5:1). Themes that
-     do not override them keep today's look. */
-  --accent-text: var(--accent);
-  --text-meta: var(--text-muted);
+     comment categories (hue + text on a hue fill; all >= 4.5:1). --text-muted
+     stays for borders and decoration; text that reads as muted uses --text-meta,
+     which every theme sets at >= 4.5:1 on its page, surface and code backgrounds. */
+  --accent-text: #b0351e;
+  --text-meta: #6b655f;
   --table-head-bg: var(--bg-page);
   --table-head-fg: var(--text-primary);
   --cat-suggestion: #2563eb;
@@ -42,6 +43,8 @@ html.dark {
   --text-muted: #6e6a65;
   --accent: #e05a42;
   --border: #3a3a3e;
+  --accent-text: #ec7a63;
+  --text-meta: #9a958f;
   --comment-bg: rgba(224, 90, 66, 0.1);
   --selection-bg: rgba(224, 90, 66, 0.25);
   --shadow-color: rgba(0, 0, 0, 0.25);
@@ -65,6 +68,8 @@ html.github-theme {
   --text-muted: #848d97;
   --accent: #0969da;
   --border: #d0d7de;
+  --accent-text: var(--accent);
+  --text-meta: #656d76;
   --comment-bg: rgba(9, 105, 218, 0.08);
   --selection-bg: rgba(9, 105, 218, 0.18);
   --shadow-color: rgba(31, 35, 40, 0.08);
@@ -80,6 +85,8 @@ html.dark.github-theme {
   --text-muted: #6e7681;
   --accent: #58a6ff;
   --border: #30363d;
+  --accent-text: var(--accent);
+  --text-meta: #7d8590;
   --comment-bg: rgba(88, 166, 255, 0.1);
   --selection-bg: rgba(88, 166, 255, 0.25);
   --shadow-color: rgba(0, 0, 0, 0.4);

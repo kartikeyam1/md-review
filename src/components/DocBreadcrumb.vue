@@ -61,7 +61,7 @@ function go(e: MouseEvent, href: string) {
   background: var(--bg-surface);
   font-size: 13px;
   line-height: 20px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .doc-breadcrumb[data-breakpoint='phone'] {
@@ -91,7 +91,7 @@ ol {
 .crumb + .crumb::before {
   content: '›';
   padding: 0 6px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   flex-shrink: 0;
 }
 
@@ -104,7 +104,7 @@ ol {
 }
 
 .crumb a {
-  color: var(--text-muted);
+  color: var(--text-meta);
   text-decoration: none;
   border-radius: 4px;
 }

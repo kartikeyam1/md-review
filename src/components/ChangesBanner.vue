@@ -63,7 +63,7 @@ const detail = computed(() => {
 }
 
 .changes-detail {
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .changes-actions {

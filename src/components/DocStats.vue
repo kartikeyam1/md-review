@@ -15,7 +15,7 @@ const { wordCount, charCount } = useDocState()
 
 <style scoped>
 .doc-stats {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 12px;
   display: flex;
   align-items: center;
@@ -24,7 +24,7 @@ const { wordCount, charCount } = useDocState()
 }
 
 .doc-stats-sep {
-  color: var(--text-muted);
+  color: var(--text-meta);
   opacity: 0.5;
 }
 

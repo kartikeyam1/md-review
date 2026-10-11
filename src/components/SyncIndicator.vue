@@ -22,7 +22,7 @@ const pendingCount = computed(() => sync.pendingCount.value)
   align-items: center;
   gap: 5px;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   padding: 0 4px;
   white-space: nowrap;
 }
@@ -44,6 +44,6 @@ const pendingCount = computed(() => sync.pendingCount.value)
 
 .sync-pending {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 </style>

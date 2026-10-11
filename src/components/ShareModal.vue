@@ -247,7 +247,7 @@ async function copyText(text: string, label: string) {
   background: none;
   border: none;
   font-size: 20px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   padding: 4px 8px;
 }
 
@@ -274,11 +274,11 @@ async function copyText(text: string, label: string) {
 .url-hint {
   margin: 0;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .url-hint.warn {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -310,7 +310,7 @@ async function copyText(text: string, label: string) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .url-value {
