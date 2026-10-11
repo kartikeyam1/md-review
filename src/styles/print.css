@@ -1,0 +1,289 @@
+/* Print stylesheet (spec #5 rules 11–16). Imported last (main.ts) so it wins
+   over the theme tokens; the GitHub sheets are <link>s added later at runtime,
+   hence the !important on colours. #19 reuses these rules for its exports. */
+
+@media print {
+  /* ── Rule 13: a light palette whatever the theme (all 6) ── */
+  :root,
+  html.dark,
+  html.github-theme,
+  html.dark.github-theme,
+  html.locus-theme,
+  html.dark.locus-theme {
+    --bg-page: #ffffff;
+    --bg-surface: #ffffff;
+    --bg-code: #f3f3f3;
+    --text-primary: #1a1a1a;
+    --text-secondary: #1a1a1a;
+    --text-muted: #555555;
+    --text-meta: #555555;
+    --accent: #0645ad;
+    --accent-text: #0645ad;
+    --border: #cccccc;
+    --comment-bg: transparent;
+    --table-head-bg: #f3f3f3;
+    --table-head-fg: #1a1a1a;
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #1a1a1a !important;
+  }
+
+  /* ── Rule 11: no app chrome ── */
+  header:not(.preview-pane header),
+  [data-testid='doc-header'],
+  [data-testid='doc-meta-row'],
+  .doc-rail,
+  [data-testid='toc-panel'],
+  [data-testid='toc-toggle'],
+  [data-testid='toc-drawer'],
+  [data-testid='toc-backdrop'],
+  .doc-aside,
+  .sidebar,
+  .sidebar-toggle,
+  [data-testid='comments-toggle'],
+  [data-testid='comments-drawer'],
+  [data-testid='comments-backdrop'],
+  .selection-action-bar,
+  .popover,
+  .approval-banner,
+  .summary-panel,
+  .changes-bar,
+  [data-testid='changes-banner'],
+  .conflict-bar,
+  .notice-bar,
+  .local-copy,
+  .app-toasts,
+  [data-testid='app-toast'],
+  .modal-overlay,
+  [role='dialog'],
+  [role='menu'],
+  [data-testid='header-overflow-menu'],
+  [data-testid='heading-anchor'],
+  [data-testid='reaction-bar'],
+  [data-testid='code-toolbar'],
+  .lazy-editor,
+  .editor-pane,
+  .cm-editor,
+  [data-testid='editor-toolbar'],
+  .embed-footer,
+  [data-testid='embed-open-link'],
+  .preview-pane button {
+    display: none !important;
+  }
+
+  /* ── Rule 12: the whole document prints, not one screen ── */
+  .app,
+  .doc-body,
+  .doc-content,
+  .main-pane,
+  .embed-pane {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  :root .preview-pane {
+    /* #18: the reader's on-screen text size is a screen preference; print at 100%. */
+    --reader-scale: 1 !important;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #1a1a1a !important;
+  }
+
+  .preview-pane :is(p, li, dt, dd, td, th, h1, h2, h3, h4, h5, h6, strong, em, b, i, del, figcaption) {
+    color: #1a1a1a !important;
+  }
+
+  .preview-pane blockquote {
+    color: #333333 !important;
+    border-color: #cccccc !important;
+  }
+
+  .preview-pane a {
+    color: #0645ad !important;
+  }
+
+  .preview-pane :is(pre, code, kbd) {
+    background-color: #f3f3f3 !important;
+  }
+
+  .preview-pane pre {
+    color: #1a1a1a !important;
+    border-color: #cccccc !important;
+  }
+
+  .preview-pane :is(table, tr, th, td) {
+    border-color: #cccccc !important;
+  }
+
+  .preview-pane :is(table, tr, td) {
+    background-color: #ffffff !important;
+  }
+
+  .preview-pane th {
+    background-color: #f3f3f3 !important;
+  }
+
+  .preview-pane hr {
+    background-color: #cccccc !important;
+    border-color: #cccccc !important;
+  }
+
+  /* Review highlights are screen-only. */
+  .preview-pane .comment-highlight {
+    background: transparent !important;
+    border-left: 0 !important;
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  .preview-pane .table-scroll,
+  .preview-pane pre {
+    overflow: visible !important;
+  }
+
+  /* On paper there is no sideways scroll box: tables fit the page and cells
+     wrap anywhere (on screen they keep break-word and scroll, see DECISIONS). */
+  .preview-pane table {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .preview-pane :is(th, td) {
+    overflow-wrap: anywhere !important;
+  }
+
+  .preview-pane pre,
+  .preview-pane pre code {
+    white-space: pre-wrap !important;
+    overflow-wrap: anywhere;
+  }
+
+  /* #14: the toolbar does not print, so its reserved strip goes too. */
+  :root .preview-pane .code-block > pre {
+    padding-top: var(--code-pad, 12px);
+  }
+
+  /* ── Rule 14: page breaks ── */
+  .preview-pane :is(pre, tr, img, .mermaid, blockquote),
+  .preview-pane .table-scroll thead {
+    break-inside: avoid;
+  }
+
+  .preview-pane :is(h1, h2, h3, h4, h5, h6) {
+    break-after: avoid;
+  }
+
+  .preview-pane thead {
+    display: table-header-group;
+  }
+
+  /* ── #16 rule 9: callouts print with their border and title, unsplit when short ── */
+  html.dark:not(.locus-theme) {
+    --callout-note: #0757b8;
+    --callout-tip: #166a2e;
+    --callout-important: #6f3fc9;
+    --callout-warning: #7d5300;
+    --callout-caution: #b31d28;
+  }
+
+  /* Dark themes print on white: light-theme text colours for callout titles and RAG pills. */
+  html.dark.locus-theme {
+    --callout-note-fg: #2A50D6;
+    --callout-tip-fg: #00703D;
+    --callout-important-fg: #7B2FD1;
+    --callout-warning-fg: #8A5300;
+    --callout-caution-fg: #B91C1C;
+  }
+
+  html.dark {
+    --rag-green-bg: #dcf5e6;
+    --rag-green-fg: #0f5c2e;
+    --rag-amber-bg: #fff0d1;
+    --rag-amber-fg: #6e4300;
+    --rag-red-bg: #fad4cf;
+    --rag-red-fg: #8f1c0e;
+  }
+
+  .preview-pane .callout {
+    break-inside: avoid;
+  }
+
+  .preview-pane:not(.github-mode) .callout {
+    border-color: var(--callout) !important;
+  }
+
+  .preview-pane:not(.github-mode) .callout .octicon {
+    color: var(--callout) !important;
+  }
+
+  :root .preview-pane:not(.github-mode) .callout > .markdown-alert-title {
+    color: var(--callout-fg) !important;
+  }
+
+  .preview-pane .rag {
+    color: var(--rag-fg) !important;
+    border: 1px solid var(--rag-dot);
+  }
+
+  /* ── #17 rule 15: folds and closed <details> print expanded ── */
+  .preview-pane [hidden='until-found'],
+  .preview-pane [data-fold-hidden] {
+    content-visibility: visible !important;
+  }
+
+  /* Safari treats until-found as plain hidden (display: none). */
+  .preview-pane [data-fold-hidden]:not(table) {
+    display: block !important;
+  }
+
+  .preview-pane details:not([open])::details-content {
+    display: block !important;
+    content-visibility: visible !important;
+  }
+
+  .preview-pane details:not([open]) > :not(summary) {
+    display: block !important;
+  }
+
+  .preview-pane .heading-fold-ellipsis,
+  .preview-pane .heading-fold-toggle {
+    display: none !important;
+  }
+
+  /* ── #15 rule 17: diagrams/images print plainly; the viewer never prints ── */
+  .preview-pane [data-zoomable] {
+    cursor: auto !important;
+  }
+
+  .zoom-viewer,
+  .zoom-viewer-host {
+    display: none !important;
+  }
+
+  /* ── Rule 15: show where external links go ── */
+  .preview-pane a[href^='http://']:not(.autolink)::after,
+  .preview-pane a[href^='https://']:not(.autolink)::after {
+    content: ' (' attr(href) ')';
+    font-size: 0.85em;
+    color: #444444;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Rule 16: HTML docs print as the browser allows ── */
+  .html-frame {
+    height: auto;
+    min-height: 100vh;
+  }
+}

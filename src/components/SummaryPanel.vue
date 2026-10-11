@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { Comment, ApprovalStatus } from '@/types'
 import { COMMENT_CATEGORIES } from '@/types'
 
@@ -11,7 +11,15 @@ const props = defineProps<{
   approvalStatus?: ApprovalStatus
 }>()
 
-const collapsed = ref(false)
+// Remembered per browser (a reviewer who folds it once keeps ~150px of the doc on screen).
+const COLLAPSED_KEY = 'md-review-summary-collapsed'
+function readCollapsed(): boolean {
+  try { return localStorage.getItem(COLLAPSED_KEY) === '1' } catch { return false }
+}
+const collapsed = ref(readCollapsed())
+watch(collapsed, (c) => {
+  try { if (c) localStorage.setItem(COLLAPSED_KEY, '1'); else localStorage.removeItem(COLLAPSED_KEY) } catch { /* unavailable */ }
+})
 
 const categoryCounts = computed(() => {
   const counts: Record<string, number> = {}
@@ -88,7 +96,7 @@ const unresolvedMustFix = computed(() =>
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   margin-bottom: 8px;
 }
 .category-badges {
@@ -117,14 +125,14 @@ const unresolvedMustFix = computed(() =>
 }
 .attention-header {
   font-weight: 600;
-  color: #dc2626;
+  color: var(--cat-must-fix);
   margin-bottom: 4px;
 }
 :global(html.dark .attention-header) {
-  color: #f87171;
+  color: var(--cat-must-fix);
 }
 :global(html.dark .attention-line) {
-  color: #f87171;
+  color: var(--cat-must-fix);
 }
 .attention-item {
   display: flex;
@@ -134,10 +142,11 @@ const unresolvedMustFix = computed(() =>
 }
 .attention-line {
   font-family: monospace;
-  color: #dc2626;
+  color: var(--cat-must-fix);
   min-width: 36px;
 }
 .attention-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

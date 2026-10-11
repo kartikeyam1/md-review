@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef } from 'vue'
-import { EditorView, keymap, lineNumbers, drawSelection, Decoration, ViewPlugin, type ViewUpdate } from '@codemirror/view'
+import { EditorView, Decoration, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import { EditorState, StateField, StateEffect, RangeSetBuilder, Compartment, type Extension } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { html } from '@codemirror/lang-html'
 import { languages } from '@codemirror/language-data'
-import { defaultKeymap } from '@codemirror/commands'
-import { search, searchKeymap } from '@codemirror/search'
+import { undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
 import type { Comment, ContentType } from '@/types'
+import EditorToolbar from '@/components/EditorToolbar.vue'
+import { editorExtensions } from '@/editor/extensions'
+import { applyExternal, clearHistory, externalWrite, keepState, takeKeptState } from '@/editor/history'
+import { onHistoryBarrier, takeExternalOrigin } from '@/composables/useExternalChange'
+import { formatTable as formatTableCommand } from '@/editor/tablePaste'
 
 // ── Props & Emits ──────────────────────────────────────────────
 
@@ -36,8 +40,14 @@ const emit = defineEmits<{
 const container = ref<HTMLDivElement | null>(null)
 const view = shallowRef<EditorView | null>(null)
 
-// Guard: prevent echoing external updates back to the parent
-let ignoreNextUpdate = false
+// Toolbar state: each button is enabled exactly when its stack has a step.
+const canUndo = ref(false)
+const canRedo = ref(false)
+
+function syncDepths(state: EditorState) {
+  canUndo.value = undoDepth(state) > 0
+  canRedo.value = redoDepth(state) > 0
+}
 
 // ── Comment decoration machinery ───────────────────────────────
 
@@ -108,11 +118,16 @@ const editorTheme = EditorView.theme({
   },
   '.cm-gutters': {
     backgroundColor: 'transparent',
-    color: 'var(--text-muted)',
+    color: 'var(--text-meta)',
     border: 'none',
   },
   '.cm-content': {
     caretColor: 'var(--text-primary)',
+  },
+  // CodeMirror draws its own caret (black by default): follow the theme ink so
+  // it stays visible in every dark theme.
+  '&.cm-editor .cm-cursor, &.cm-editor .cm-dropCursor': {
+    borderLeftColor: 'var(--text-primary)',
   },
   '&.cm-focused .cm-selectionBackground': {
     backgroundColor: 'var(--selection-bg) !important',
@@ -165,7 +180,15 @@ const selectionListener = ViewPlugin.fromClass(
 
       // coordsAtPos cannot be called during an update — defer to next frame
       requestAnimationFrame(() => {
-        const coords = editorView.coordsAtPos(selTo)
+        // By the next frame the doc may have shrunk (or the view gone): measure a
+        // position that still exists, and never let a stale one throw.
+        if (!editorView.dom.isConnected) return
+        let coords: { left: number; bottom: number } | null = null
+        try {
+          coords = editorView.coordsAtPos(Math.min(selTo, editorView.state.doc.length))
+        } catch {
+          coords = null
+        }
         const x = coords ? coords.left : 0
         const y = coords ? coords.bottom : 0
         emit('selection', { startLine, endLine, selectedText, coords: { x, y } })
@@ -179,36 +202,25 @@ const selectionListener = ViewPlugin.fromClass(
 onMounted(() => {
   if (!container.value) return
 
+  // Same document as when this editor was last unmounted (a view switch):
+  // take its selection and undo history back (#8 rule 7).
+  const kept = takeKeptState(props.modelValue)
   const state = EditorState.create({
     doc: props.modelValue,
+    selection: kept?.selection,
     extensions: [
-      lineNumbers(),
-      drawSelection(),
-      search(),
-      keymap.of([...defaultKeymap, ...searchKeymap]),
+      ...editorExtensions({ restoredHistory: kept?.extension ?? null }),
       languageCompartment.of(languageExtension(props.contentType)),
       commentField,
       editorTheme,
       selectionListener,
-      EditorView.domEventHandlers({
-        paste(event, editorView) {
-          const text = event.clipboardData?.getData('text/plain') ?? ''
-          if (text.trimStart().startsWith('<svg') && text.trimEnd().endsWith('</svg>')) {
-            event.preventDefault()
-            const cursor = editorView.state.selection.main.head
-            editorView.dispatch({
-              changes: { from: cursor, insert: `\n${text.trim()}\n` },
-            })
-            return true
-          }
-          return false
-        },
-      }),
       EditorView.updateListener.of((update: ViewUpdate) => {
-        if (update.docChanged && !ignoreNextUpdate) {
+        // External writes already come from the model: never echo them back.
+        const external = update.transactions.some((tr) => tr.annotation(externalWrite) !== undefined)
+        if (update.docChanged && !external) {
           emit('update:modelValue', update.state.doc.toString())
         }
-        ignoreNextUpdate = false
+        syncDepths(update.state)
       }),
     ],
   })
@@ -217,6 +229,7 @@ onMounted(() => {
     state,
     parent: container.value,
   })
+  syncDepths(state)
 
   // Apply initial comments
   if (props.comments.length > 0) {
@@ -226,7 +239,17 @@ onMounted(() => {
   }
 })
 
+// A barrier (another document, a remote write) also empties this live
+// editor's history: #6 keeps the instance across a local file replacement.
+const stopBarrier = onHistoryBarrier(() => {
+  if (!view.value) return
+  clearHistory(view.value)
+  syncDepths(view.value.state)
+})
+
 onBeforeUnmount(() => {
+  stopBarrier()
+  if (view.value) keepState(view.value.state)
   view.value?.destroy()
 })
 
@@ -267,17 +290,12 @@ watch(
   () => props.modelValue,
   (newValue) => {
     if (!view.value) return
-    const current = view.value.state.doc.toString()
-    if (newValue === current) return
-
-    ignoreNextUpdate = true
-    view.value.dispatch({
-      changes: {
-        from: 0,
-        to: view.value.state.doc.length,
-        insert: newValue,
-      },
-    })
+    // An external write (the editor's own edits arrive here equal to its doc):
+    // a minimal change; remote ones bypass and clear history, local ones
+    // (revision restore) are one undo step (#8 rules 4, 6).
+    const origin = takeExternalOrigin(newValue)
+    if (newValue === view.value.state.doc.toString()) return
+    applyExternal(view.value, newValue, origin)
   },
 )
 
@@ -293,16 +311,82 @@ function scrollToLine(line: number) {
   })
 }
 
-defineExpose({ scrollToLine })
+// ── Scroll API for split view's synced scrolling (#7 rule 8) ─────────────────
+
+/** The element that scrolls the editor. */
+function scrollElement(): HTMLElement | null {
+  return view.value?.scrollDOM ?? null
+}
+
+/** The top visible source line: 0-indexed, fractional within the line. */
+function topLine(): number | null {
+  const v = view.value
+  if (!v) return null
+  const h = v.scrollDOM.getBoundingClientRect().top - v.documentTop
+  if (h <= 0) return 0
+  const block = v.lineBlockAtHeight(h)
+  const frac = block.height > 0 ? (h - block.top) / block.height : 0
+  return v.state.doc.lineAt(block.from).number - 1 + Math.min(1, Math.max(0, frac))
+}
+
+/** The scroller scrollTop that puts source line `line` (fractional) at the top edge. */
+function scrollTopForLine(line: number): number | null {
+  const v = view.value
+  if (!v) return null
+  const n = Math.max(1, Math.min(Math.floor(line) + 1, v.state.doc.lines))
+  const block = v.lineBlockAt(v.state.doc.line(n).from)
+  const frac = Math.min(1, Math.max(0, line - (n - 1)))
+  const sd = v.scrollDOM
+  const docTop = v.documentTop - sd.getBoundingClientRect().top + sd.scrollTop
+  return docTop + block.top + frac * block.height
+}
+
+/** Move keyboard focus into the editor (used by the lazy slot once it mounts, #6). */
+function focus() {
+  view.value?.focus()
+}
+
+function runHistory(command: typeof undo) {
+  const v = view.value
+  if (!v) return
+  command(v)
+  v.focus()
+}
+
+/** Re-align the table under the cursor (#11; also Shift+Alt+F). */
+function formatTable() {
+  const v = view.value
+  if (!v) return
+  formatTableCommand(v)
+  v.focus()
+}
+
+defineExpose({ scrollToLine, focus, formatTable, scrollElement, topLine, scrollTopForLine })
 </script>
 
 <template>
-  <div ref="container" class="editor-pane" />
+  <div class="editor-pane">
+    <EditorToolbar
+      :can-undo="canUndo"
+      :can-redo="canRedo"
+      @undo="runHistory(undo)"
+      @redo="runHistory(redo)"
+    />
+    <div ref="container" class="editor-host" />
+  </div>
 </template>
 
 <style scoped>
 .editor-pane {
   height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
 }
 

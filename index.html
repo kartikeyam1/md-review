@@ -3,11 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MD Review</title>
+    <title>md-review</title>
     <link rel="icon" href="data:,">
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;500;600&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+    <!-- #1: apply the stored theme before first paint (no flash of the wrong
+         theme). Mirrors applyTheme() in src/composables/useTheme.ts: key
+         md-review-theme, classes dark / github-theme / locus-theme and
+         data-theme-style; unknown values fall back to the OS preference in the
+         Default style. tests/composables/themeBoot.test.ts keeps them in sync. -->
+    <script>
+      (function () {
+        var h = document.documentElement, t = null, dark = false
+        try { t = localStorage.getItem('md-review-theme') } catch (e) {}
+        var m = /^(?:(github|locus)-)?(light|dark)$/.exec(t || '')
+        if (m) dark = m[2] === 'dark'
+        else try { dark = matchMedia('(prefers-color-scheme: dark)').matches } catch (e) {}
+        var style = (m && m[1]) || 'default'
+        h.classList.toggle('dark', dark)
+        h.classList.toggle('github-theme', style === 'github')
+        h.classList.toggle('locus-theme', style === 'locus')
+        h.setAttribute('data-theme-style', style)
+      })()
+    </script>
+    <!-- #18: apply the stored reader text size and width before first paint.
+         Mirrors applyReaderPrefs() in src/composables/useReaderPrefs.ts: key
+         md-review-reader-prefs, --reader-scale and data-reader-width on <html>. -->
+    <script>
+      (function () {
+        try {
+          var p = JSON.parse(localStorage.getItem('md-review-reader-prefs') || 'null') || {}
+          var s = [80, 90, 100, 110, 120, 135, 150].indexOf(p.fontScale) >= 0 ? p.fontScale : 100
+          var h = document.documentElement
+          h.style.setProperty('--reader-scale', String(s / 100))
+          h.setAttribute('data-reader-width', p.width === 'wide' ? 'wide' : 'narrow')
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

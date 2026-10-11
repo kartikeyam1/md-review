@@ -1,8 +1,10 @@
 import { ref } from 'vue'
-import type { Comment, Reply, ApprovalInfo, ContentType } from '@/types'
+import type { Comment, Reply, ApprovalInfo, ContentType, DocMode } from '@/types'
 import type { TextDelta } from '@/composables/useDelta'
+import { docShareUrl, encodeFilePath } from '@/composables/useRouter'
+import { editHeaders, settleAccess, checkWriteStatus, saveToken, type DocAccess } from '@/composables/useEditToken'
+import { PASTE_API } from '@/composables/pasteApi'
 
-const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
 /** Identifies content writes from the browser UI in the revision history. */
 const CLIENT_HEADER = { 'X-MdReview-Client': 'ui' }
 
@@ -19,11 +21,17 @@ export interface RevisionEntry {
   writes?: number
   /** Seeded from a session that predates revision history. */
   seeded?: boolean
+  /** #21: the change note of an upsert run (present only when set). */
+  note?: string
 }
 
 export interface RevisionContent extends RevisionEntry {
   markdown: string
   is_current: boolean
+  /** The doc's current mode and name (#2; additive, absent on older servers). */
+  mode?: DocMode
+  sessionName?: string | null
+  filename?: string | null
 }
 
 export interface SharedPayload {
@@ -33,10 +41,21 @@ export interface SharedPayload {
   sharedAt: string
   sessionName?: string
   contentType?: ContentType
+  slug?: string | null
+  /** Per-doc mode (#2); absent on sessions that predate it (reads as review). */
+  mode?: DocMode
+  /** Latest content revision (server summary). */
+  latest_revision?: { hash: string; at: string; by: string | null; client: string | null } | null
   /** Server-side hash of the stored markdown — the If-Match token for writes. */
   content_hash?: string
   /** ETag of the GET that produced this payload (attached client-side). */
   etag?: string | null
+  /** The session id (#23; additive, absent on older servers). */
+  id?: string
+  /** Edit access for this browser (#23 rule 6; absent on older servers). */
+  access?: DocAccess
+  /** ISO expiry, absent/null = never (#23 expiry picker). */
+  expires_at?: string | null
 }
 
 export interface PutMarkdownResult {
@@ -62,6 +81,11 @@ export interface PutMarkdownOptions {
   /** Reviewer name recorded on the revision this write creates. */
   author?: string
   /**
+   * A forced conflict resolution ("keep my version"): the server keeps the copy
+   * this replaces as its own revision instead of folding it away (QA M6).
+   */
+  overwrite?: boolean
+  /**
    * Send only the changed span instead of the whole document. Requires
    * `ifMatch`. A server that predates deltas answers 200 without a
    * content_hash; the result then carries `deltaIgnored` so the caller can
@@ -78,7 +102,8 @@ export function useShare() {
   const sharing = ref(false)
   const shareError = ref<string | null>(null)
 
-  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string): Promise<string | null> {
+  /** Returns the new session's id and slug (null when the server assigned none). The edit token (#23) is stored. */
+  async function createShare(markdown: string, filename: string, comments: Comment[], sessionName?: string, contentType?: ContentType, author?: string, mode?: DocMode): Promise<{ id: string; slug: string | null } | null> {
     sharing.value = true
     shareError.value = null
 
@@ -91,6 +116,7 @@ export function useShare() {
     if (sessionName) payload.sessionName = sessionName
     if (contentType) payload.contentType = contentType
     if (author) payload.author = author
+    if (mode) payload.mode = mode
 
     try {
       const res = await fetch(`${PASTE_API}/paste`, {
@@ -104,8 +130,9 @@ export function useShare() {
         return null
       }
 
-      const { id } = await res.json()
-      return id as string
+      const { id, slug, editToken } = await res.json() as { id: string; slug?: string | null; editToken?: string }
+      if (editToken) saveToken(id, editToken, slug)
+      return { id, slug: slug || null }
     } catch (e) {
       shareError.value = 'Could not reach paste service. Are you on VPN?'
       return null
@@ -126,36 +153,40 @@ export function useShare() {
 
   async function loadShareDetailed(id: string): Promise<{ data: SharedPayload | null; status: number }> {
     try {
-      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}`)
-      if (!res.ok) return { data: null, status: res.status }
-      const data = await res.json() as SharedPayload
-      data.etag = res.headers.get('etag')
-      return { data, status: res.status }
+      // Twice at most: when the first GET went out without a token we hold for
+      // this doc (its slug was not known yet), re-send it with the token.
+      for (let attempt = 0; ; attempt++) {
+        const headers = editHeaders(id)
+        const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}`, { headers })
+        if (!res.ok) return { data: null, status: res.status }
+        const data = await res.json() as SharedPayload
+        data.etag = res.headers.get('etag')
+        const retry = settleAccess(id, data, headers['X-Edit-Token'] ?? null)
+        if (!retry || attempt > 0) return { data, status: res.status }
+      }
     } catch {
       return { data: null, status: 0 }
     }
   }
 
-  function getShareIdFromHash(): string | null {
-    const hash = window.location.hash
-    const match = hash.match(/^#shared=([a-zA-Z0-9][a-zA-Z0-9-]*)$/)
-    return match ? match[1] : null
-  }
-
-  function setShareHash(id: string) {
-    window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}#shared=${id}`)
-  }
-
-  function clearShareHash() {
-    if (window.location.hash) {
-      window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`)
-    }
-  }
-
-  function getShareUrls(id: string) {
-    const ui = `${window.location.origin}${window.location.pathname}#shared=${id}`
-    const api = `${PASTE_API}/paste/${id}`
+  /** Links for a shared doc. `key` is the slug when it has one, else the id (00 §6). */
+  function getShareUrls(key: string) {
+    const ui = docShareUrl(key)
+    const api = `${PASTE_API}/paste/${key}`
     return { ui, api, comments: `${api}/comments`, markdown: `${api}/markdown` }
+  }
+
+  /** One file of a multi-file session (route d/<ID>/<FILE>, rule 8). */
+  async function loadSessionFile(id: string, file: string): Promise<{ blob: Blob | null; type: string; status: number }> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(id)}/files/${encodeFilePath(file)}`)
+      if (!res.ok) return { blob: null, type: '', status: res.status }
+      return { blob: await res.blob(), type: res.headers.get('content-type') || '', status: res.status }
+    } catch { return { blob: null, type: '', status: 0 } }
+  }
+
+  function sessionFileUrl(id: string, file: string): string {
+    return `${PASTE_API}/paste/${encodeURIComponent(id)}/files/${encodeFilePath(file)}`
   }
 
   async function fetchGithub(githubUrl: string): Promise<{ content: string; filename: string } | null> {
@@ -261,13 +292,15 @@ export function useShare() {
       const body: Record<string, unknown> = useDelta ? { delta: opts.delta } : { markdown }
       if (filename) body.filename = filename
       if (opts.author) body.author = opts.author
+      if (opts.overwrite) body.overwrite = true
       const payload = JSON.stringify(body)
-      const headers: Record<string, string> = { 'Content-Type': 'application/json', ...CLIENT_HEADER }
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', ...CLIENT_HEADER, ...editHeaders(pasteId) }
       if (opts.ifMatch) headers['If-Match'] = opts.ifMatch
       const init: RequestInit = { method: 'PUT', headers, body: payload }
       if (opts.keepalive && payload.length <= KEEPALIVE_MAX_BYTES) init.keepalive = true
 
       const res = await fetch(`${PASTE_API}/paste/${pasteId}/markdown`, init)
+      checkWriteStatus(pasteId, res.status)
       if (res.status === 412) {
         const remote = await res.json().catch(() => ({})) as { markdown?: string; filename?: string; content_hash?: string }
         return {
@@ -300,6 +333,55 @@ export function useShare() {
       if (!res.ok) return { data: null, status: res.status }
       return { data: await res.json() as RevisionContent, status: res.status }
     } catch { return { data: null, status: 0 } }
+  }
+
+  /** PUT /paste/:id/meta — true on 2xx. */
+  async function putMeta(pasteId: string, updates: { mode?: DocMode; sessionName?: string; expiry_days?: number | null }): Promise<boolean> {
+    return (await putMetaDetailed(pasteId, updates)) !== null
+  }
+
+  /** PUT /paste/:id/meta — the response body on 2xx, else null. */
+  async function putMetaDetailed(pasteId: string, updates: { mode?: DocMode; sessionName?: string; expiry_days?: number | null }): Promise<{ expires_at?: string | null; expiry_days?: number | null } | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/meta`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...editHeaders(pasteId) },
+        body: JSON.stringify(updates),
+      })
+      checkWriteStatus(pasteId, res.status)
+      if (!res.ok) return null
+      return await res.json().catch(() => ({}))
+    } catch { return null }
+  }
+
+  /**
+   * POST /paste/:id/edit-token (#23 rule 7): rotate (with the token we hold) or
+   * claim a legacy doc ("Make view-only"). The new token is stored.
+   */
+  async function claimEditToken(pasteId: string, docId?: string | null, slug?: string | null): Promise<string | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/edit-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...editHeaders(pasteId) },
+        body: '{}',
+      })
+      checkWriteStatus(pasteId, res.status)
+      if (!res.ok) return null
+      const { editToken } = await res.json() as { editToken?: string }
+      if (!editToken) return null
+      saveToken(docId || pasteId, editToken, slug)
+      return editToken
+    } catch { return null }
+  }
+
+  /** Comments of a session without loading the document (pinned revisions). */
+  async function getComments(pasteId: string): Promise<Comment[] | null> {
+    try {
+      const res = await fetch(`${PASTE_API}/paste/${encodeURIComponent(pasteId)}/comments`)
+      if (!res.ok) return null
+      const data = await res.json() as { comments?: Comment[] }
+      return Array.isArray(data.comments) ? data.comments : []
+    } catch { return null }
   }
 
   async function getApproval(pasteId: string): Promise<ApprovalInfo | null> {
@@ -349,11 +431,11 @@ export function useShare() {
     } catch { return null }
   }
 
-  async function pollPaste(pasteId: string, etag: string | null): Promise<{
+  async function pollPaste(pasteId: string, etag: string | null, retried = false): Promise<{
     data: SharedPayload | null; etag: string | null; notModified: boolean; status: number
   }> {
     try {
-      const headers: Record<string, string> = {}
+      const headers: Record<string, string> = { ...editHeaders(pasteId) }
       if (etag) headers['If-None-Match'] = etag
       const res = await fetch(`${PASTE_API}/paste/${pasteId}`, { headers })
       if (res.status === 304) return { data: null, etag, notModified: true, status: 304 }
@@ -361,17 +443,22 @@ export function useShare() {
       const newEtag = res.headers.get('etag')
       const data = await res.json() as SharedPayload
       data.etag = newEtag
+      if (settleAccess(pasteId, data, headers['X-Edit-Token'] ?? null) && !retried) {
+        // We hold a token this poll did not present: re-poll with it.
+        return pollPaste(pasteId, null, true)
+      }
       return { data, etag: newEtag, notModified: false, status: res.status }
     } catch { return { data: null, etag: null, notModified: false, status: 0 } }
   }
 
   return {
     sharing, shareError, createShare, loadShare, loadShareDetailed, fetchGithub,
-    getShareIdFromHash, setShareHash, clearShareHash, getShareUrls,
+    getShareUrls, loadSessionFile, sessionFileUrl,
     postComment, putComment, deleteCommentApi,
     postReply, putReply, deleteReplyApi,
     putMarkdown, pollPaste,
     getRevisions, getRevision,
     getApproval, putApproval, resolveCommentApi, unresolveCommentApi,
+    putMeta, putMetaDetailed, claimEditToken, getComments,
   }
 }

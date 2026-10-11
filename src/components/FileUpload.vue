@@ -1,10 +1,22 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { detectContentType, defaultFilename } from '@/composables/useContentType'
+import { PASTE_API } from '@/composables/pasteApi'
+import { useRouter } from '@/composables/useRouter'
+import { newFromTemplate } from '@/composables/templateEntry'
 
 const emit = defineEmits<{
   'file-loaded': [content: string, filename: string]
 }>()
+
+const router = useRouter()
+const libraryHref = `${router.base}library`
+/** #26 rule 1: the landing page links to the library (in-app navigation, no reload). */
+function goLibrary(e: MouseEvent) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  router.push(libraryHref)
+}
 
 const isDragging = ref(false)
 const showPaste = ref(false)
@@ -24,7 +36,6 @@ async function submitGithub() {
   githubError.value = ''
 
   try {
-    const PASTE_API = import.meta.env.VITE_PASTE_API_URL || ''
     const res = await fetch(`${PASTE_API}/github?url=${encodeURIComponent(url)}`)
     if (!res.ok) {
       const data = await res.json().catch(() => ({ error: `Server error (${res.status})` }))
@@ -116,7 +127,12 @@ function submitPaste() {
         <button class="btn btn-ghost" @click.stop="showGithub = true; showPaste = false">From GitHub</button>
         <span class="alt-divider">or</span>
         <button class="btn btn-ghost" @click.stop="startBlank">Start blank</button>
+        <span class="alt-divider">or</span>
+        <button class="btn btn-ghost" data-testid="landing-new-from-template" @click.stop="newFromTemplate">From template</button>
       </div>
+      <p class="library-link-row">
+        <a class="library-link" :href="libraryHref" data-testid="nav-library" @click="goLibrary">Browse the library →</a>
+      </p>
     </template>
 
     <div v-else-if="showPaste" class="paste-area">
@@ -130,7 +146,7 @@ function submitPaste() {
       />
       <div class="paste-actions">
         <button class="btn btn-ghost" @click="showPaste = false">Back</button>
-        <button class="btn btn-primary" @click="submitPaste">Start Review</button>
+        <button class="btn btn-primary" @click="submitPaste">Open document</button>
       </div>
     </div>
 
@@ -182,7 +198,7 @@ function submitPaste() {
 }
 
 .upload-icon {
-  color: var(--text-muted);
+  color: var(--text-meta);
   margin-bottom: 20px;
 }
 
@@ -196,7 +212,7 @@ function submitPaste() {
 }
 
 .upload-subtitle {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 14px;
   margin-bottom: 12px;
 }
@@ -208,7 +224,7 @@ function submitPaste() {
   border-radius: 4px;
   padding: 4px 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-family: var(--font-mono);
 }
 
@@ -218,13 +234,15 @@ function submitPaste() {
 
 .alt-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 12px;
   margin-top: 20px;
 }
 
 .alt-divider {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 13px;
 }
 
@@ -284,5 +302,20 @@ function submitPaste() {
   color: var(--accent);
   font-size: 13px;
   margin-top: 8px;
+}
+
+.library-link-row {
+  margin: 20px 0 0;
+  text-align: center;
+}
+.library-link {
+  font-size: 13px;
+  color: var(--text-meta);
+  text-decoration: none;
+}
+.library-link:hover,
+.library-link:focus-visible {
+  color: var(--text-primary);
+  text-decoration: underline;
 }
 </style>

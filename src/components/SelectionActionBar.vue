@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch, onBeforeUnmount } from 'vue'
+import { ref, reactive, watch, nextTick, onBeforeUnmount } from 'vue'
 
 const MARGIN = 6
 
@@ -14,13 +14,16 @@ const emit = defineEmits<{
 }>()
 
 const pos = reactive({ x: 0, y: 0 })
+const barRef = ref<HTMLElement | null>(null)
 
 function clamp() {
   const vw = window.innerWidth
+  // The rendered width (font and theme vary); 90px until the bar is on screen.
+  const w = barRef.value?.offsetWidth || 90
   let x = props.coords.x
   let y = props.coords.y - 36 // show above selection
 
-  if (x + 90 > vw - MARGIN) x = vw - 90 - MARGIN
+  if (x + w > vw - MARGIN) x = vw - w - MARGIN
   if (x < MARGIN) x = MARGIN
   if (y < MARGIN) y = props.coords.y + MARGIN // flip below if no room above
 
@@ -39,6 +42,7 @@ watch(
   (v) => {
     if (v) {
       clamp()
+      nextTick(clamp) // again with the measured width
       requestAnimationFrame(() => {
         document.addEventListener('mousedown', onDocMouseDown, true)
       })
@@ -49,7 +53,7 @@ watch(
 )
 
 watch(() => props.coords, () => {
-  if (props.visible) clamp()
+  if (props.visible) { clamp(); nextTick(clamp) }
 })
 
 onBeforeUnmount(() => {
@@ -60,6 +64,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     v-if="visible"
+    ref="barRef"
     class="selection-action-bar"
     :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
   >

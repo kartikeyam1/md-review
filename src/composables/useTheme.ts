@@ -1,33 +1,52 @@
-import type { ThemeMode } from '@/types'
+import type { ThemeMode, ThemeStyle } from '@/types'
 import githubLightUrl from 'github-markdown-css/github-markdown-light.css?url'
 import githubDarkUrl from 'github-markdown-css/github-markdown-dark.css?url'
 
-export const THEME_CYCLE: ThemeMode[] = ['light', 'dark', 'github-light', 'github-dark']
+// A theme is a style (Default / GitHub / Locus) × a dark flag (#1 rule 1).
+// The header toggle flips the flag; the Style menu picks the style.
 
-const VALID_THEMES = new Set<string>(THEME_CYCLE)
+export const ALL_THEMES: ThemeMode[] = ['light', 'dark', 'github-light', 'github-dark', 'locus-light', 'locus-dark']
+
+export const THEME_STYLES: ThemeStyle[] = ['default', 'github', 'locus']
+
+export const THEME_STYLE_LABELS: Record<ThemeStyle, string> = {
+  default: 'Default',
+  github: 'GitHub',
+  locus: 'Locus',
+}
+
+const VALID_THEMES = new Set<string>(ALL_THEMES)
+
+export function isValidTheme(v: unknown): v is ThemeMode {
+  return typeof v === 'string' && VALID_THEMES.has(v)
+}
 
 export function isDark(theme: ThemeMode): boolean {
-  return theme === 'dark' || theme === 'github-dark'
+  return theme === 'dark' || theme === 'github-dark' || theme === 'locus-dark'
 }
 
 export function isGithub(theme: ThemeMode): boolean {
   return theme === 'github-light' || theme === 'github-dark'
 }
 
-export function nextTheme(current: ThemeMode): ThemeMode {
-  const idx = THEME_CYCLE.indexOf(current)
-  return THEME_CYCLE[(idx + 1) % THEME_CYCLE.length]
+export function isLocus(theme: ThemeMode): boolean {
+  return theme === 'locus-light' || theme === 'locus-dark'
 }
 
-export function isValidTheme(v: unknown): v is ThemeMode {
-  return typeof v === 'string' && VALID_THEMES.has(v)
+export function themeStyle(theme: ThemeMode): ThemeStyle {
+  if (isGithub(theme)) return 'github'
+  if (isLocus(theme)) return 'locus'
+  return 'default'
 }
 
-export const THEME_META: Record<ThemeMode, { label: string; title: string }> = {
-  'light': { label: 'Light', title: 'Switch to Dark mode' },
-  'dark': { label: 'Dark', title: 'Switch to GitHub Light mode' },
-  'github-light': { label: 'GitHub Light', title: 'Switch to GitHub Dark mode' },
-  'github-dark': { label: 'GitHub Dark', title: 'Switch to Light mode' },
+export function themeFor(style: ThemeStyle, dark: boolean): ThemeMode {
+  if (style === 'default') return dark ? 'dark' : 'light'
+  return `${style}-${dark ? 'dark' : 'light'}`
+}
+
+/** Same style, flipped dark flag. */
+export function toggleDark(theme: ThemeMode): ThemeMode {
+  return themeFor(themeStyle(theme), !isDark(theme))
 }
 
 function ensureLink(url: string, id: string): HTMLLinkElement {
@@ -43,10 +62,13 @@ function ensureLink(url: string, id: string): HTMLLinkElement {
   return link
 }
 
+/** Keep in sync with the inline boot script in index.html (tests/composables/themeBoot.test.ts). */
 export function applyTheme(t: ThemeMode): void {
   const html = document.documentElement
   html.classList.toggle('dark', isDark(t))
   html.classList.toggle('github-theme', isGithub(t))
+  html.classList.toggle('locus-theme', isLocus(t))
+  html.setAttribute('data-theme-style', themeStyle(t))
 
   const light = ensureLink(githubLightUrl, 'github-css-light')
   const dark = ensureLink(githubDarkUrl, 'github-css-dark')

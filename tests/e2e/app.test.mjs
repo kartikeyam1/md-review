@@ -3,10 +3,10 @@ import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BASE } from './helpers.mjs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const FIXTURE = resolve(__dirname, 'fixture.md')
-const BASE = 'http://localhost:58747'
 const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
 
 let browser, context, page
@@ -16,13 +16,65 @@ async function clickCommentAction(p = page) {
   const bar = p.locator('.selection-action-bar .action-btn')
   await bar.waitFor({ state: 'visible', timeout: 3000 })
   await bar.click()
-  await p.waitForTimeout(300)
+  const popover = p.locator('.popover')
+  await popover.waitFor({ state: 'visible' })
+  // The popover measures itself after mounting and then clamps into the
+  // viewport: wait until its box holds still for a few frames (cap 2 s).
+  await popover.evaluate((el) => new Promise((resolve) => {
+    const key = () => { const r = el.getBoundingClientRect(); return `${r.x},${r.y},${r.width},${r.height}` }
+    let last = key(), still = 0
+    const t0 = performance.now()
+    const tick = () => {
+      const k = key()
+      still = k === last ? still + 1 : 0
+      last = k
+      if (still >= 3 || performance.now() - t0 > 2000) resolve()
+      else requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }))
 }
 
 /** Switch from default preview mode to edit mode */
 async function switchToEdit(p = page) {
   await p.click('button:has-text("Edit")')
-  await p.waitForTimeout(500)
+  // #6: the editor is lazy-loaded — wait for it to mount before typing.
+  await p.locator('.cm-editor:visible .cm-content').first().waitFor({ state: 'visible', timeout: 20000 })
+  await p.locator('.cm-editor:visible .cm-line').first().waitFor({ state: 'visible' })
+}
+
+/** Wait until the ?filePath= fixture has loaded and rendered. */
+async function waitForFixture(p = page) {
+  await p.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor()
+  await p.locator('.preview-pane [data-line-start]').first().waitFor()
+}
+
+/** Wait until the upload screen is up. */
+async function waitForUpload(p = page) {
+  await p.locator('.upload-area, .paste-area').first().waitFor()
+}
+
+/** Let CSS transitions in flight finish (capped at 1 s; animations are ignored). */
+async function settleTransitions(p = page) {
+  await p.evaluate(async () => {
+    const done = document.getAnimations()
+      .filter((a) => a instanceof CSSTransition)
+      .map((a) => a.finished.then(() => {}, () => {}))
+    await Promise.race([Promise.all(done), new Promise((r) => setTimeout(r, 1000))])
+  })
+}
+
+/** Click the theme toggle; wait for <html>'s classes to change and the restyle to settle. */
+async function cycleTheme(p = page) {
+  const before = await p.evaluate(() => document.documentElement.className)
+  await p.click('.btn-icon')
+  await p.waitForFunction((b) => document.documentElement.className !== b, before)
+  await settleTransitions(p)
+}
+
+/** Poll an in-page condition; the assertion that follows still decides. */
+async function until(p, cond, arg) {
+  await p.waitForFunction(cond, arg, { timeout: 5000 }).catch(() => {})
 }
 
 before(async () => {
@@ -43,16 +95,17 @@ beforeEach(async () => {
 describe('file loading via ?filePath=', () => {
   it('auto-loads file into preview mode', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should be visible')
-    const filename = await page.locator('.filename').textContent()
-    assert.ok(filename.includes('fixture.md'))
+    const filename = await page.locator('[data-testid="doc-title"]').textContent()
+    // #5 docTitle (00 §5): the H1 of fixture.md, not the filename
+    assert.ok(filename.includes('Test Document'))
   })
 
   it('shows upload screen without filePath param', async () => {
     await page.goto(BASE)
-    await page.waitForTimeout(1000)
+    await waitForUpload(page)
     const uploadArea = await page.locator('.upload-area').count()
     assert.ok(uploadArea > 0 || (await page.locator('.paste-area').count()) > 0, 'Upload screen should show')
   })
@@ -63,33 +116,31 @@ describe('file loading via ?filePath=', () => {
 describe('dark mode', () => {
   it('toggles dark class on html element', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
+    await waitForFixture(page)
+    await cycleTheme(page)
     const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'))
     assert.ok(isDark, 'Should have dark class after toggle')
 
-    // Second click: dark → github-light (dark removed, github-theme added)
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
-    const isGithubLight = await page.evaluate(() =>
+    // Second click: back to light (#1: the toggle flips dark within the style, no cycling into GitHub)
+    await cycleTheme(page)
+    const isLight = await page.evaluate(() =>
       !document.documentElement.classList.contains('dark') &&
-      document.documentElement.classList.contains('github-theme')
+      !document.documentElement.classList.contains('github-theme')
     )
-    assert.ok(isGithubLight, 'Second click should activate github-light (no dark, has github-theme)')
+    assert.ok(isLight, 'Second click should return to light (no dark, no github-theme)')
   })
 
   it('editor selection uses themed color in dark mode', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
     // Switch to dark
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
+    await cycleTheme(page)
 
     // Select first line
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
+    await page.locator('.cm-selectionBackground').first().waitFor({ state: 'attached' })
+    await settleTransitions()
 
     const selBg = await page.evaluate(() => {
       const sel = document.querySelector('.cm-selectionBackground')
@@ -102,7 +153,7 @@ describe('dark mode', () => {
 
   it('editor gutter uses CSS variable, not hardcoded color', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
     // Light mode gutter
     const lightGutter = await page.evaluate(() => {
@@ -110,8 +161,7 @@ describe('dark mode', () => {
       return g ? window.getComputedStyle(g).color : null
     })
     // Switch to dark
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
+    await cycleTheme(page)
     const darkGutter = await page.evaluate(() => {
       const g = document.querySelector('.cm-gutters')
       return g ? window.getComputedStyle(g).color : null
@@ -125,15 +175,14 @@ describe('dark mode', () => {
 describe('code block commenting in preview', () => {
   it('code blocks have line data attributes for commenting', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     // Switch to preview
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     // Find the <pre> element
     const pre = page.locator('.preview-pane pre').first()
     await pre.scrollIntoViewIfNeeded()
-    await page.waitForTimeout(300)
 
     // Verify the pre has data-line-start/data-line-end attributes
     const hasLineStart = await pre.evaluate((el) => el.hasAttribute('data-line-start'))
@@ -151,18 +200,16 @@ describe('code block commenting in preview', () => {
 
   it('shows popover when selecting text inside a code block', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await waitForFixture(page)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const pre = page.locator('.preview-pane pre').first()
     await pre.scrollIntoViewIfNeeded()
-    await page.waitForTimeout(300)
 
     // Use triple-click to reliably select a line inside the code block
     const codeEl = page.locator('.preview-pane pre code').first()
     await codeEl.click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     const popover = page.locator('.popover')
@@ -176,12 +223,11 @@ describe('code block commenting in preview', () => {
 describe('popover dismissal', () => {
   it('dismisses empty popover when clicking outside', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Select text to trigger popover
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
 
     const popoverBefore = await page.locator('.popover').isVisible().catch(() => false)
@@ -189,7 +235,7 @@ describe('popover dismissal', () => {
 
     // Click outside the popover (on the sidebar)
     await page.locator('.sidebar').click({ position: { x: 50, y: 200 } })
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
 
     const popoverAfter = await page.locator('.popover').isVisible().catch(() => false)
     assert.ok(!popoverAfter, 'Empty popover should dismiss when clicking outside')
@@ -197,20 +243,20 @@ describe('popover dismissal', () => {
 
   it('keeps popover open when clicking outside if body has text', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Select text to trigger popover
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
 
     // Type something in the popover textarea
     await page.locator('.popover textarea').fill('work in progress')
-    await page.waitForTimeout(200)
 
     // Click outside
     await page.locator('.sidebar').click({ position: { x: 50, y: 200 } })
+    // Negative assertion (the popover must NOT close): keep a bounded wait so a
+    // deferred dismissal would still be caught.
     await page.waitForTimeout(500)
 
     const popoverAfter = await page.locator('.popover').isVisible().catch(() => false)
@@ -223,12 +269,11 @@ describe('popover dismissal', () => {
 describe('comment categories', () => {
   it('shows category buttons in popover and includes tag in sidebar', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Select text
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
 
     // Verify category buttons exist
@@ -237,12 +282,11 @@ describe('comment categories', () => {
 
     // Pick "Must Fix"
     await page.click('.popover .category-btn:has-text("Must Fix")')
-    await page.waitForTimeout(100)
 
     // Add comment
     await page.locator('.popover textarea').fill('This needs fixing')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     // Verify category tag appears in sidebar
     const tag = await page.locator('.category-tag').first().textContent()
@@ -251,21 +295,21 @@ describe('comment categories', () => {
 
   it('includes category in generated prompt', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Add a comment with category
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Nit")')
     await page.locator('.popover textarea').fill('Minor issue')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     // Open prompt modal
-    await page.click('button:has-text("Generate Prompt")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-generate-prompt"]')
+    await page.locator('.prompt-text').waitFor()
 
     const promptText = await page.locator('.prompt-text').textContent()
     assert.ok(promptText.includes('[nit]'), `Prompt should contain [nit] tag, got: ${promptText.substring(0, 200)}`)
@@ -279,23 +323,21 @@ describe('comment categories', () => {
 describe('comment editing', () => {
   it('can edit a comment body via Edit button', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Add a comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.locator('.popover textarea').fill('Original text')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     // Hover and click Edit
     const card = page.locator('.comment-card').first()
     await card.hover()
-    await page.waitForTimeout(200)
     await card.locator('.comment-action-btn:has-text("Edit")').click()
-    await page.waitForTimeout(300)
+    await page.locator('.edit-input').waitFor({ timeout: 5000 }).catch(() => {})
 
     // Verify edit textarea appears
     const editInput = page.locator('.edit-input')
@@ -304,7 +346,7 @@ describe('comment editing', () => {
     // Change text and save
     await editInput.fill('Updated text')
     await page.click('.edit-actions .btn-primary')
-    await page.waitForTimeout(300)
+    await until(page, () => document.querySelector('.comment-body')?.textContent.includes('Updated text'))
 
     const body = await page.locator('.comment-body').first().textContent()
     assert.ok(body.includes('Updated text'), `Comment should be updated, got: "${body}"`)
@@ -316,27 +358,25 @@ describe('comment editing', () => {
 describe('category filter', () => {
   it('filters comments by category', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Add two comments with different categories
     const lines = page.locator('.cm-line')
 
     await lines.nth(0).click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Nit")')
     await page.locator('.popover textarea').fill('A nit')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     await lines.nth(4).click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Must Fix")')
     await page.locator('.popover textarea').fill('A must fix')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     // Both should be visible
     const allCount = await page.locator('.comment-card').count()
@@ -344,13 +384,13 @@ describe('category filter', () => {
 
     // Filter to "Nit" only
     await page.click('.filter-btn:has-text("Nit")')
-    await page.waitForTimeout(300)
+    await until(page, () => document.querySelectorAll('.comment-card').length === 1)
     const nitCount = await page.locator('.comment-card').count()
     assert.equal(nitCount, 1, 'Should show only 1 nit comment')
 
     // Clear filter
     await page.click('.filter-btn:has-text("Nit")')
-    await page.waitForTimeout(300)
+    await until(page, () => document.querySelectorAll('.comment-card').length >= 2)
     const allAgain = await page.locator('.comment-card').count()
     assert.ok(allAgain >= 2, 'Should show all comments again after clearing filter')
   })
@@ -361,15 +401,16 @@ describe('category filter', () => {
 describe('new document', () => {
   it('clears filePath query param from URL', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
     // Verify URL has filePath
     let url = page.url()
     assert.ok(url.includes('filePath'), 'URL should have filePath param initially')
 
     // Click New
-    await page.click('button:has-text("New")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-new-doc"]')
+    await page.waitForURL((u) => !u.href.includes('filePath'), { timeout: 5000 }).catch(() => {})
 
     url = page.url()
     assert.ok(!url.includes('filePath'), `URL should not have filePath after New, got: ${url}`)
@@ -377,10 +418,11 @@ describe('new document', () => {
 
   it('returns to upload screen', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("New")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-new-doc"]')
+    await page.locator('.upload-area').waitFor({ timeout: 5000 }).catch(() => {})
 
     const uploadVisible = await page.locator('.upload-area').isVisible().catch(() => false)
     assert.ok(uploadVisible, 'Should show upload screen after New')
@@ -392,35 +434,37 @@ describe('new document', () => {
 describe('paste and blank document', () => {
   it('can start with a blank document', async () => {
     await page.goto(BASE)
-    await page.waitForTimeout(1000)
+    await waitForUpload(page)
 
     await page.click('button:has-text("Start blank")')
-    await page.waitForTimeout(1000)
+    await page.locator('[data-testid="doc-title"]').waitFor({ timeout: 5000 }).catch(() => {})
 
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should appear after starting blank')
-    const filename = await page.locator('.filename').textContent()
-    assert.ok(filename.includes('untitled.md'))
+    const filename = await page.locator('[data-testid="doc-title"]').textContent()
+    // #5 docTitle (00 §5): an empty doc falls back to the filename without its extension
+    assert.ok(filename.includes('untitled'))
   })
 
   it('can paste markdown and review it', async () => {
     await page.goto(BASE)
-    await page.waitForTimeout(1000)
+    await waitForUpload(page)
 
     await page.click('button:has-text("Paste markdown")')
-    await page.waitForTimeout(300)
+    await page.locator('.paste-input').waitFor({ timeout: 5000 }).catch(() => {})
 
     const pasteArea = page.locator('.paste-input')
     assert.ok(await pasteArea.isVisible(), 'Paste textarea should appear')
 
     await pasteArea.fill('# Pasted Title\n\nSome pasted content')
-    await page.click('button:has-text("Start Review")')
-    await page.waitForTimeout(1000)
+    await page.click('button:has-text("Open document")')
+    await page.locator('[data-testid="doc-title"]').waitFor({ timeout: 5000 }).catch(() => {})
 
     const hasPreview = await page.locator('.preview-pane').count()
     assert.ok(hasPreview > 0, 'Preview pane should appear after pasting')
-    const filename = await page.locator('.filename').textContent()
-    assert.ok(filename.includes('pasted.md'))
+    const filename = await page.locator('[data-testid="doc-title"]').textContent()
+    // #5 docTitle (00 §5): the pasted doc's H1
+    assert.ok(filename.includes('Pasted Title'))
   })
 })
 
@@ -429,14 +473,13 @@ describe('paste and blank document', () => {
 describe('table rendering', () => {
   it('renders tables with proper styling', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const table = page.locator('.preview-pane table').first()
     await table.scrollIntoViewIfNeeded()
-    await page.waitForTimeout(300)
 
     const display = await table.evaluate((el) => window.getComputedStyle(el).display)
     assert.ok(display === 'table', `Table should have display:table, got: ${display}`)
@@ -451,10 +494,10 @@ describe('table rendering', () => {
 describe('code block contrast', () => {
   it('code blocks are visually distinct from preview background', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const previewBg = await page.evaluate(() => {
       const p = document.querySelector('.preview-pane')
@@ -470,11 +513,11 @@ describe('code block contrast', () => {
 
   it('code blocks have contrast in dark mode too', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('.btn-icon') // dark mode
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await cycleTheme(page) // dark mode
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const previewBg = await page.evaluate(() => {
       const p = document.querySelector('.preview-pane')
@@ -496,12 +539,11 @@ describe('popover viewport clamping', () => {
     const narrowContext = await browser.newContext({ viewport: { width: 800, height: 900 } })
     const narrowPage = await narrowContext.newPage()
     await narrowPage.goto(FILE_URL)
-    await narrowPage.waitForTimeout(2000)
+    await waitForFixture(narrowPage)
 
     // Switch to edit mode, then select text
     await switchToEdit(narrowPage)
     await narrowPage.locator('.cm-line').first().click({ clickCount: 3 })
-    await narrowPage.waitForTimeout(500)
     await clickCommentAction(narrowPage)
 
     const popover = narrowPage.locator('.popover')
@@ -525,7 +567,7 @@ describe('popover viewport clamping', () => {
     const shortContext = await browser.newContext({ viewport: { width: 1400, height: 400 } })
     const shortPage = await shortContext.newPage()
     await shortPage.goto(FILE_URL)
-    await shortPage.waitForTimeout(2000)
+    await waitForFixture(shortPage)
 
     // Switch to edit mode, select a line further down
     await switchToEdit(shortPage)
@@ -534,9 +576,7 @@ describe('popover viewport clamping', () => {
     // Pick one of the later lines
     const targetIdx = Math.min(lineCount - 1, 6)
     await lines.nth(targetIdx).scrollIntoViewIfNeeded()
-    await shortPage.waitForTimeout(200)
     await lines.nth(targetIdx).click({ clickCount: 3 })
-    await shortPage.waitForTimeout(500)
     await clickCommentAction(shortPage)
 
     const popover = shortPage.locator('.popover')
@@ -558,15 +598,14 @@ describe('popover viewport clamping', () => {
     const narrowContext = await browser.newContext({ viewport: { width: 700, height: 900 } })
     const narrowPage = await narrowContext.newPage()
     await narrowPage.goto(FILE_URL)
-    await narrowPage.waitForTimeout(2000)
+    await waitForFixture(narrowPage)
 
-    await narrowPage.click('button:has-text("Preview")')
-    await narrowPage.waitForTimeout(500)
+    await narrowPage.click('[data-testid="view-toggle-read"]')
+    await narrowPage.locator('.preview-pane').waitFor()
 
     // Select text in the first paragraph
     const paragraph = narrowPage.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
-    await narrowPage.waitForTimeout(500)
     await clickCommentAction(narrowPage)
 
     const popover = narrowPage.locator('.popover')
@@ -589,7 +628,7 @@ describe('popover viewport clamping', () => {
 describe('export/import comments', () => {
   it('shows import button in sidebar and export button when comments exist', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Import button should always be visible
@@ -603,11 +642,10 @@ describe('export/import comments', () => {
 
     // Add a comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.locator('.popover textarea').fill('Test comment for export')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     // Export button should now be visible
     const exportVisibleNow = await exportBtn.isVisible().catch(() => false)
@@ -616,25 +654,23 @@ describe('export/import comments', () => {
 
   it('exports comments as JSON and re-imports them', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Add two comments
     const lines = page.locator('.cm-line')
     await lines.nth(0).click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.click('.popover .category-btn:has-text("Must Fix")')
     await page.locator('.popover textarea').fill('First comment')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     await lines.nth(4).click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.locator('.popover textarea').fill('Second comment')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     assert.equal(await page.locator('.comment-card').count(), 2, 'Should have 2 comments')
 
@@ -667,12 +703,13 @@ describe('export/import comments', () => {
     assert.ok(data.comments[0].category, 'Each comment should have a category')
 
     // Now clear and import — click "New" to reset, then re-open the file
-    await page.click('button:has-text("New")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="header-overflow-btn"]')
+    await page.click('[data-testid="menu-new-doc"]')
+    await page.locator('.upload-area').waitFor()
 
     // Navigate back to the fixture
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     assert.equal(await page.locator('.comment-card').count(), 0, 'Should start with 0 comments')
 
     // Import the downloaded file
@@ -680,7 +717,7 @@ describe('export/import comments', () => {
     await page.click('.sidebar-action-btn[title*="Import"]')
     const fileChooser = await fileChooserPromise
     await fileChooser.setFiles(downloadPath)
-    await page.waitForTimeout(500)
+    await until(page, () => document.querySelectorAll('.comment-card').length === 2)
 
     // Verify comments were imported
     const importedCount = await page.locator('.comment-card').count()
@@ -702,16 +739,15 @@ describe('export/import comments', () => {
 
   it('import replaces existing comments', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Add one comment
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(500)
     await clickCommentAction()
     await page.locator('.popover textarea').fill('Will be replaced')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
     assert.equal(await page.locator('.comment-card').count(), 1)
 
     // Create a JSON file with different comments to import
@@ -736,7 +772,7 @@ describe('export/import comments', () => {
     await page.click('.sidebar-action-btn[title*="Import"]')
     const fileChooser = await fileChooserPromise
     await fileChooser.setFiles(tmpFile)
-    await page.waitForTimeout(500)
+    await until(page, () => document.querySelectorAll('.comment-card').length === 3)
 
     // Should have 3 comments (replaced the 1 that existed)
     const count = await page.locator('.comment-card').count()
@@ -755,10 +791,10 @@ describe('export/import comments', () => {
 describe('syntax highlighting', () => {
   it('applies hljs classes to fenced code blocks in preview', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     // The fixture has ```python with "print" which hljs should highlight
     const hljsSpans = await page.locator('.preview-pane pre code span[class*="hljs-"]').count()
@@ -767,10 +803,10 @@ describe('syntax highlighting', () => {
 
   it('hljs tokens have non-default colors', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     // Find a highlighted span and check it has a color set
     const span = page.locator('.preview-pane pre code span[class*="hljs-"]').first()
@@ -780,11 +816,11 @@ describe('syntax highlighting', () => {
 
   it('hljs works in dark mode too', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('.btn-icon') // dark mode
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await cycleTheme(page) // dark mode
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const hljsSpans = await page.locator('.preview-pane pre code span[class*="hljs-"]').count()
     assert.ok(hljsSpans > 0, 'hljs spans should exist in dark mode too')
@@ -796,10 +832,10 @@ describe('syntax highlighting', () => {
 describe('task list checkboxes', () => {
   it('renders task list items with checkboxes in preview', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     // The fixture has - [x] and - [ ] items
     const checkboxes = await page.locator('.preview-pane input[type="checkbox"]').count()
@@ -808,10 +844,10 @@ describe('task list checkboxes', () => {
 
   it('checked items are visually distinct', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const checked = page.locator('.preview-pane input[type="checkbox"][checked]').first()
     const isChecked = await checked.count()
@@ -820,10 +856,10 @@ describe('task list checkboxes', () => {
 
   it('task list items have no bullet markers', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const listStyle = await page.locator('.preview-pane .contains-task-list').first().evaluate(
       (el) => window.getComputedStyle(el).listStyleType
@@ -837,10 +873,10 @@ describe('task list checkboxes', () => {
 describe('h4/h5/h6 styling', () => {
   it('h4 renders with heading font', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const h4 = page.locator('.preview-pane h4').first()
     const fontFamily = await h4.evaluate((el) => window.getComputedStyle(el).fontFamily)
@@ -849,10 +885,10 @@ describe('h4/h5/h6 styling', () => {
 
   it('h6 renders as uppercase', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const h6 = page.locator('.preview-pane h6').first()
     const transform = await h6.evaluate((el) => window.getComputedStyle(el).textTransform)
@@ -861,10 +897,10 @@ describe('h4/h5/h6 styling', () => {
 
   it('heading sizes decrease from h4 to h6', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const h4Size = await page.locator('.preview-pane h4').first().evaluate(
       (el) => parseFloat(window.getComputedStyle(el).fontSize)
@@ -885,7 +921,9 @@ describe('h4/h5/h6 styling', () => {
 describe('word count', () => {
   it('shows word and character counts when document is loaded', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
+    // Counts live in the editor header (#2 rule 5): switch to the edit view.
+    await switchToEdit()
 
     const stats = page.locator('.doc-stats')
     assert.ok(await stats.isVisible(), 'Doc stats should be visible')
@@ -897,7 +935,8 @@ describe('word count', () => {
 
   it('word count is non-zero for loaded document', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
+    await switchToEdit()
 
     const text = await page.locator('.doc-stats').textContent()
     // Extract the number before "words"
@@ -909,7 +948,7 @@ describe('word count', () => {
 
   it('does not show stats on upload screen', async () => {
     await page.goto(BASE)
-    await page.waitForTimeout(1000)
+    await waitForUpload(page)
 
     const stats = await page.locator('.doc-stats').count()
     assert.equal(stats, 0, 'Doc stats should not be visible on upload screen')
@@ -917,7 +956,7 @@ describe('word count', () => {
 
   it('updates count when document is edited', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     const before = await page.locator('.doc-stats').textContent()
@@ -928,7 +967,7 @@ describe('word count', () => {
     await page.locator('.cm-content').click()
     await page.keyboard.press('End')
     await page.keyboard.type('\n\nExtra words added here for testing the count')
-    await page.waitForTimeout(500)
+    await until(page, (b) => document.querySelector('.doc-stats')?.textContent !== b, before)
 
     const after = await page.locator('.doc-stats').textContent()
     const afterMatch = after.match(/(\d[\d,]*)\s*words/)
@@ -943,12 +982,11 @@ describe('word count', () => {
 describe('selection preserved when popover opens', () => {
   it('popover shows selected text in editor mode', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Triple-click to select a line in the editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     // Popover should be visible
@@ -962,15 +1000,14 @@ describe('selection preserved when popover opens', () => {
 
   it('popover shows selected text in preview mode', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     // Triple-click on the first paragraph to select it
     const paragraph = page.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     const popover = page.locator('.popover')
@@ -982,18 +1019,17 @@ describe('selection preserved when popover opens', () => {
 
   it('can submit comment after selection (selection data not lost)', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Select text in editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     // Type a comment and submit
     await page.locator('.popover textarea').fill('Test comment')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     // Verify comment was added to the sidebar
     const commentBody = await page.locator('.comment-body').first().textContent()
@@ -1006,16 +1042,17 @@ describe('selection preserved when popover opens', () => {
 
   it('selected text survives popover textarea focus', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Select text
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     // Click inside the popover textarea (triggers focus)
     await page.locator('.popover textarea').click()
+    // Negative assertion (the quote must NOT clear): selectionchange fires
+    // asynchronously, so keep a bounded wait for a late clear to land.
     await page.waitForTimeout(300)
 
     // The popover quote should still show the selected text
@@ -1025,7 +1062,7 @@ describe('selection preserved when popover opens', () => {
     // Should still be able to submit a comment
     await page.locator('.popover textarea').fill('After focus test')
     await page.click('.popover .btn-primary')
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden' })
 
     const commentCount = await page.locator('.comment-card').count()
     assert.ok(commentCount >= 1, 'Comment should be added even after textarea focus')
@@ -1033,12 +1070,11 @@ describe('selection preserved when popover opens', () => {
 
   it('editor keeps CM selection highlight visible after popover textarea focus', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // Select a line in the editor
     await page.locator('.cm-line').first().click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     // Popover should be visible (its textarea has auto-focus)
@@ -1051,14 +1087,17 @@ describe('selection preserved when popover opens', () => {
 
   it('preview mode: native browser selection persists when popover opens', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    await page.click('button:has-text("Preview")')
-    await page.waitForTimeout(500)
+    await page.click('[data-testid="view-toggle-read"]')
+    await page.locator('.preview-pane').waitFor()
 
     const paragraph = page.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
-    await page.waitForTimeout(800)
+    // The action bar appearing is what could collapse the selection: wait for
+    // it, then a couple of frames for any reaction to it to land.
+    await page.locator('.selection-action-bar .action-btn').waitFor()
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
 
     // The native selection must still be active (not collapsed by action bar appearing)
     const sel = await page.evaluate(() => {
@@ -1078,6 +1117,7 @@ describe('selection preserved when popover opens', () => {
     // Clicking the textarea to type will clear native selection — that's fine
     // because the user explicitly decided to start typing
     await page.locator('.popover textarea').click()
+    // Negative assertion (the quote must NOT change): bounded wait, as above.
     await page.waitForTimeout(300)
     const quoteAfter = await page.locator('.popover-quote').textContent()
     assert.equal(quoteAfter, quote, 'Popover quote must not change after textarea click')
@@ -1085,13 +1125,12 @@ describe('selection preserved when popover opens', () => {
 
   it('second selection replaces first and popover updates', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
     await switchToEdit()
 
     // First selection
     const lines = page.locator('.cm-line')
     await lines.nth(0).click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     const firstQuote = await page.locator('.popover-quote').textContent()
@@ -1099,11 +1138,10 @@ describe('selection preserved when popover opens', () => {
 
     // Click away to dismiss the empty popover
     await page.locator('.sidebar').click({ position: { x: 50, y: 200 } })
-    await page.waitForTimeout(500)
+    await page.locator('.popover').waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
 
     // Second selection on a different line
     await lines.nth(4).click({ clickCount: 3 })
-    await page.waitForTimeout(800)
     await clickCommentAction()
 
     const secondQuote = await page.locator('.popover-quote').textContent()
@@ -1111,84 +1149,78 @@ describe('selection preserved when popover opens', () => {
   })
 })
 
-// ── Four-mode theme cycling ──────────────────────────────────
+// ── Theme toggle + Style menu (#1) ───────────────────────────
 
-describe('four-mode theme cycling', () => {
-  it('cycles light → dark → github-light → github-dark → light', async () => {
+/** #1: pick a style from the header Style menu (Default / GitHub / Locus). */
+async function chooseThemeStyle(style) {
+  await page.click('[data-testid="theme-style-menu"]')
+  await page.click(`[data-testid="theme-style-option"][data-style="${style}"]`)
+  // useTheme sets github-theme / locus-theme on <html> per style.
+  await until(page, (st) => {
+    const c = document.documentElement.classList
+    return st === 'github' ? c.contains('github-theme')
+      : st === 'locus' ? c.contains('locus-theme')
+      : !c.contains('github-theme') && !c.contains('locus-theme')
+  }, style)
+  await settleTransitions(page)
+}
+
+const htmlThemeState = () => page.evaluate(() => ({
+  dark: document.documentElement.classList.contains('dark'),
+  github: document.documentElement.classList.contains('github-theme'),
+}))
+
+describe('theme toggle and style menu', () => {
+  it('toggle flips light/dark within a style; the Style menu switches style and keeps the dark flag', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    // Start: light (no classes)
-    let html = await page.evaluate(() => ({
-      dark: document.documentElement.classList.contains('dark'),
-      github: document.documentElement.classList.contains('github-theme'),
-    }))
+    let html = await htmlThemeState()
     assert.ok(!html.dark && !html.github, 'Should start in light mode')
 
-    // Click 1 → dark
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
-    html = await page.evaluate(() => ({
-      dark: document.documentElement.classList.contains('dark'),
-      github: document.documentElement.classList.contains('github-theme'),
-    }))
-    assert.ok(html.dark && !html.github, 'After 1 click: dark mode')
+    await cycleTheme(page)
+    html = await htmlThemeState()
+    assert.ok(html.dark && !html.github, 'After 1 toggle: dark mode')
 
-    // Click 2 → github-light
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
-    html = await page.evaluate(() => ({
-      dark: document.documentElement.classList.contains('dark'),
-      github: document.documentElement.classList.contains('github-theme'),
-    }))
-    assert.ok(!html.dark && html.github, 'After 2 clicks: github-light mode')
+    await cycleTheme(page)
+    html = await htmlThemeState()
+    assert.ok(!html.dark && !html.github, 'After 2 toggles: back to light (no cycling into GitHub)')
 
+    await chooseThemeStyle('github')
+    html = await htmlThemeState()
+    assert.ok(!html.dark && html.github, 'Style GitHub from light: github-light')
     const markdownBody = await page.locator('.preview-pane.markdown-body').count()
     assert.ok(markdownBody > 0, 'github-light: preview-pane should have markdown-body class')
 
-    // Click 3 → github-dark
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
-    html = await page.evaluate(() => ({
-      dark: document.documentElement.classList.contains('dark'),
-      github: document.documentElement.classList.contains('github-theme'),
-    }))
-    assert.ok(html.dark && html.github, 'After 3 clicks: github-dark mode')
+    await cycleTheme(page)
+    html = await htmlThemeState()
+    assert.ok(html.dark && html.github, 'Toggle in GitHub: github-dark')
 
-    // Click 4 → light (full cycle)
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
-    html = await page.evaluate(() => ({
-      dark: document.documentElement.classList.contains('dark'),
-      github: document.documentElement.classList.contains('github-theme'),
-    }))
-    assert.ok(!html.dark && !html.github, 'After 4 clicks: back to light mode')
+    await chooseThemeStyle('default')
+    html = await htmlThemeState()
+    assert.ok(html.dark && !html.github, 'Style Default from github-dark keeps dark')
   })
 
   it('markdown-body class absent in non-github themes', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
     // light
     let count = await page.locator('.preview-pane.markdown-body').count()
     assert.equal(count, 0, 'light: no markdown-body class')
 
     // dark
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
+    await cycleTheme(page)
     count = await page.locator('.preview-pane.markdown-body').count()
     assert.equal(count, 0, 'dark: no markdown-body class')
   })
 
   it('github theme persists across page reload', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
-    // Advance to github-light (2 clicks)
-    await page.click('.btn-icon')
-    await page.waitForTimeout(200)
-    await page.click('.btn-icon')
-    await page.waitForTimeout(300)
+    // github-light via the Style menu
+    await chooseThemeStyle('github')
 
     const githubClass = await page.evaluate(() =>
       document.documentElement.classList.contains('github-theme')
@@ -1197,7 +1229,7 @@ describe('four-mode theme cycling', () => {
 
     // Reload
     await page.reload()
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
     const afterReload = await page.evaluate(() =>
       document.documentElement.classList.contains('github-theme')
@@ -1207,24 +1239,21 @@ describe('four-mode theme cycling', () => {
 
   it('mermaid renders in github-dark theme', async () => {
     await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await waitForFixture(page)
 
     const mermaidEl = page.locator('.preview-pane .mermaid')
     const hasMermaid = await mermaidEl.count()
     if (hasMermaid === 0) return // fixture has no mermaid block
 
     await mermaidEl.first().scrollIntoViewIfNeeded()
-    await page.waitForTimeout(1000)
+    await mermaidEl.first().locator('svg').waitFor()
 
     const lightSvg = await mermaidEl.first().locator('svg').evaluate(el => el.innerHTML)
 
-    // Navigate to github-dark (3 clicks)
-    await page.click('.btn-icon') // → dark
-    await page.waitForTimeout(300)
-    await page.click('.btn-icon') // → github-light
-    await page.waitForTimeout(300)
-    await page.click('.btn-icon') // → github-dark
-    await page.waitForTimeout(1500)
+    // github-dark: Style menu → GitHub, then the toggle
+    await chooseThemeStyle('github') // → github-light
+    await cycleTheme(page) // → github-dark
+    await until(page, (light) => document.querySelector('.preview-pane .mermaid svg')?.innerHTML !== light, lightSvg)
 
     const darkSvg = await mermaidEl.first().locator('svg').evaluate(el => el.innerHTML)
     assert.notEqual(lightSvg, darkSvg, 'Mermaid SVG should differ in github-dark mode')

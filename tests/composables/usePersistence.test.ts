@@ -42,6 +42,81 @@ describe('usePersistence', () => {
     expect(b.takeRestoredDraft('p1')).toBeNull() // consumed
   })
 
+  it('reports what was restored (shared + dirty) without consuming it, and never writes the URL (#4 rule 9)', async () => {
+    window.history.replaceState(null, '', '/')
+    const store = createMemoryStore()
+    await store.set(JSON.stringify({ markdown: 'edits', filename: 'd.md', comments: [], pasteId: 'p1', serverMarkdown: 'server' }))
+    const a = setup(store)
+    await a.restored
+    expect(a.restoredInfo()).toEqual({ pasteId: 'p1', dirty: true })
+    expect(location.hash).toBe('')
+    expect(location.pathname).toBe('/')
+    expect(a.takeRestoredDraft('p1')).not.toBeNull()
+    expect(a.restoredInfo()).toBeNull()
+
+    await store.set(JSON.stringify({ markdown: 'same', filename: 'd.md', comments: [], pasteId: 'p1', baselineEqualsLocal: true }))
+    const b = setup(store)
+    await b.restored
+    expect(b.restoredInfo()).toEqual({ pasteId: 'p1', dirty: false })
+
+    await store.set(JSON.stringify({ markdown: 'local', filename: 'l.md', comments: [] }))
+    const c = setup(store)
+    await c.restored
+    expect(c.restoredInfo()).toEqual({ pasteId: null, dirty: false })
+  })
+
+  it('writes nothing while paused (read-only views keep the reader\'s draft)', async () => {
+    const store = createMemoryStore()
+    await store.set(JSON.stringify({ markdown: 'mine', filename: 'm.md', comments: [] }))
+    let paused = true
+    const markdown = ref(''), filename = ref(''), comments = ref<Comment[]>([]), contentType = ref<ContentType>('markdown')
+    const p = usePersistence(markdown, filename, comments, contentType, () => {}, () => {}, { store, paused: () => paused })
+    await p.restored
+    markdown.value = 'pinned revision text'
+    await vi.advanceTimersByTimeAsync(600)
+    expect(JSON.parse((await store.get())!).markdown).toBe('mine')
+    paused = false
+    markdown.value = 'now editable'
+    await vi.advanceTimersByTimeAsync(600)
+    expect(JSON.parse((await store.get())!).markdown).toBe('now editable')
+  })
+
+  it('keeps the never-shared local draft in its own slot when a shared doc takes the main slot', async () => {
+    const store = createMemoryStore()
+    const localStore = createMemoryStore()
+    const markdown = ref(''), filename = ref(''), comments = ref<Comment[]>([]), contentType = ref<ContentType>('markdown')
+    const pasteId = ref<string | null>(null)
+    const p = usePersistence(markdown, filename, comments, contentType, () => {}, () => {}, { store, localStore, pasteId })
+    await p.restored
+    markdown.value = '# My local notes'
+    filename.value = 'notes.md'
+    await vi.advanceTimersByTimeAsync(600)
+    expect(JSON.parse((await localStore.get())!).markdown).toBe('# My local notes')
+
+    // A shared doc is opened in the same browser.
+    pasteId.value = 'shared1'
+    markdown.value = '# Shared doc'
+    filename.value = 'shared.md'
+    await vi.advanceTimersByTimeAsync(600)
+    expect(JSON.parse((await store.get())!).pasteId).toBe('shared1')
+    expect(await p.loadLocalDraft()).toMatchObject({ markdown: '# My local notes', filename: 'notes.md' })
+
+    // Sharing the local doc (or New on it) forgets the local slot.
+    await p.forgetLocalDraft()
+    expect(await p.loadLocalDraft()).toBeNull()
+  })
+
+  it('an empty screen (reset landing) writes nothing', async () => {
+    const store = createMemoryStore()
+    await store.set(JSON.stringify({ markdown: 'kept', filename: 'k.md', comments: [], pasteId: 'p1', baselineEqualsLocal: true }))
+    const a = setup(store)
+    await a.restored
+    a.markdown.value = ''
+    a.filename.value = ''
+    await vi.advanceTimersByTimeAsync(600)
+    expect(JSON.parse((await store.get())!).markdown).toBe('kept')
+  })
+
   it('does not store the baseline twice when local equals the server copy', async () => {
     const store = createMemoryStore()
     const a = setup(store, { pasteId: 'p1', serverMarkdown: 'same' })

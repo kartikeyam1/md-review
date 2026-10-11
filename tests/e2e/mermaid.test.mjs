@@ -3,13 +3,24 @@ import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BASE } from './helpers.mjs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const FIXTURE = resolve(__dirname, 'fixture.md')
-const BASE = 'http://localhost:58747'
 const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
 
 let browser, context, page
+
+/** Open the fixture and wait until the document has rendered. */
+async function openFixture() {
+  await page.goto(FILE_URL)
+  await page.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
+  await page.locator('.preview-pane .mermaid').first().waitFor({ state: 'attached', timeout: 10000 })
+}
+
+/** Wait for mermaid's async render to put an SVG in the block (quietly: callers assert). */
+const waitForMermaidSvg = (timeout = 10000) =>
+  page.locator('.preview-pane .mermaid svg').first().waitFor({ state: 'attached', timeout }).catch(() => {})
 
 before(async () => {
   browser = await chromium.launch({ headless: true })
@@ -26,13 +37,12 @@ beforeEach(async () => {
 
 describe('mermaid diagram rendering', () => {
   it('renders mermaid code block as SVG in preview', async () => {
-    await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await openFixture()
 
     // Scroll to the mermaid diagram area
     const mermaidContainer = page.locator('.preview-pane .mermaid')
     await mermaidContainer.scrollIntoViewIfNeeded()
-    await page.waitForTimeout(1000)
+    await waitForMermaidSvg()
 
     // Mermaid should have rendered an SVG inside the container
     const svg = mermaidContainer.locator('svg')
@@ -41,8 +51,7 @@ describe('mermaid diagram rendering', () => {
   })
 
   it('mermaid block has line data attributes for commenting', async () => {
-    await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await openFixture()
 
     const mermaidContainer = page.locator('.preview-pane .mermaid').first()
     const hasLineStart = await mermaidContainer.evaluate(
@@ -52,12 +61,11 @@ describe('mermaid diagram rendering', () => {
   })
 
   it('re-renders mermaid with dark theme when toggling dark mode', async () => {
-    await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await openFixture()
 
     const mermaidContainer = page.locator('.preview-pane .mermaid')
     await mermaidContainer.scrollIntoViewIfNeeded()
-    await page.waitForTimeout(1000)
+    await waitForMermaidSvg()
 
     // Capture SVG markup in light mode
     const lightSvg = await mermaidContainer.locator('svg').first().evaluate(
@@ -66,7 +74,11 @@ describe('mermaid diagram rendering', () => {
 
     // Toggle dark mode
     await page.click('.btn-icon')
-    await page.waitForTimeout(1500)
+    // Wait for the dark re-render: an SVG whose markup differs from the light one.
+    await page.waitForFunction((light) => {
+      const svg = document.querySelector('.preview-pane .mermaid svg')
+      return !!svg && svg.innerHTML !== light
+    }, lightSvg, { timeout: 10000 }).catch(() => {})
 
     // SVG should have been re-rendered (mermaid dark theme)
     const svgAfter = mermaidContainer.locator('svg')
@@ -80,8 +92,9 @@ describe('mermaid diagram rendering', () => {
   })
 
   it('does not render non-mermaid code blocks as diagrams', async () => {
-    await page.goto(FILE_URL)
-    await page.waitForTimeout(2000)
+    await openFixture()
+    // Let mermaid finish rendering first, so a wrongly-rendered python block would have its SVG by now.
+    await waitForMermaidSvg()
 
     // Python code block should NOT have mermaid class
     const pythonPre = page.locator('.preview-pane pre code.language-python')

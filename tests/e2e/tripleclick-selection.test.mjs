@@ -3,10 +3,10 @@ import { describe, it, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BASE } from './helpers.mjs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const FIXTURE = resolve(__dirname, 'fixture.md')
-const BASE = 'http://localhost:58747'
 const FILE_URL = `${BASE}/?filePath=${encodeURIComponent(FIXTURE)}`
 
 let browser, context, page
@@ -35,7 +35,11 @@ describe('triple-click selection shows action bar', () => {
     await page.mouse.down()
     await page.mouse.move(box.x + 100, box.y + 10, { steps: 5 })
     await page.mouse.up()
-    await page.waitForTimeout(300)
+    // Wait for the bar, then two frames: the bar arms its outside-mousedown
+    // dismiss listener in a requestAnimationFrame, and the triple-click below
+    // must go through that dismiss → new-selection path.
+    await waitForBar()
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
 
     const before = await getBarState()
     assert.ok(before.visible, 'action bar should show after drag')
@@ -43,7 +47,7 @@ describe('triple-click selection shows action bar', () => {
     // Now triple-click to re-select the full line
     // This triggers: dismiss (from mousedown on existing bar) → new selection
     await paragraph.click({ clickCount: 3 })
-    await page.waitForTimeout(500)
+    await waitForBar(10)
 
     const after = await getBarState()
     assert.ok(after.visible, 'action bar should be visible after triple-click')
@@ -60,7 +64,7 @@ describe('triple-click selection shows action bar', () => {
 
     const paragraph = page.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
-    await page.waitForTimeout(500)
+    await waitForBar(10)
 
     const state = await getBarState()
     assert.ok(state.visible, 'action bar should be visible')
@@ -72,22 +76,35 @@ describe('triple-click selection shows action bar', () => {
 
     const paragraph = page.locator('.preview-pane p').first()
     await paragraph.click({ clickCount: 3 })
-    await page.waitForTimeout(500)
 
     const bar = page.locator('.selection-action-bar .action-btn')
     await bar.waitFor({ state: 'visible', timeout: 3000 })
     await bar.click()
-    await page.waitForTimeout(300)
 
     const popover = page.locator('.popover')
+    await popover.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {})
     assert.ok(await popover.isVisible(), 'popover should open after clicking Comment')
   })
 })
 
 async function waitForPreview() {
   await page.goto(FILE_URL)
-  await page.waitForTimeout(2000)
+  await page.locator('[data-testid="doc-title"]', { hasText: 'Test Document' }).waitFor({ timeout: 10000 })
   await page.locator('.preview-pane').waitFor({ state: 'visible', timeout: 3000 })
+  await page.locator('.preview-pane p').first().waitFor({ state: 'visible', timeout: 3000 })
+}
+
+/**
+ * Wait until the action bar is shown with a selection of more than `minText`
+ * characters and settled coordinates (not the 6,6 fallback). Returns quietly
+ * on timeout: the caller's assertions report what was actually on screen.
+ */
+async function waitForBar(minText = 0) {
+  await page.waitForFunction((min) => {
+    const bar = document.querySelector('.selection-action-bar')
+    const text = window.getSelection()?.toString().trim() || ''
+    return !!bar && text.length > min && !(bar.style.left === '6px' && bar.style.top === '6px')
+  }, minText, { timeout: 3000 }).catch(() => {})
 }
 
 async function getBarState() {

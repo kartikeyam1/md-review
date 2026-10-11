@@ -117,7 +117,7 @@ function submit() {
         :key="cat.value"
         class="category-btn"
         :class="{ active: category === cat.value }"
-        :style="category === cat.value ? { background: cat.color, color: '#fff', borderColor: cat.color } : {}"
+        :style="category === cat.value ? { background: cat.color, color: cat.onColor, borderColor: cat.color } : {}"
         @click="category = cat.value"
       >
         {{ cat.label }}
@@ -155,7 +155,7 @@ function submit() {
 
 .popover-quote {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-style: italic;
   padding-bottom: 8px;
   margin-bottom: 8px;
@@ -221,7 +221,7 @@ function submit() {
 .popover-author {
   margin-right: auto;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-meta);
   align-self: center;
   overflow: hidden;
   text-overflow: ellipsis;

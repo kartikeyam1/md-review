@@ -1,0 +1,1253 @@
+/* Preview styles (00 §4.6): every rule lives under .preview-pane. Not scoped,
+   so later items can reuse this sheet (#19 inlines it into HTML exports).
+   Extracted verbatim from PreviewPane.vue's scoped block.
+
+   #18 reader text size: every type size is `calc(N * var(--rpx))`, a px that
+   follows the reader's scale (--reader-scale on <html>: 0.8–1.5),
+   so N is the size at 100%. Not em: nested text (code in a table cell or a
+   heading, the frontmatter table) must keep today's sizes at 100% (rule 3).
+   The reading column is capped in em (50em of the pane's scaled size). */
+
+:root .preview-pane {
+  /* #5 rule 4: a centred reading column of 50em (#18 later owns the width),
+     side padding 32px desktop / 24px tablet / 16px phone. */
+  --read-pad: 32px;
+  --read-width: 50em;
+  --rpx: calc(1px * var(--reader-scale, 1));
+  max-width: calc(var(--read-width) + 2 * var(--read-pad));
+  margin: 0 auto;
+  padding: 24px var(--read-pad);
+  font-family: var(--font-body);
+  font-size: calc(15 * var(--rpx));
+  line-height: 1.7;
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  overflow-y: auto;
+  height: 100%;
+}
+
+@media (max-width: 1099.98px) {
+  :root .preview-pane { --read-pad: 24px; }
+}
+
+@media (max-width: 640.98px) {
+  /* Body text is at least 16px on a phone. */
+  :root .preview-pane { --read-pad: 16px; font-size: calc(16 * var(--rpx)); }
+  html.locus-theme .preview-pane p,
+  html.locus-theme .preview-pane li { font-size: calc(16 * var(--rpx)); }
+}
+
+/* #18: the GitHub look keeps github-markdown-css's 16px base (its sizes are em). */
+:root .preview-pane.github-mode {
+  font-size: calc(16 * var(--rpx));
+}
+
+/* #18 rule 4: Wide lifts the 50em cap (the read view's max-width and split view's padding both use it).
+   The reader's prefs live on <html> (--reader-scale, data-reader-width: useReaderPrefs + the index.html boot). */
+html[data-reader-width='wide'] .preview-pane {
+  --read-width: 100%;
+}
+
+/* ── Heading anchors (#3 rules 15, 16, 19) ── */
+/* Anchor jumps (native and scrollToAnchorElement) land the target fully below the sticky header. */
+.preview-pane [id] {
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
+
+.preview-pane .heading-anchor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  /* A 32px hit area that does not grow the heading's line box. */
+  margin: -8px 0 -8px 4px;
+  padding: 0;
+  vertical-align: middle;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-meta);
+  cursor: pointer;
+  opacity: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.12s;
+}
+
+.preview-pane :is(h1, h2, h3, h4, h5, h6):hover > .heading-anchor,
+.preview-pane .heading-anchor:focus-visible {
+  opacity: 1;
+}
+
+.preview-pane .heading-anchor:hover {
+  color: var(--accent);
+}
+
+.preview-pane .heading-anchor:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+@media (hover: none) {
+  /* Touch: the link sits at the right end of the heading's first line, out of the text flow, so
+     it never wraps onto a line of its own (with the ⋯ and reaction controls before it, a
+     heading that just fits used to grow a line holding only the link icon). */
+  .preview-pane :is(h1, h2, h3, h4, h5, h6):has(> .heading-anchor) {
+    position: relative;
+    padding-right: 30px;
+  }
+
+  .preview-pane .heading-anchor {
+    position: absolute;
+    right: -14px;
+    top: 0.65em;
+    width: 44px;
+    height: 44px;
+    margin: -22px 0 0;
+    font-size: inherit;
+    opacity: 0.55;
+  }
+}
+
+/* ── Overflow containment (#5 rule 5): nothing in a doc widens the page ── */
+.preview-pane p,
+.preview-pane li,
+.preview-pane h1,
+.preview-pane h2,
+.preview-pane h3,
+.preview-pane h4,
+.preview-pane h5,
+.preview-pane h6,
+.preview-pane blockquote,
+.preview-pane dt,
+.preview-pane dd {
+  overflow-wrap: anywhere;
+}
+
+/* Cells wrap long words but keep their natural width (break-word, not
+   anywhere, so a wide table scrolls in its .table-scroll instead of
+   squeezing every column to one character). */
+.preview-pane th,
+.preview-pane td {
+  overflow-wrap: break-word;
+}
+
+.preview-pane :not(pre) > code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.preview-pane img,
+.preview-pane video {
+  max-width: 100%;
+  height: auto;
+}
+
+.preview-pane .mermaid svg {
+  max-width: 100% !important;
+  height: auto;
+}
+
+/* Mermaid sizes each label box while measuring off-screen, outside the doc; the doc's text rules
+   (Locus p/li size, colour and line height, the #18 text size, slides' larger type) must not
+   reach the labels or they paint bigger than their box and clip. Mermaid's own (id-scoped)
+   rules still win. */
+html .preview-pane .mermaid svg :is(p, li, span, div) {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  overflow-wrap: normal;
+}
+
+.preview-pane .table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+
+.preview-pane .table-scroll > table {
+  margin-bottom: 0;
+}
+
+/* GitHub's sheet makes the table its own scroll box; the wrapper is the box here. */
+.preview-pane.markdown-body .table-scroll > table {
+  display: table;
+  max-width: none;
+  overflow: visible;
+}
+
+/* More columns off to a side (tableScrollHint.ts): that edge fades out. */
+@media screen {
+  .preview-pane .table-scroll[data-overflow='r'] {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+  }
+
+  .preview-pane .table-scroll[data-overflow='l'] {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to left, #000 calc(100% - 36px), transparent);
+  }
+
+  .preview-pane .table-scroll[data-overflow='lr'] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent);
+  }
+}
+
+.preview-pane .table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.preview-pane:not(.github-mode) h1 {
+  font-family: var(--font-heading);
+  font-size: calc(24 * var(--rpx));
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 24px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.preview-pane:not(.github-mode) h2 {
+  font-family: var(--font-heading);
+  font-size: calc(20 * var(--rpx));
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 20px 0 10px;
+}
+
+.preview-pane:not(.github-mode) h3 {
+  font-family: var(--font-heading);
+  font-size: calc(16 * var(--rpx));
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 16px 0 8px;
+}
+
+.preview-pane:not(.github-mode) p {
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+}
+
+.preview-pane:not(.github-mode) ul,
+.preview-pane:not(.github-mode) ol {
+  color: var(--text-secondary);
+  padding-left: 24px;
+  margin: 0 0 12px;
+}
+
+.preview-pane:not(.github-mode) li {
+  margin: 4px 0;
+}
+
+.preview-pane:not(.github-mode) code {
+  font-family: var(--font-mono);
+  background: var(--bg-code, var(--bg-page));
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: calc(13 * var(--rpx));
+}
+
+.preview-pane:not(.github-mode) pre {
+  background: var(--bg-code, var(--bg-page));
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 6px;
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+
+.preview-pane:not(.github-mode) pre code {
+  background: none;
+  padding: 0;
+}
+
+.preview-pane:not(.github-mode) strong {
+  color: var(--text-primary);
+}
+
+.preview-pane:not(.github-mode) blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 16px;
+  color: var(--text-meta);
+  margin: 0 0 12px;
+}
+
+.preview-pane:not(.github-mode) hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 24px 0;
+}
+
+.preview-pane:not(.github-mode) a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.preview-pane:not(.github-mode) a:hover {
+  text-decoration: underline;
+}
+
+.preview-pane:not(.github-mode) table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 12px;
+  font-size: calc(14 * var(--rpx));
+}
+
+.preview-pane:not(.github-mode) th,
+.preview-pane:not(.github-mode) td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.preview-pane:not(.github-mode) th {
+  background: var(--bg-page);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-pane:not(.github-mode) tbody tr:nth-child(even) {
+  background: var(--bg-page);
+}
+
+.preview-pane:not(.github-mode) tbody tr:hover {
+  background: var(--comment-bg);
+}
+
+.preview-pane .comment-highlight {
+  background: var(--comment-bg);
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+  margin-left: -10px;
+}
+
+/* YAML frontmatter table */
+.preview-pane .frontmatter {
+  font-size: calc(13 * var(--rpx));
+  margin-bottom: 0;
+  opacity: 0.85;
+}
+
+.preview-pane .table-scroll:has(> .frontmatter) {
+  margin-bottom: 20px;
+}
+
+.preview-pane .frontmatter td:first-child {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* Mermaid diagrams */
+.preview-pane .mermaid {
+  text-align: center;
+  margin: 12px 0;
+}
+
+
+/* highlight.js token colours — mapped to theme CSS custom properties */
+.preview-pane:not(.github-mode) .hljs-keyword,
+.preview-pane:not(.github-mode) .hljs-selector-tag,
+.preview-pane:not(.github-mode) .hljs-tag {
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.preview-pane:not(.github-mode) .hljs-string,
+.preview-pane:not(.github-mode) .hljs-attr,
+.preview-pane:not(.github-mode) .hljs-selector-attr {
+  color: var(--text-secondary);
+}
+
+.preview-pane:not(.github-mode) .hljs-comment,
+.preview-pane:not(.github-mode) .hljs-quote {
+  color: var(--text-meta);
+  font-style: italic;
+}
+
+.preview-pane:not(.github-mode) .hljs-number,
+.preview-pane:not(.github-mode) .hljs-literal {
+  color: var(--accent-text);
+}
+
+.preview-pane:not(.github-mode) .hljs-function,
+.preview-pane:not(.github-mode) .hljs-title,
+.preview-pane:not(.github-mode) .hljs-title\.function_ {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.preview-pane:not(.github-mode) .hljs-built_in,
+.preview-pane:not(.github-mode) .hljs-class {
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+.preview-pane:not(.github-mode) .hljs-type,
+.preview-pane:not(.github-mode) .hljs-selector-class {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.preview-pane:not(.github-mode) .hljs-variable,
+.preview-pane:not(.github-mode) .hljs-template-variable {
+  color: var(--text-secondary);
+}
+
+.preview-pane:not(.github-mode) .hljs-meta,
+.preview-pane:not(.github-mode) .hljs-meta-keyword {
+  color: var(--text-meta);
+}
+
+.preview-pane:not(.github-mode) .hljs-punctuation,
+.preview-pane:not(.github-mode) .hljs-operator {
+  color: var(--text-meta);
+}
+
+/* h4 / h5 / h6 */
+.preview-pane:not(.github-mode) h4 {
+  font-family: var(--font-heading);
+  font-size: calc(15 * var(--rpx));
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 14px 0 6px;
+}
+
+.preview-pane:not(.github-mode) h5 {
+  font-family: var(--font-heading);
+  font-size: calc(14 * var(--rpx));
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 12px 0 6px;
+}
+
+.preview-pane:not(.github-mode) h6 {
+  font-family: var(--font-heading);
+  font-size: calc(13 * var(--rpx));
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 10px 0 6px;
+}
+
+/* Images */
+.preview-pane:not(.github-mode) img {
+  max-width: 100%;
+  border-radius: 6px;
+  display: block;
+  margin: 12px auto;
+}
+
+/* Task list checkboxes */
+.preview-pane:not(.github-mode) .contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.preview-pane:not(.github-mode) .task-list-item {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.preview-pane:not(.github-mode) .task-list-item input[type='checkbox'] {
+  appearance: auto;
+  margin: 0;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: default;
+}
+
+.preview-pane:not(.github-mode) .task-list-item input[type='checkbox']:checked + span,
+.preview-pane:not(.github-mode) .task-list-item input[type='checkbox']:checked ~ * {
+  color: var(--text-meta);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+}
+
+/* ── Locus look (#1 rule 11) ───────────────────────────────────────────────
+   Montserrat headings in deep purple / white (h1, h2) and brand purple
+   (h3–h6); no title underlines, no edge stripes; cream table headers and code;
+   blockquotes are cards. Code stays JetBrains Mono. */
+html.locus-theme .preview-pane h1,
+html.locus-theme .preview-pane h2,
+html.locus-theme .preview-pane h3,
+html.locus-theme .preview-pane h4,
+html.locus-theme .preview-pane h5,
+html.locus-theme .preview-pane h6 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  border: 0;
+  padding-bottom: 0;
+  text-decoration: none;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+html.locus-theme .preview-pane h1 { font-size: calc(30 * var(--rpx)); line-height: 1.25; color: var(--text-primary); }
+html.locus-theme .preview-pane h2 { font-size: calc(22 * var(--rpx)); line-height: 1.3; color: var(--text-primary); }
+html.locus-theme .preview-pane h3 { font-size: calc(16 * var(--rpx)); color: var(--accent); }
+html.locus-theme .preview-pane h4 { font-size: calc(15 * var(--rpx)); color: var(--accent); }
+html.locus-theme .preview-pane h5 { font-size: calc(14 * var(--rpx)); color: var(--accent); }
+html.locus-theme .preview-pane h6 { font-size: calc(13 * var(--rpx)); color: var(--accent); }
+
+html.locus-theme .preview-pane p,
+html.locus-theme .preview-pane li {
+  font-weight: 400;
+  font-size: calc(15 * var(--rpx));
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+html.locus-theme .preview-pane a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+html.locus-theme .preview-pane a:hover,
+html.locus-theme .preview-pane a:focus,
+html.locus-theme .preview-pane a:focus-visible {
+  text-decoration: underline;
+}
+
+html.locus-theme .preview-pane th,
+html.locus-theme .preview-pane td {
+  border: 1px solid var(--border);
+}
+
+html.locus-theme .preview-pane th {
+  background: var(--table-head-bg);
+  color: var(--table-head-fg);
+  font-weight: 600;
+}
+
+html.locus-theme .preview-pane tbody tr,
+html.locus-theme .preview-pane tbody tr:nth-child(even),
+html.locus-theme .preview-pane tbody tr:hover {
+  background: transparent;
+}
+
+html.locus-theme .preview-pane code {
+  font-family: var(--font-mono);
+  background: var(--bg-code);
+}
+
+html.locus-theme .preview-pane pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+html.locus-theme .preview-pane pre code {
+  background: none;
+}
+
+html.locus-theme .preview-pane blockquote {
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-code);
+  padding: 12px 16px;
+  color: var(--text-secondary);
+}
+
+html.locus-theme .preview-pane blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* highlight.js in Locus: keywords deep purple (light) / purple (dark),
+   comments --text-muted italic, every other token --text-secondary. */
+html.locus-theme .preview-pane [class^='hljs-'],
+html.locus-theme .preview-pane [class*=' hljs-'] {
+  color: var(--text-secondary);
+  font-weight: 400;
+  opacity: 1;
+}
+
+html.locus-theme .preview-pane .hljs-keyword,
+html.locus-theme .preview-pane .hljs-selector-tag,
+html.locus-theme .preview-pane .hljs-tag {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+html.dark.locus-theme .preview-pane .hljs-keyword,
+html.dark.locus-theme .preview-pane .hljs-selector-tag,
+html.dark.locus-theme .preview-pane .hljs-tag {
+  color: var(--accent);
+}
+
+html.locus-theme .preview-pane .hljs-comment,
+html.locus-theme .preview-pane .hljs-quote {
+  color: var(--text-muted); /* brand-mandated #9B8FA8, exempt in Locus light (AC-01.13) */
+  font-style: italic;
+}
+
+html.locus-theme .preview-pane .task-list-item input[type='checkbox']:checked + span,
+html.locus-theme .preview-pane .task-list-item input[type='checkbox']:checked ~ * {
+  color: var(--text-secondary);
+}
+
+html.locus-theme .preview-pane blockquote blockquote {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+html.locus-theme .preview-pane ::selection {
+  background: var(--selection-bg);
+}
+
+html.locus-theme .preview-pane .mermaid .slice {
+  font-weight: 600;
+}
+
+.preview-pane .mermaid-error {
+  margin: 0;
+  text-align: left;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: calc(13 * var(--rpx));
+  color: var(--text-secondary);
+}
+
+/* #24 section reactions (heading anatomy 00 §2.5): chips + trigger after the heading text.
+   user-select: none — they never join a selection, copied text or the heading's text. */
+.preview-pane .section-reactions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: var(--font-body);
+  font-size: calc(13 * var(--rpx));
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.preview-pane .section-reaction-chip,
+.preview-pane .section-reaction-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--text-secondary);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.preview-pane .section-reaction-chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface));
+}
+
+.preview-pane .section-reaction-chip .chip-count { font-variant-numeric: tabular-nums; }
+
+.preview-pane .section-reaction-trigger {
+  padding: 2px 5px;
+  color: var(--text-secondary); /* ≥ 3:1 icon contrast in every theme (--text-muted is 2.9:1 in dark) */
+  border-color: transparent;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+/* Hover devices: shown while the heading is hovered or focused (or the picker is open). */
+.preview-pane h2:hover .section-reaction-trigger,
+.preview-pane h3:hover .section-reaction-trigger,
+.preview-pane h2:focus-within .section-reaction-trigger,
+.preview-pane h3:focus-within .section-reaction-trigger,
+.preview-pane .section-reaction-trigger[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.preview-pane .section-reaction-trigger:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+.preview-pane .section-reaction-chip:focus-visible,
+.preview-pane .section-reaction-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+/* Touch devices and narrow viewports: always visible (00 §12). */
+@media (hover: none), (max-width: 1099px) {
+  .preview-pane .section-reaction-trigger { opacity: 1; }
+}
+
+/* Touch: a 44px hit area that does not grow the chip (or the heading line). */
+@media (pointer: coarse) {
+  .preview-pane .section-reaction-chip,
+  .preview-pane .section-reaction-trigger {
+    position: relative;
+  }
+
+  .preview-pane .section-reaction-chip::after,
+  .preview-pane .section-reaction-trigger::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-pane .section-reaction-trigger { transition: none; }
+}
+
+/* Visually hidden, still read by assistive tech (#14 live region, #16 RAG prefix). */
+.preview-pane .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Code blocks: language label + Copy (#14) ──
+   The <pre> stays the visible box (its theme background, border and radius, #1)
+   and keeps its data-line-* range. The toolbar is laid over the top of that box
+   from the wrapper, outside the <pre>, and the <pre> reserves that strip as
+   top padding: the toolbar never covers the first line and never scrolls with
+   the code. */
+.preview-pane .code-block {
+  --code-toolbar-h: 32px;
+  --code-pad: 12px;
+  position: relative;
+  margin: 0 0 12px;
+  min-width: 0;
+}
+
+.preview-pane.github-mode .code-block {
+  --code-pad: 16px;
+}
+
+:root .preview-pane .code-block > pre {
+  margin: 0;
+  padding-top: calc(var(--code-toolbar-h) + var(--code-pad));
+  overflow-x: auto;
+}
+
+/* A commented code block keeps its box in place (no negative-margin shift under the toolbar). */
+:root .preview-pane .code-block > pre.comment-highlight {
+  margin-left: 0;
+  padding-left: var(--code-pad);
+}
+
+.preview-pane .code-toolbar {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  right: 1px;
+  /* No z-index: page overlays in later stacking contexts (the selection action bar in
+     the sticky comments rail) must stay above it. */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--code-toolbar-h);
+  padding: 0 4px 0 calc(var(--code-pad) - 1px);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: calc(12 * var(--rpx));
+  line-height: 1.2;
+  color: var(--text-secondary);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.preview-pane .code-lang-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.preview-pane .code-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 32px;
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: calc(12 * var(--rpx));
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.preview-pane .code-copy-icon {
+  --code-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='9' width='13' height='13' rx='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/svg%3E");
+  display: inline-block;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  background-color: currentColor;
+  -webkit-mask: var(--code-icon) center / contain no-repeat;
+  mask: var(--code-icon) center / contain no-repeat;
+}
+
+.preview-pane .code-copy-btn[data-state='copied'] .code-copy-icon {
+  --code-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  color: var(--accent);
+}
+
+/* Rule 7: shown while the block is hovered or holds focus, or while it reports a result. */
+.preview-pane .code-block:hover .code-copy-btn,
+.preview-pane .code-block:focus-within .code-copy-btn,
+.preview-pane .code-copy-btn:not([data-state='idle']) {
+  opacity: 1;
+}
+
+.preview-pane .code-copy-btn:hover {
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.preview-pane .code-copy-btn[data-state='copied'],
+.preview-pane .code-copy-btn[data-state='failed'] {
+  color: var(--text-primary);
+}
+
+.preview-pane .code-copy-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* GitHub themes: github-markdown-css's 16px block spacing (the label lines up via --code-pad). */
+.preview-pane.github-mode .code-block {
+  margin-bottom: 16px;
+}
+
+@media (hover: none) {
+  .preview-pane .code-block {
+    --code-toolbar-h: 44px;
+  }
+
+  .preview-pane .code-copy-btn {
+    min-width: 44px;
+    min-height: 44px;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-pane .code-copy-btn {
+    transition: none;
+  }
+}
+
+/* ── Callouts (#16 rules 3, 6–9) ──
+   GitHub themes: github-markdown-css styles .markdown-alert (exact GitHub look).
+   Default: 4px edge in the type colour on a tinted box. Locus: a card — same
+   1px border all round, radius 8px, no edge stripe. Colours are tokens (style.css). */
+.preview-pane .callout[data-callout='note'] { --callout: var(--callout-note); --callout-fg: var(--callout-note-fg); }
+.preview-pane .callout[data-callout='tip'] { --callout: var(--callout-tip); --callout-fg: var(--callout-tip-fg); }
+.preview-pane .callout[data-callout='important'] { --callout: var(--callout-important); --callout-fg: var(--callout-important-fg); }
+.preview-pane .callout[data-callout='warning'] { --callout: var(--callout-warning); --callout-fg: var(--callout-warning-fg); }
+.preview-pane .callout[data-callout='caution'] { --callout: var(--callout-caution); --callout-fg: var(--callout-caution-fg); }
+
+.preview-pane:not(.github-mode) .callout {
+  margin: 0 0 12px;
+  padding: 10px 16px;
+  border-left: 4px solid var(--callout);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--callout) var(--callout-tint), var(--bg-surface));
+  color: var(--text-primary);
+}
+
+/* Block, not flex: a custom title's inline markup keeps its spaces ("Data **loss** risk"). */
+:root .preview-pane .callout > .markdown-alert-title {
+  display: block;
+}
+
+:root .preview-pane .callout > .markdown-alert-title .octicon {
+  display: inline-block;
+  margin-right: 8px;
+  vertical-align: -0.15em;
+}
+
+:root .preview-pane:not(.github-mode) .callout > .markdown-alert-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--callout-fg);
+}
+
+:root .preview-pane:not(.github-mode) .callout > .markdown-alert-title :is(strong, em, b, i, a, code) {
+  color: inherit;
+}
+
+.preview-pane:not(.github-mode) .callout > .markdown-alert-title .octicon {
+  color: var(--callout);
+}
+
+.preview-pane .callout > :last-child {
+  margin-bottom: 0;
+}
+
+html.locus-theme .preview-pane:not(.github-mode) .callout {
+  border: 1px solid color-mix(in srgb, var(--callout) 45%, var(--bg-surface));
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+/* ── RAG badges (#16 rules 11, 14) ── */
+.preview-pane .rag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.05em 0.6em;
+  border-radius: 999px;
+  font-size: 0.85em;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: baseline;
+  background: var(--rag-bg);
+  color: var(--rag-fg);
+  text-decoration: none;
+}
+
+.preview-pane .rag-green { --rag-bg: var(--rag-green-bg); --rag-fg: var(--rag-green-fg); --rag-dot: var(--rag-green-dot); }
+.preview-pane .rag-amber { --rag-bg: var(--rag-amber-bg); --rag-fg: var(--rag-amber-fg); --rag-dot: var(--rag-amber-dot); }
+.preview-pane .rag-red { --rag-bg: var(--rag-red-bg); --rag-fg: var(--rag-red-fg); --rag-dot: var(--rag-red-dot); }
+
+.preview-pane .rag {
+  max-width: 100%;
+}
+
+/* A label wider than the column is cut with an ellipsis (the pill never wraps, the page never scrolls sideways). */
+.preview-pane .rag-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-pane .rag-dot {
+  flex-shrink: 0;
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: var(--rag-dot);
+}
+
+/* #16 callout icons: GitHub's octicons as masks over currentColor (the markup is an empty svg). */
+.preview-pane .callout .octicon {
+  background-color: currentColor;
+  -webkit-mask: var(--octicon) center / contain no-repeat;
+  mask: var(--octicon) center / contain no-repeat;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.preview-pane .octicon-info { --octicon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/%3E%3C/svg%3E"); }
+.preview-pane .octicon-light-bulb { --octicon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z'/%3E%3C/svg%3E"); }
+.preview-pane .octicon-report { --octicon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/%3E%3C/svg%3E"); }
+.preview-pane .octicon-alert { --octicon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z'/%3E%3C/svg%3E"); }
+.preview-pane .octicon-stop { --octicon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z'/%3E%3C/svg%3E"); }
+
+/* ── <details> (#17 rules 1–2) ── */
+:root .preview-pane details {
+  margin: 0 0 12px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+
+html.locus-theme .preview-pane details {
+  border-radius: 8px;
+}
+
+:root .preview-pane details details {
+  margin-left: 16px;
+}
+
+:root .preview-pane details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -12px;
+  padding: 8px 12px;
+  list-style: none;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: inherit;
+}
+
+:root .preview-pane details > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The chevron: points right when closed, down when open. */
+:root .preview-pane details > summary::before {
+  content: '';
+  flex-shrink: 0;
+  width: 0.45em;
+  height: 0.45em;
+  margin: 0 0.15em;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+:root .preview-pane details[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+:root .preview-pane details[open] > summary {
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+:root .preview-pane details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+:root .preview-pane details > :last-child:not(summary) {
+  margin-bottom: 12px;
+}
+
+/* ── Fold by heading (#17 rules 3–7) ── */
+.preview-pane > .foldable-heading {
+  position: relative;
+}
+
+.preview-pane .heading-fold-toggle {
+  position: absolute;
+  top: 50%;
+  left: -28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s ease;
+}
+
+.preview-pane .heading-fold-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.preview-pane [data-folded='true'] > .heading-fold-toggle svg {
+  transform: rotate(-90deg);
+}
+
+.preview-pane > .foldable-heading:hover > .heading-fold-toggle,
+.preview-pane > .foldable-heading:focus-within > .heading-fold-toggle,
+.preview-pane > [data-folded='true'] > .heading-fold-toggle,
+.preview-pane .heading-fold-toggle:focus-visible {
+  opacity: 1;
+}
+
+.preview-pane .heading-fold-toggle:hover {
+  background: var(--bg-code, var(--bg-page));
+  color: var(--text-primary);
+}
+
+.preview-pane .heading-fold-toggle:focus-visible,
+.preview-pane .heading-fold-ellipsis:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.preview-pane .heading-fold-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.4em;
+  padding: 0 0.45em;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-code, var(--bg-page));
+  color: var(--text-secondary);
+  font: 600 0.7em/1.5 var(--font-body);
+  vertical-align: middle;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.preview-pane .heading-fold-ellipsis::before {
+  content: '⋯';
+}
+
+/* A folded block takes no space (until-found keeps it searchable). */
+@media screen {
+  :root .preview-pane > [data-fold-hidden] {
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+  }
+}
+
+/* Touch, and below desktop (the 16/24px side padding is no gutter for it): the toggle sits in a
+   32px indent of the heading, centred on its first line, always shown (reduced) — every line of a
+   wrapped heading starts at the same indent (no hanging first line). */
+@media (hover: none), (max-width: 1099.98px) {
+  .preview-pane > .foldable-heading {
+    padding-left: 32px;
+  }
+
+  .preview-pane .heading-fold-toggle {
+    left: -6px;
+    top: 0.65em;
+    width: 44px;
+    height: 44px;
+    margin: -22px 0 0;
+    font-size: inherit;
+    opacity: 0.6;
+  }
+
+  .preview-pane > [data-folded='true'] > .heading-fold-toggle {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-pane .heading-fold-toggle,
+  .preview-pane .heading-fold-toggle svg,
+  :root .preview-pane details > summary::before {
+    transition: none;
+  }
+}
+
+/* ── Zoom triggers (#15 rule 1) ── */
+.preview-pane [data-zoomable] {
+  cursor: zoom-in;
+}
+
+.preview-pane [data-zoomable]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Inline table of contents (#12 rule 18): `[[toc]]` rendered at view time ── */
+.preview-pane .inline-toc {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.preview-pane .inline-toc ul {
+  margin: 0;
+  padding-left: 1.25em;
+}
+
+.preview-pane .inline-toc > ul {
+  padding-left: 1em;
+}
+
+.preview-pane .inline-toc li {
+  margin: 0.2em 0;
+}
+
+.preview-pane .inline-toc a {
+  text-decoration: none;
+}
+
+.preview-pane .inline-toc a:hover,
+.preview-pane .inline-toc a:focus-visible {
+  text-decoration: underline;
+}
+
+.preview-pane .inline-toc-empty {
+  margin: 0;
+  color: var(--text-meta);
+  font-style: italic;
+}
+
+@media print {
+  .preview-pane .inline-toc {
+    break-inside: avoid;
+  }
+}
+
+/* ── Agent-only sections (#28 rule 9): agent view and the split preview ──
+   A dashed accent rule on the left and a faint accent tint, distinct in every
+   theme; the label chip is not part of the copied text. */
+.preview-pane section.agent-only {
+  margin: 1.25em 0;
+  padding: 0.5em 1em 0.25em;
+  border-left: 2px dashed var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
+}
+
+.preview-pane section.agent-only > .agent-section-label {
+  display: inline-block;
+  margin: 0.25em 0 0.5em;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: calc(12 * var(--rpx));
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.preview-pane section.agent-only > :last-child {
+  margin-bottom: 0.5em;
+}

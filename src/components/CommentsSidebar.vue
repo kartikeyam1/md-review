@@ -30,6 +30,9 @@ const replyInputs = ref<Record<string, string>>({})
 const editingReplyId = ref<string | null>(null)
 const editReplyBody = ref('')
 
+/** Comments still open (the header badge). */
+const openCount = computed(() => props.comments.filter((c) => !c.resolved).length)
+
 const filteredComments = computed(() => {
   if (!filterCategory.value) return props.comments
   return props.comments.filter((c) => c.category === filterCategory.value)
@@ -121,7 +124,13 @@ function formatTimeAgo(ts: number): string {
           <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
         <span class="sidebar-title">Comments</span>
-        <span v-if="comments.length" class="badge">{{ comments.length }}</span>
+        <span
+          v-if="comments.length"
+          class="badge"
+          :class="{ done: !openCount }"
+          data-testid="comments-badge"
+          :title="openCount ? `${openCount} open of ${comments.length}` : 'All comments resolved'"
+        >{{ openCount || '✓' }}</span>
       </div>
       <div v-if="!collapsed" class="sidebar-header-actions">
         <button
@@ -149,7 +158,7 @@ function formatTimeAgo(ts: number): string {
         :key="cat.value"
         class="filter-btn"
         :class="{ active: filterCategory === cat.value, ['filter-' + cat.value]: filterCategory === cat.value }"
-        :style="filterCategory === cat.value ? { '--cat-color': cat.color, background: 'var(--cat-bg, ' + cat.color + ')', color: 'var(--cat-text, #fff)', borderColor: 'var(--cat-bg, ' + cat.color + ')' } : {}"
+        :style="filterCategory === cat.value ? { '--cat-color': cat.color, background: cat.color, color: cat.onColor, borderColor: cat.color } : {}"
         @click="toggleFilter(cat.value)"
       >
         {{ cat.label }}<template v-if="categoryCount(cat.value)"> ({{ categoryCount(cat.value) }})</template>
@@ -182,7 +191,7 @@ function formatTimeAgo(ts: number): string {
           <span
             class="category-tag"
             :class="'cat-' + comment.category"
-            :style="{ '--cat-color': getCategoryMeta(comment.category).color }"
+            :style="{ '--cat-color': getCategoryMeta(comment.category).color, '--cat-on': getCategoryMeta(comment.category).onColor }"
           >
             {{ getCategoryMeta(comment.category).label }}
           </span>
@@ -342,7 +351,7 @@ function formatTimeAgo(ts: number): string {
   border-radius: 3px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
@@ -361,7 +370,7 @@ function formatTimeAgo(ts: number): string {
   border-radius: 3px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   cursor: pointer;
   transition: color 0.15s;
   padding: 0;
@@ -379,6 +388,13 @@ function formatTimeAgo(ts: number): string {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-secondary);
+}
+
+/* The open (unresolved) count; once every comment is resolved, a quiet check instead. */
+.badge.done {
+  background: transparent;
+  color: var(--status-ok-fg);
+  border: 1px solid var(--status-ok);
 }
 
 .badge {
@@ -409,7 +425,7 @@ function formatTimeAgo(ts: number): string {
   border: 1px solid var(--border);
   border-radius: 3px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-meta);
   cursor: pointer;
   transition: all 0.1s;
 }
@@ -419,7 +435,7 @@ function formatTimeAgo(ts: number): string {
 }
 
 .sidebar-empty {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 13px;
   text-align: center;
   padding: 40px 16px;
@@ -447,16 +463,16 @@ function formatTimeAgo(ts: number): string {
 
 .comment-card.resolved {
   opacity: 0.7;
-  border-left-color: #059669;
+  border-left-color: var(--status-ok);
 }
 .comment-card.resolved .comment-body {
   text-decoration: line-through;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
-.resolve-btn { color: #059669 !important; }
+.resolve-btn { color: var(--status-ok-fg) !important; }
 .unresolve-btn {
-  color: #b45309 !important;
+  color: var(--status-warn-text) !important;
   opacity: 1 !important;
   font-weight: 500;
 }
@@ -475,7 +491,7 @@ function formatTimeAgo(ts: number): string {
 }
 
 .comment-line {
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 11px;
   font-weight: 500;
 }
@@ -483,7 +499,7 @@ function formatTimeAgo(ts: number): string {
 .comment-author {
   font-size: 10px;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text-meta);
   background: var(--bg-page);
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -499,21 +515,11 @@ function formatTimeAgo(ts: number): string {
   padding: 1px 6px;
   border-radius: 2px;
   background: var(--cat-color);
-  color: #fff;
-}
-
-:global(html.dark .category-tag.cat-must-fix) {
-  background: #fca5a5 !important;
-  color: #7f1d1d !important;
-}
-
-:global(html.dark .filter-btn.filter-must-fix) {
-  --cat-bg: #fca5a5;
-  --cat-text: #7f1d1d;
+  color: var(--cat-on);
 }
 
 .comment-quote {
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 12px;
   font-style: italic;
   margin-bottom: 4px;
@@ -543,7 +549,7 @@ function formatTimeAgo(ts: number): string {
 .comment-action-btn {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 11px;
   padding: 0;
   cursor: pointer;
@@ -551,7 +557,7 @@ function formatTimeAgo(ts: number): string {
 }
 
 .comment-action-btn:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .edit-area {
@@ -597,7 +603,7 @@ function formatTimeAgo(ts: number): string {
 .reply-link {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-meta);
   font-size: 11px;
   padding: 0;
   cursor: pointer;
@@ -605,7 +611,7 @@ function formatTimeAgo(ts: number): string {
 }
 
 .reply-link:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .reply-thread {
@@ -631,7 +637,7 @@ function formatTimeAgo(ts: number): string {
 
 .reply-time {
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .reply-body {
@@ -688,6 +694,6 @@ function formatTimeAgo(ts: number): string {
 
 .reply-send-btn:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 </style>

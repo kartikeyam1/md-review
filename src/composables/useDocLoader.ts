@@ -1,0 +1,538 @@
+import { watch, provide, inject, type InjectionKey } from 'vue'
+import { loadLocalCopy, saveLocalCopy } from '@/composables/localCopy'
+import { docIdOf } from '@/composables/useEditToken'
+import type { ContentType, DocMode } from '@/types'
+import { payloadMode } from '@/composables/docMeta'
+import { toast } from '@/composables/useToast'
+import { detectContentType } from '@/composables/useContentType'
+import { historyBarrier } from '@/composables/useExternalChange'
+import { resolveView, routeKey, type RouterLocation } from '@/composables/useRouter'
+import { paneModeFor, type DocState, type DocViewName } from '@/composables/useDocState'
+import { loadFenceLanguages } from '@/markdown/highlight'
+import { provideSessionFiles, docKeyOfScreen } from '@/composables/useSessionFiles'
+
+// ── Doc loaders (spec #4 routes, #2 shell split) ─────────────────────────────
+// What happens when a route is entered: load the shared doc / pinned revision
+// / session file / local draft into the doc state, guard leaving a doc with
+// unsaved edits, and the document-level actions that change what is on screen
+// (open a file, New, Share).
+
+const LEAVE_FLUSH_MS = 1500
+// A doc's first render waits this long at most for the lazy highlight.js
+// languages its fences name (one small chunk each), so its code paints with
+// colours instead of swapping from plain text a moment later. On a slower
+// network the doc paints plain and re-renders when they arrive.
+const FENCE_LANGUAGES_WAIT_MS = 300
+
+/** Resolves to `fallback` when `p` takes longer than `ms` (a stalled save). */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms)
+    p.then((v) => { clearTimeout(t); resolve(v) }, () => { clearTimeout(t); resolve(fallback) })
+  })
+}
+
+const pathOf = (href: string) => { const u = new URL(href); return u.pathname + u.search + u.hash }
+
+export function useDocLoader(doc: DocState, opts: { legacyRedirected: boolean }) {
+  const { router, sync } = doc
+  const {
+    takeRestoredDraft, restoredInfo, loadLocalDraft, forgetLocalDraft, clearPersisted, restored,
+  } = doc.persistence
+  const { loadShareDetailed, fetchGithub, getShareUrls, getRevision, createShare, getComments, getApproval } = doc.share
+  /** #26: the attached doc's files (tabs, attachments, file routes). */
+  const sessionFiles = provideSessionFiles(doc)
+
+  function detachFromShare() {
+    doc.pasteId.value = null
+    doc.access.value = null
+    doc.localCopy.value = null
+    doc.approvalInfo.value = null
+    doc.docMeta.value = { sessionName: null, slug: null, sharedAt: null, latest: null }
+  }
+
+  /** Put on screen something that is not a live shared doc (pinned revision, file). */
+  function showReadOnlyContent(content: string, name: string, type: ContentType) {
+    detachFromShare()
+    doc.pinnedInfo.value = null
+    doc.clearComments()
+    doc.dismissAll()
+    doc.notice.value = null
+    doc.markdown.value = content
+    doc.filename.value = name
+    doc.contentType.value = type
+    doc.appMode.value = 'doc'
+  }
+
+  let navToken = 0
+  const isStale = (token: number) => token !== navToken
+
+  /**
+   * Attach the shared doc and show `screen`: the doc itself, or (#26) one of
+   * its file routes — a file route keeps its doc attached (capability, poll).
+   */
+  async function loadSharedDoc(shareId: string, token: number, screen: string = routeKey({ kind: 'doc', id: shareId })) {
+    const key = routeKey({ kind: 'doc', id: shareId })
+    // Already attached to this session (Back/Forward, a file tab and back,
+    // library and back) — do not reload over local edits.
+    if (doc.pasteId.value === shareId && docKeyOfScreen(doc.screenKey.value, shareId) === key) {
+      doc.screenKey.value = screen
+      applyViewParam()
+      return
+    }
+    if (doc.pasteId.value) detachFromShare()
+
+    const { data, status } = await loadShareDetailed(shareId)
+    if (data?.markdown) await withTimeout(loadFenceLanguages(data.markdown), FENCE_LANGUAGES_WAIT_MS, undefined)
+    if (isStale(token)) return // navigated away meanwhile
+
+    if (!data) {
+      const draft = takeRestoredDraft(shareId)
+      if (status === 404 || status === 410) {
+        // Rule 10: a definitive "not found", never the upload screen — and never
+        // the deleted doc's content (persona-QA M2: the boot restore had already
+        // put this browser's cached copy on screen, under the not-found page).
+        const copyKey = docIdOf(shareId)
+        let copy = loadLocalCopy(copyKey) ?? (copyKey !== shareId ? loadLocalCopy(shareId) : null)
+        // Unsaved edits are never lost: kept (persisted) and offered as a download.
+        // A clean draft (just viewed, e.g. a recent-list entry for a doc deleted
+        // elsewhere) holds nothing of the user's: it is dropped.
+        if (draft && !draft.clean && !doc.embed.value) {
+          copy = { markdown: draft.markdown, filename: draft.filename, at: new Date().toISOString(), reason: 'gone' }
+          saveLocalCopy(copyKey, copy)
+        }
+        resetToEmpty()
+        doc.screenKey.value = null
+        // (an embed never saves the copy above, so it leaves a dirty draft where it is)
+        if (draft && (draft.clean || !doc.embed.value)) void clearPersisted({ keepLocal: true })
+        doc.docMissing.value = 'missing'
+        doc.missingCopy.value = copy && !doc.embed.value ? { ...copy, key: copyKey } : null
+        return
+      }
+      // Server unreachable (offline is not "not found"). If the persisted copy
+      // belongs to this session, stay attached so polling/autosave resume when
+      // it comes back.
+      if (draft) {
+        handleFileLoaded(draft.markdown, draft.filename, undefined, { shared: true })
+        doc.mode.value = draft.mode
+        doc.pasteId.value = shareId
+        doc.screenKey.value = screen
+        if (draft.baseMarkdown !== null) {
+          sync.setBaseline({ markdown: draft.baseMarkdown, filename: draft.filename, contentHash: draft.baseHash })
+          if (draft.conflict) sync.restoreDraft(draft.markdown, draft.baseMarkdown, { baseHash: draft.baseHash, conflict: true })
+        } else {
+          sync.expectDraft()
+        }
+      }
+      // After handleFileLoaded, which clears notices.
+      doc.notice.value = draft
+        ? 'Cannot reach the review server. Showing your local copy; it will sync when the server is back.'
+        : 'Cannot reach the review server. This document will load when the server is back — try again shortly.'
+      return
+    }
+
+    handleFileLoaded(data.markdown, data.filename, data.contentType, { shared: true })
+    if (data.comments?.length) {
+      doc.loadComments(data.comments)
+    }
+    doc.pasteId.value = shareId
+    doc.screenKey.value = screen
+    // Mode and header meta from the payload (absent/invalid mode → review).
+    doc.applyServerMeta(data, Date.now(), { initial: true })
+    sync.setBaseline({
+      markdown: data.markdown,
+      filename: data.filename,
+      contentHash: data.content_hash ?? null,
+      etag: data.etag ?? null,
+    })
+    // #23: edits set aside when this doc turned view-only (kept across reloads).
+    doc.localCopy.value = loadLocalCopy(data.id || shareId)
+    // A reload with unsaved edits: put them back on top of the fresh server copy —
+    // unless this browser cannot edit the doc: then they become the local copy and
+    // the screen shows the server version (#23).
+    const draft = takeRestoredDraft(shareId)
+    if (draft && !draft.clean && draft.markdown !== data.markdown && !doc.embed.value && doc.capability.value !== 'editor') {
+      doc.setLocalCopy(draft.markdown, draft.filename || data.filename)
+    } else if (draft && !draft.clean && draft.markdown !== data.markdown && !doc.embed.value) {
+      sync.restoreDraft(draft.markdown, draft.baseMarkdown, { baseHash: draft.baseHash, conflict: draft.conflict })
+      doc.notice.value = sync.conflict.value
+        ? 'Restored your unsaved edits, but the server copy changed in the meantime — choose a version below.'
+        : 'Restored your unsaved edits from this browser.'
+    }
+    applyViewParam()
+    doc.refreshApproval()
+  }
+
+  /** Rule 7: a pinned revision, read-only. Never GET /paste/<ID>. */
+  async function loadPinned(id: string, rev: string, token: number) {
+    const key = routeKey({ kind: 'pinned', id, rev })
+    if (doc.screenKey.value === key) { applyViewParam(); return }
+    const { data, status } = await getRevision(id, rev)
+    if (data?.markdown) await withTimeout(loadFenceLanguages(data.markdown), FENCE_LANGUAGES_WAIT_MS, undefined)
+    if (isStale(token)) return
+    if (!data) {
+      if (status === 404) doc.docMissing.value = 'missing'
+      else if (status === 410) doc.docMissing.value = 'revision-gone'
+      else doc.notice.value = 'Cannot reach the review server. Try again when it is back.'
+      return
+    }
+    showReadOnlyContent(data.markdown, id, detectContentType('', data.markdown))
+    doc.pinnedInfo.value = { id, at: data.at }
+    doc.pinnedCurrent.value = null
+    // #2/#4 ruling: the doc's mode comes on the revision response; a review
+    // doc's comments and approval come from their own endpoints (never GET /paste/<id>).
+    doc.mode.value = payloadMode(data.mode)
+    doc.docMeta.value = {
+      sessionName: data.sessionName ?? null, slug: null, sharedAt: null, filename: data.filename ?? null,
+      latest: data.at ? { at: data.at, by: data.by ?? null } : null,
+    }
+    doc.screenKey.value = key
+    applyViewParam()
+    if (doc.mode.value === 'review') {
+      const [comments, approval] = await Promise.all([getComments(id), getApproval(id)])
+      if (isStale(token) || doc.screenKey.value !== key) return
+      if (comments) doc.loadComments(comments)
+      doc.approvalInfo.value = approval
+    }
+  }
+
+  /**
+   * Rule 8 / #26: one file of a multi-file session, read-only, with its doc
+   * attached (the doc's capability, tabs and poll). The file is fetched once;
+   * an unknown name is a file-not-found state, not a missing doc.
+   */
+  async function loadFile(id: string, file: string, token: number) {
+    const key = routeKey({ kind: 'file', id, file })
+    if (doc.screenKey.value === key) { applyViewParam(); return }
+    sessionFiles.openFile(id, file)
+    await loadSharedDoc(id, token, key)
+  }
+
+  /**
+   * Legacy `#github=<url>` on the landing route (rule 4): open the file as a
+   * local doc, then drop the fragment. On failure show the error, URL → base.
+   */
+  async function loadFromGithubHash() {
+    const match = window.location.hash.match(/^#github=(.+)$/)
+    if (!match) return
+
+    let githubUrl: string
+    try { githubUrl = decodeURIComponent(match[1]) } catch { githubUrl = match[1] }
+    const data = await fetchGithub(githubUrl)
+    if (data) {
+      handleFileLoaded(data.content, data.filename)
+      const l = window.location
+      router.replace(l.pathname + l.search)
+    } else {
+      doc.notice.value = doc.share.shareError.value || 'Could not load the file from GitHub.'
+      router.replace(router.base)
+    }
+  }
+
+  /** Load file from ?filePath= URL param (dev server only). */
+  async function loadFromFilePath() {
+    const filePath = doc.filePathParam.value
+    if (!filePath) return
+
+    try {
+      const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`)
+      if (!res.ok) return
+      const { content, filename: name } = await res.json()
+      // The dev fixture harness opens in review mode (00 §1.4).
+      handleFileLoaded(content, name, undefined, { mode: 'review' })
+      // `?filePath=…&view=edit|split` opens that view (#7 edge case: the dev loader + split).
+      applyViewParam()
+    } catch {
+      // API not available (production build) — ignore
+    }
+  }
+
+  /**
+   * Rule 5 / 00 §1.3: resolve ?view= against what is on screen. Disallowed or
+   * unknown values render read and are rewritten to view=read (replaceState).
+   * (UI view toggles do not write ?view= yet — see DECISIONS #4.)
+   */
+  function applyViewParam() {
+    const { view, rewrite } = resolveView(router.query('view'), {
+      capability: doc.capability.value,
+      routeKind: doc.routeKind.value,
+      contentType: doc.contentType.value,
+    })
+    doc.paneMode.value = paneModeFor(view)
+    doc.readerView.value = view === 'agent' || view === 'slides' ? view : 'read'
+    if (rewrite) router.setQueryParam('view', 'read')
+  }
+
+  /**
+   * A UI view change (view toggle, #28 Show / Reader view): replaceState to
+   * ?view=<view> (00 §1.3); `removeParam` drops `view` instead (the exits).
+   * Edit and split are editor-only; agent view needs a markdown doc off a file route.
+   */
+  function setView(view: DocViewName, o: { removeParam?: boolean } = {}) {
+    if ((view === 'edit' || view === 'split') && doc.capability.value !== 'editor') return
+    if ((view === 'agent' || view === 'slides') && (doc.contentType.value !== 'markdown' || doc.routeKind.value === 'file' || doc.routeKind.value === 'embed')) return
+    doc.paneMode.value = paneModeFor(view)
+    doc.readerView.value = view === 'agent' || view === 'slides' ? view : 'read'
+    if (view === 'slides') {
+      // A comment popover or action bar from the read view would swallow the deck's first Esc.
+      doc.dismissAll()
+      // #29 rule 1: other params kept, the fragment dropped (a slide is `?slide=N`, never a fragment).
+      const l = window.location
+      const params = new URLSearchParams(l.search)
+      params.set('view', 'slides')
+      params.delete('slide')
+      router.replace(`${l.pathname}?${params.toString()}`)
+      return
+    }
+    router.setQueryParam('view', o.removeParam ? null : view)
+  }
+
+  /** Empty landing state (New, or navigating back to the landing route). */
+  function resetToEmpty() {
+    historyBarrier()
+    doc.clearComments()
+    doc.dismissAll()
+    doc.notice.value = null
+    doc.markdown.value = ''
+    doc.filename.value = ''
+    doc.contentType.value = 'markdown'
+    doc.mode.value = 'publish'
+    detachFromShare()
+    doc.pinnedInfo.value = null
+    doc.appMode.value = 'upload'
+    doc.screenKey.value = 'landing'
+  }
+
+  /** The user chose to leave a shared doc with unsaved edits: drop them for good. */
+  function discardAttached() {
+    detachFromShare()
+    doc.screenKey.value = null
+    // The persisted draft holds exactly those edits; keep the local draft slot.
+    clearPersisted({ keepLocal: true })
+  }
+
+  /**
+   * Rule 13: any navigation away from the attached shared doc while it has
+   * unsaved changes — a link, Back/Forward, the library, New — flushes autosave
+   * (briefly), and if that cannot finish, asks. The doc stays on screen while
+   * deciding. Cancel puts the doc's URL back; accepting discards the edits so
+   * later navigation does not ask again.
+   */
+  async function guardLeave(to: RouterLocation, from: RouterLocation, token: number): Promise<boolean> {
+    const attached = doc.pasteId.value
+    if (!attached || !sync.isShared.value) return true
+    const attachedKey = routeKey({ kind: 'doc', id: attached })
+    if (to.key === attachedKey) return true
+    // #26: a file tab of the attached doc does not leave it.
+    if (to.route.kind === 'file' && to.route.id === attached) return true
+    const unsaved = () => sync.isDirty.value || !!sync.conflict.value || sync.saveState.value === 'saving'
+    if (!unsaved()) return true
+    // #26: the doc or one of its file tabs was on screen — it stays there while deciding
+    const fromAttached = from.key === attachedKey || (from.route.kind === 'file' && from.route.id === attached)
+    const showing = fromAttached && doc.screenKey.value === from.key
+    if (showing) doc.held.value = from
+    try {
+      if (!sync.conflict.value) await withTimeout(doc.flushAutosave(), LEAVE_FLUSH_MS, false)
+      if (isStale(token)) return false
+      if (!unsaved()) return true
+      if (window.confirm('Your changes to this shared document could not be saved yet. Leave anyway and discard them?')) {
+        discardAttached()
+        return true
+      }
+      router.push(showing ? pathOf(from.href) : `${router.base}d/${attached}`)
+      return false
+    } finally {
+      if (doc.held.value === from) doc.held.value = null
+    }
+  }
+
+  /** Put the never-shared local draft on screen (landing route), if there is one. */
+  async function enterLanding(token: number) {
+    if (doc.screenKey.value === 'landing') return
+    if (doc.pasteId.value) detachFromShare()
+    const local = await loadLocalDraft()
+    if (isStale(token) || doc.screenKey.value === 'landing') return
+    if (!local) { resetToEmpty(); return }
+    historyBarrier()
+    doc.clearComments()
+    doc.dismissAll()
+    doc.notice.value = null
+    doc.pinnedInfo.value = null
+    doc.markdown.value = local.markdown
+    doc.filename.value = local.filename
+    doc.contentType.value = local.contentType ?? 'markdown'
+    doc.mode.value = local.mode
+    doc.loadComments(local.comments)
+    doc.appMode.value = 'doc'
+    doc.screenKey.value = 'landing'
+    applyViewParam()
+  }
+
+  async function applyRoute(to: RouterLocation, from: RouterLocation | null) {
+    const token = ++navToken
+    if (from && !(await guardLeave(to, from, token))) return
+    if (isStale(token)) return
+    doc.docMissing.value = null
+    doc.missingCopy.value = null
+    const r = to.route
+    if (r.kind !== 'file') sessionFiles.closeFile()
+    switch (r.kind) {
+      case 'landing':
+        return enterLanding(token)
+      case 'library':
+      case 'not-found':
+        return
+      case 'doc':
+        return loadSharedDoc(r.id, token)
+      case 'pinned':
+        return loadPinned(r.id, r.rev, token)
+      case 'file':
+        return loadFile(r.id, r.file, token)
+    }
+  }
+
+  // Every route change (push, replace, Back/Forward). Same key = same content:
+  // a fragment or query change, handled by PreviewPane / applyViewParam.
+  watch(() => router.current.value, (to, from) => {
+    if (!doc.booted.value) return
+    if (to.key === from.key) {
+      // A `#github=` pasted while already on the landing route (rule 4).
+      if (to.route.kind === 'landing' && to.source === 'pop' && /^#github=/.test(new URL(to.href).hash)) loadFromGithubHash()
+      return
+    }
+    applyRoute(to, from)
+  })
+
+  /**
+   * Put a document on screen. Anything that is not the shared session itself
+   * (file picker, drop, paste, GitHub, ?filePath=) detaches from the current
+   * share first — otherwise the old session's polling would keep writing over
+   * the new document, and Save would push the new document into the old session.
+   */
+  function handleFileLoaded(content: string, name: string, type?: ContentType, opts: { shared?: boolean; mode?: DocMode } = {}) {
+    name ??= '' // a shared doc may have no filename (e.g. an API/MCP upsert, #21)
+    if (!opts.shared) {
+      if (!doc.confirmDiscardIfDirty()) return
+      detachFromShare()
+      // A local doc lives on the landing route.
+      doc.screenKey.value = 'landing'
+      if (doc.route.value.kind !== 'landing') router.replace(router.base)
+    }
+    historyBarrier() // another document: no undo into the previous one (#8 rule 5)
+    // Whatever was on screen before (a pinned banner) goes.
+    doc.pinnedInfo.value = null
+    doc.clearComments()
+    doc.dismissAll()
+    doc.notice.value = null
+    doc.markdown.value = content
+    doc.filename.value = name
+    doc.contentType.value = type ?? detectContentType(name, content)
+    // A local doc (picker, drop, paste, #github=) is a reading page (00 §1.4);
+    // a shared doc's mode is set by its loader.
+    if (!opts.shared) doc.mode.value = opts.mode ?? 'publish'
+    doc.appMode.value = 'doc'
+  }
+
+  function handleNewDoc() {
+    if (!doc.confirmDiscardIfDirty()) return
+    // New from a shared doc keeps the (unrelated) local draft in storage.
+    clearPersisted({ keepLocal: doc.screenKey.value !== 'landing' })
+    resetToEmpty()
+    doc.filePathParam.value = null
+    // Rule 11: New → landing (pushState); already there → just drop query/fragment.
+    if (doc.route.value.kind === 'landing') router.replace(router.base)
+    else router.push(router.base)
+  }
+
+  function handleOpenFile() {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.md,.markdown,.txt,.html,.htm'
+    input.onchange = () => {
+      const file = input.files?.[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        handleFileLoaded(reader.result as string, file.name)
+      }
+      reader.readAsText(file)
+    }
+    input.click()
+  }
+
+  async function handleShare() {
+    // Already shared: make sure the server has the latest text, then just show the links.
+    if (doc.pasteId.value) {
+      if (sync.isDirty.value) await doc.flushAutosave()
+      doc.shareResult.value = getShareUrls(doc.pasteId.value)
+      doc.showShareModal.value = true
+      return
+    }
+    const created = await createShare(doc.markdown.value, doc.filename.value, doc.comments.value, undefined, doc.contentType.value, doc.reviewerName.value || undefined, doc.mode.value)
+    if (created) {
+      // Rule 11: the URL becomes d/<slug||id> (replaceState), preferring the slug.
+      const key = created.slug || created.id
+      doc.pasteId.value = key
+      doc.screenKey.value = routeKey({ kind: 'doc', id: key })
+      doc.docMeta.value = { sessionName: null, slug: created.slug, sharedAt: new Date().toISOString(), latest: null }
+      // The POST carried the local mode: that is what the server now holds.
+      doc.setModeBaseline(doc.mode.value)
+      router.replace(`${router.base}d/${key}`)
+      // It is a shared doc now, no longer the never-shared local draft.
+      forgetLocalDraft()
+      sync.setBaseline({ markdown: doc.markdown.value, filename: doc.filename.value })
+      doc.shareResult.value = getShareUrls(key)
+      doc.showShareModal.value = true
+      doc.refreshApproval()
+    } else {
+      toast.error(doc.share.shareError.value || 'Failed to create share link.')
+    }
+  }
+
+  /** First load: restore the previous draft, then apply the URL's route. */
+  async function boot() {
+    // Put the previous draft back first: loadSharedDoc() reconciles it against
+    // the server copy and the upload screen must not flash over a restored doc.
+    await restored
+    const info = restoredInfo()
+    if (info) doc.screenKey.value = info.pasteId ? routeKey({ kind: 'doc', id: info.pasteId }) : 'landing'
+    const hasGithub = /^#github=/.test(window.location.hash)
+    if (doc.route.value.kind === 'landing') {
+      doc.filePathParam.value = router.query('filePath')
+      // Rule 9: only unsaved edits to a shared doc hijack the landing route.
+      if (!opts.legacyRedirected && !doc.filePathParam.value && !hasGithub && info?.pasteId && info.dirty) {
+        router.replace(`${router.base}d/${info.pasteId}${window.location.search}`)
+      }
+    }
+    doc.booted.value = true
+    if (doc.route.value.kind === 'landing') {
+      loadFromFilePath()
+      loadFromGithubHash()
+      if (!doc.filePathParam.value && !hasGithub) {
+        // A restored shared draft is not shown here; the local draft (if any) is.
+        if (doc.screenKey.value === 'landing') applyViewParam()
+        else enterLanding(++navToken)
+      }
+    } else {
+      applyRoute(router.current.value, null)
+    }
+  }
+
+  const loader = {
+    boot, applyViewParam, setView, loadFromFilePath,
+    handleFileLoaded, handleNewDoc, handleOpenFile, handleShare,
+  }
+  provide(DOC_LOADER, loader)
+  return loader
+}
+
+export type DocLoader = ReturnType<typeof useDocLoader>
+
+const DOC_LOADER: InjectionKey<DocLoader> = Symbol('md-review-doc-loader')
+
+/** Components under App: the document-level actions (open, New, Share, refresh). */
+export function useDocActions(): DocLoader {
+  const loader = inject(DOC_LOADER)
+  if (!loader) throw new Error('useDocActions() called outside of a useDocLoader() tree')
+  return loader
+}

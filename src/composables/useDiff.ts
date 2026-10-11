@@ -52,7 +52,7 @@ export async function buildLineDiff(
       else if (w.removed) del.push({ text: w.value, changed: true })
       else { del.push({ text: w.value, changed: false }); add.push({ text: w.value, changed: false }) }
     }
-    return [del, add]
+    return [mergeSegments(del), mergeSegments(add)]
   }
 
   for (let i = 0; i < parts.length; i++) {
@@ -123,5 +123,75 @@ export function collapseContext(rows: DiffRow[], context: number): DiffRow[] {
     out.push(row)
   }
   flush(true)
+  return out
+}
+
+/**
+ * One highlight per changed phrase, not per word: whitespace between two changed
+ * words joins them, and neighbouring segments of the same kind merge (QA c8).
+ */
+export function mergeSegments(segs: DiffSegment[]): DiffSegment[] {
+  const marked = segs.map((seg, i) => (
+    !seg.changed && /^\s+$/.test(seg.text) && segs[i - 1]?.changed && segs[i + 1]?.changed
+      ? { text: seg.text, changed: true }
+      : seg
+  ))
+  const out: DiffSegment[] = []
+  for (const seg of marked) {
+    const last = out[out.length - 1]
+    if (last && last.changed === seg.changed) last.text += seg.text
+    else out.push({ ...seg })
+  }
+  return out
+}
+
+const HEADING_RE = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
+
+/** Plain text of a heading line: inline markup and `:name[label]` directives reduced to their text. */
+function headingText(raw: string): string {
+  return raw
+    .replace(/:[\w-]+\[([^\]]*)\](?:\{[^}]*\})?/g, '$1')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`~]/g, '')
+    .trim()
+}
+
+/** For each line (0-based), the text of the nearest heading at or above it (null before the first). */
+function sectionOfLines(markdown: string): Array<string | null> {
+  const out: Array<string | null> = []
+  let current: string | null = null
+  let fence: string | null = null
+  for (const line of markdown.replace(/\n$/, '').split('\n')) {
+    const f = FENCE_RE.exec(line)
+    if (fence) { if (f && f[1]![0] === fence[0] && f[1]!.length >= fence.length) fence = null }
+    else if (f) fence = f[1]!
+    else {
+      const h = HEADING_RE.exec(line)
+      if (h) current = headingText(h[2]!) || current
+    }
+    out.push(current)
+  }
+  return out
+}
+
+/**
+ * The sections a diff touches, in document order, for a reader-facing "what changed"
+ * summary (QA leader M4): an added line counts in the new text, a removed one in the old.
+ * `null` stands for the part before the first heading.
+ */
+export function changedSections(rows: DiffRow[], oldText: string, newText: string): Array<string | null> {
+  const before = sectionOfLines(oldText)
+  const after = sectionOfLines(newText)
+  const seen = new Set<string | null>()
+  const out: Array<string | null> = []
+  for (const row of rows) {
+    let name: string | null | undefined
+    if (row.type === 'add' && row.newNo) name = after[row.newNo - 1]
+    else if (row.type === 'del' && row.oldNo) name = before[row.oldNo - 1]
+    else continue
+    const key = name ?? null
+    if (!seen.has(key)) { seen.add(key); out.push(key) }
+  }
   return out
 }

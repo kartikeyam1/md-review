@@ -63,12 +63,23 @@ const detail = computed(() => {
 }
 
 .changes-detail {
-  color: var(--text-muted);
+  color: var(--text-meta);
 }
 
 .changes-actions {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* Phone (#5 rule 9): text wraps, buttons stack below it. */
+@media (max-width: 640.98px) {
+  .changes-bar {
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
+  }
+  .changes-actions {
+    flex-basis: 100%;
+  }
 }
 </style>
