@@ -20,6 +20,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Install server dependencies
+        run: npm ci --prefix server
+
       - name: Type check
         run: npx vue-tsc -b --noEmit
 
@@ -32,16 +35,18 @@ jobs:
       - name: Install Playwright
         run: npx playwright install --with-deps chromium
 
-      - name: Start dev server
-        run: npm run dev &
+      - name: E2E and server tests (throwaway backend + production build)
+        run: scripts/verify.sh --only e2e,server
         env:
-          CI: true
+          VERIFY_E2E_FILE_TIMEOUT: 1200
 
-      - name: Wait for dev server
-        run: npx wait-on http://localhost:58747 --timeout 15000
-
-      - name: E2E tests
-        run: npm run test:e2e
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-logs
+          path: .verify/runs/
+          retention-days: 7
 
       - name: Upload build artifact
         if: github.ref == 'refs/heads/master'
