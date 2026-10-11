@@ -18,6 +18,16 @@ vi.mock('@/composables/useRevisions', async (orig) => ({
 }))
 
 const { default: RevisionsModal } = await import('@/components/RevisionsModal.vue')
+// The modal loads `diff` lazily. Warm the module here so its dynamic import
+// resolves promptly; the assertions below still wait for the rendered state
+// instead of counting promise flushes (a fixed flush count passed on Node 26
+// and failed on CI's Node 20).
+await import('diff')
+
+/** Flush promises until `check` passes (or time out) — waits for real state, not a tick count. */
+async function settle(check: () => void, timeout = 3000) {
+  await vi.waitFor(async () => { await flushPromises(); check() }, { timeout, interval: 10 })
+}
 
 const rev = (hash: string, minute: number, extra: Partial<RevisionEntry> = {}): RevisionEntry =>
   ({ hash, at: `2026-10-11T10:${String(minute).padStart(2, '0')}:00Z`, by: 'Kim', client: 'ui', size: 1, parent: null, ...extra })
@@ -65,8 +75,7 @@ describe('QA M6 — History after a restore and a conflict', () => {
     expect(row.exists()).toBe(true)
     expect(row.text()).toContain('Your set-aside edits')
     await row.trigger('click')
-    await flushPromises(); await flushPromises()
-    expect(w.find('[data-testid="diff-table"]').text()).toContain('my lost edits')
+    await settle(() => expect(w.find('[data-testid="diff-table"]').text()).toContain('my lost edits'))
     await w.find('[data-testid="restore-revision"]').trigger('click')
     expect(w.emitted('restore')![0]).toEqual(['my lost edits\n', null])
     w.unmount()
@@ -91,7 +100,7 @@ describe('QA leader M4 — reader-facing "what changed"', () => {
       revisions: [rev('A', 1), rev('B', 2, { client: 'mcp', by: 'agent', note: 'Geocoder hotfix: FR back to amber' })],
       currentHash: 'B', initialFrom: 'A', allowRestore: false,
     })
-    expect(w.find('[data-testid="rev-summary-note"]').text()).toContain('Geocoder hotfix: FR back to amber')
+    await settle(() => expect(w.find('[data-testid="rev-summary-note"]').text()).toContain('Geocoder hotfix: FR back to amber'))
     expect(w.find('[data-testid="rev-summary-sections"]').text()).toContain('Status')
     expect(w.find('[data-testid="rev-summary-sections"]').text()).not.toContain('Risks')
     expect(w.find('[data-testid="diff-table"]').exists()).toBe(false)
@@ -103,7 +112,7 @@ describe('QA leader M4 — reader-facing "what changed"', () => {
   it('an editor still gets the line diff right away (plus the summary)', async () => {
     Object.assign(contents, { A: '# T\n\nold\n', B: '# T\n\nnew\n', __current: '# T\n\nnew\n', __currentHash: 'B' })
     const w = await mountModal({ revisions: [rev('A', 1), rev('B', 2)], currentHash: 'B', allowRestore: true })
-    expect(w.find('[data-testid="diff-table"]').exists()).toBe(true)
+    await settle(() => expect(w.find('[data-testid="diff-table"]').exists()).toBe(true))
     expect(w.find('[data-testid="rev-toggle-lines"]').exists()).toBe(false)
     w.unmount()
   })
