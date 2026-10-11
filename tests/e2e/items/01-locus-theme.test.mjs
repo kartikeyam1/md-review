@@ -138,8 +138,9 @@ async function eventually(fn, { timeout = 5000, interval = 100 } = {}) {
  * Fresh context. `theme` seeds localStorage once per tab (a reload keeps what
  * the app stored since). `storage: 'throws'` makes every localStorage call throw.
  */
-async function open({ theme, colorScheme = 'light', viewport = DESKTOP, storage = 'ok', url, waitText = DOC_MARK, firstPaint = false } = {}) {
+async function open({ theme, colorScheme = 'light', viewport = DESKTOP, storage = 'ok', url, waitText = DOC_MARK, firstPaint = false, requests } = {}) {
   const context = await browser.newContext({ viewport, colorScheme, reducedMotion: 'reduce' })
+  if (requests) context.on('request', (r) => requests.push(r.url()))
   if (theme) {
     await context.addInitScript(([k, v]) => {
       if (window.top !== window) return
@@ -601,16 +602,24 @@ describe('#1 Locus look — computed styles', () => {
     })
   }
 
-  it('rule 8: Montserrat is requested with the spec weights and actually loaded; code stays JetBrains Mono', T, async () => {
-    const { context, page } = await open({ theme: 'locus-light' })
+  // Owner decision 2026-10-11 (DECISIONS.md): fonts are self-hosted, so rule 8's
+  // "Google Fonts link with display=swap" is checked as the same faces bundled
+  // with the app, font-display: swap, and no request to a Google font host.
+  it('rule 8: Montserrat is self-hosted with the spec weights and actually loaded; code stays JetBrains Mono', T, async () => {
+    const requests = []
+    const { context, page } = await open({ theme: 'locus-light', requests })
     try {
-      const hrefs = await page.evaluate(() =>
-        [...document.querySelectorAll('link[rel="stylesheet"]')].map((l) => decodeURIComponent(l.getAttribute('href') || '')))
-      const fontHref = hrefs.find((h) => h.includes('fonts.googleapis.com') && h.includes('Montserrat'))
-      assert.ok(fontHref, `a Google Fonts stylesheet requests Montserrat (links: ${hrefs.join(' | ')})`)
-      assert.ok(fontHref.includes('family=Montserrat:ital,wght@0,300;0,400;0,500;0,600;0,800;1,400'), `Montserrat axes: ${fontHref}`)
-      assert.ok(/[?&]display=swap/.test(fontHref), 'display=swap')
-      assert.ok(hrefs.some((h) => h.includes('JetBrains+Mono') || h.includes('JetBrains Mono')), 'JetBrains Mono still requested')
+      const faces = await page.evaluate(() => [...document.fonts].map((f) => ({
+        family: f.family.replace(/["']/g, ''), weight: String(f.weight), style: f.style, display: f.display,
+      })))
+      const montserrat = faces.filter((f) => f.family === 'Montserrat')
+      const have = new Set(montserrat.map((f) => `${f.weight}/${f.style}`))
+      for (const w of ['300', '400', '500', '600', '800']) assert.ok(have.has(`${w}/normal`), `Montserrat ${w} face available (faces: ${[...have].join(', ') || 'none'})`)
+      assert.ok(have.has('400/italic'), `Montserrat italic 400 face available (faces: ${[...have].join(', ')})`)
+      assert.ok(montserrat.every((f) => f.display === 'swap'), `every Montserrat face is font-display: swap (${[...new Set(montserrat.map((f) => f.display))].join(', ')})`)
+      assert.ok(faces.some((f) => f.family === 'JetBrains Mono'), 'JetBrains Mono face still available')
+      const hrefs = await page.evaluate(() => [...document.querySelectorAll('link[href]')].map((l) => l.getAttribute('href') || ''))
+      assert.deepEqual(hrefs.filter((h) => /fonts\.(googleapis|gstatic)\.com/.test(h)), [], 'no Google Fonts <link> or preconnect')
 
       await page.evaluate(() => document.fonts.ready)
       await page.waitForFunction(() => {
@@ -624,6 +633,9 @@ describe('#1 Locus look — computed styles', () => {
       assert.ok(fonts.loaded.includes('600/normal'), `Montserrat 600 loaded and used (loaded faces: ${fonts.loaded.join(', ') || 'none'})`)
       assert.ok(fonts.loaded.includes('400/normal'), `Montserrat 400 loaded and used (loaded faces: ${fonts.loaded.join(', ') || 'none'})`)
       assert.ok(fonts.check, 'document.fonts.check() for Montserrat 600 and 400')
+      const google = requests.filter((u) => /^https?:\/\/fonts\.(googleapis|gstatic)\.com\//.test(u))
+      assert.deepEqual(google, [], 'no request to a Google font host')
+      assert.ok(requests.some((u) => /montserrat-latin-(400|600)-normal[^/]*\.woff2/.test(u)), 'Montserrat woff2 served by the app itself')
     } finally { await context.close() }
   })
 
