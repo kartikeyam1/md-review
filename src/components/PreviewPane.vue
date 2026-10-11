@@ -2,7 +2,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, inject } from 'vue'
 import type { Comment, ThemeMode, ContentType } from '@/types'
 import { useMarkdown } from '@/composables/useMarkdown'
-import { isGithub, isDark, isLocus, themeStyle } from '@/composables/useTheme'
+import { isGithub, isDark, themeStyle } from '@/composables/useTheme'
 import { findLineRange } from '@/composables/useHtmlSource'
 import '@/styles/preview.css'
 import { useRouter, scrollToAnchorElement, findAnchorIn } from '@/composables/useRouter'
@@ -11,6 +11,7 @@ import { copyText } from '@/composables/useCopyLink'
 import { toast } from '@/composables/useToast'
 import { runEnhancers } from '@/preview/enhancers'
 import { buildAnchors, lineToOffset, offsetToLine, type Anchor } from '@/composables/useScrollSync'
+import { mermaidConfigFor, mermaidJob, type MermaidThemeConfig } from '@/preview/mermaidTheme'
 
 const props = withDefaults(defineProps<{
   content: string
@@ -44,63 +45,9 @@ function loadMermaid(): Promise<MermaidApi> {
   return mermaidLoading
 }
 
-// Locus diagrams (#1 rule 12): mermaid's `base` theme fed brand colours, the
-// six series colours for pie slices / cScale / xy plots.
-const LOCUS_SERIES = ['#B066FF', '#3264FF', '#14B4EF', '#00D273', '#FF9F00', '#FF6429']
-
-function locusThemeVariables(dark: boolean): Record<string, unknown> {
-  const series: Record<string, string> = {}
-  LOCUS_SERIES.forEach((c, i) => {
-    series[`pie${i + 1}`] = c
-    series[`cScale${i}`] = c
-  })
-  const tone = dark
-    ? {
-        background: '#280A38', primaryColor: '#533B60', mainBkg: '#533B60',
-        primaryTextColor: '#FFFFFF', titleColor: '#FFFFFF', textColor: '#FFFFFF', nodeTextColor: '#FFFFFF',
-        lineColor: '#E6E1DA', clusterBkg: '#280A38', clusterBorder: '#533B60', edgeLabelBackground: '#280A38',
-      }
-    : {
-        background: '#FFFFFF', primaryColor: '#F3F0EB', mainBkg: '#F3F0EB',
-        primaryTextColor: '#280A38', titleColor: '#280A38', textColor: '#533B60', nodeTextColor: '#280A38',
-        lineColor: '#533B60', clusterBkg: '#FFFFFF', clusterBorder: '#E6E1DA', edgeLabelBackground: '#FFFFFF',
-      }
-  return {
-    darkMode: dark,
-    fontFamily: 'Montserrat, Arial, sans-serif',
-    primaryBorderColor: '#B066FF',
-    nodeBorder: '#B066FF',
-    ...tone,
-    ...series,
-    // Full-strength slices separated by the page colour (no black outlines).
-    pieOpacity: '1',
-    pieStrokeColor: tone.background,
-    pieOuterStrokeColor: tone.background,
-    pieTitleTextColor: tone.primaryTextColor,
-    pieLegendTextColor: tone.textColor,
-    // Slice labels in deep purple read on every series colour (bold in CSS).
-    pieSectionTextColor: '#280A38',
-    // Sequence-diagram notes as cream / purple-grey cards with a brand edge.
-    noteBkgColor: dark ? '#533B60' : '#F3F0EB',
-    noteBorderColor: '#B066FF',
-    noteTextColor: tone.primaryTextColor,
-    // xy charts default to a white canvas with black axes: follow the page.
-    xyChart: {
-      plotColorPalette: LOCUS_SERIES.join(', '),
-      backgroundColor: tone.background,
-      titleColor: tone.primaryTextColor,
-      xAxisLabelColor: tone.textColor, xAxisTitleColor: tone.textColor,
-      xAxisTickColor: tone.lineColor, xAxisLineColor: tone.lineColor,
-      yAxisLabelColor: tone.textColor, yAxisTitleColor: tone.textColor,
-      yAxisTickColor: tone.lineColor, yAxisLineColor: tone.lineColor,
-    },
-  }
-}
-
-function mermaidConfig(): { theme: 'dark' | 'neutral' | 'base'; themeVariables?: Record<string, unknown> } {
-  const t = props.theme ?? 'light'
-  if (isLocus(t)) return { theme: 'base', themeVariables: locusThemeVariables(isDark(t)) }
-  return { theme: isDark(t) ? 'dark' : 'neutral' }
+// Mermaid theme per app theme (#1 rule 12, #5 rule 13): shared with the #19 export.
+function mermaidConfig(): MermaidThemeConfig {
+  return mermaidConfigFor(props.theme ?? 'light')
 }
 
 const emit = defineEmits<{
@@ -541,10 +488,8 @@ type MermaidTarget = 'screen' | 'print'
 const svgCache = new WeakMap<HTMLElement, Partial<Record<MermaidTarget, { key: string; svg: string; bind?: (el: Element) => void }>>>()
 let printing = false
 
-function printMermaidConfig(): ReturnType<typeof mermaidConfig> {
-  const t = props.theme ?? 'light'
-  if (isLocus(t)) return { theme: 'base', themeVariables: locusThemeVariables(false) }
-  return { theme: 'neutral' }
+function printMermaidConfig(): MermaidThemeConfig {
+  return mermaidConfigFor(props.theme ?? 'light', true)
 }
 
 function printNeedsLightDiagrams(): boolean {
@@ -616,7 +561,7 @@ const mermaidQueued: Record<MermaidTarget, boolean> = { screen: false, print: fa
 function runMermaid(target: MermaidTarget = 'screen') {
   if (mermaidQueued[target]) return mermaidRun
   mermaidQueued[target] = true
-  mermaidRun = mermaidRun.catch(() => {}).then(() => {
+  mermaidRun = mermaidJob(() => {
     mermaidQueued[target] = false
     return renderMermaid(target)
   })

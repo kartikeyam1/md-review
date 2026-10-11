@@ -25,6 +25,8 @@ withDefaults(defineProps<{
   menuTestid?: string
   triggerClass?: string
   triggerTitle?: string
+  /** Extra attributes on the trigger button (e.g. #19's `aria-busy`). */
+  triggerAttrs?: Record<string, string | undefined>
   /** Phone (#5 rule 7): open as a full-width sheet under the doc header instead of a dropdown. */
   sheet?: boolean
 }>(), {
@@ -32,6 +34,7 @@ withDefaults(defineProps<{
   menuTestid: undefined,
   triggerClass: 'btn btn-ghost',
   triggerTitle: undefined,
+  triggerAttrs: undefined,
   menuLabel: undefined,
   sheet: false,
 })
@@ -59,6 +62,7 @@ defineExpose({ open: menu.open, close: menu.close, show: menu.show })
       type="button"
       :class="triggerClass"
       :title="triggerTitle"
+      v-bind="triggerAttrs"
       :aria-label="label"
       aria-haspopup="menu"
       :aria-expanded="menu.open.value ? 'true' : 'false'"

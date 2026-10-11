@@ -17,8 +17,9 @@ import HeaderOverflowMenu from '@/components/HeaderOverflowMenu.vue'
 import { truncateTitle } from '@/composables/useDocTitle'
 import { useToc } from '@/composables/useToc'
 
-// #18: the reading-settings control and its panel load on demand (the #6 entry budget).
+// #18 reading settings and #19 Download menu load on demand (the #6 entry budget).
 const ReaderSettings = defineAsyncComponent(() => import('@/components/ReaderSettings.vue'))
+const DownloadMenu = defineAsyncComponent(() => import('@/components/DownloadMenu.vue'))
 
 // The doc header (00 §2): one line, never wraps. `reader` in the read view,
 // `editor` in the edit view (editors only). Order and per-width placement are
@@ -49,6 +50,7 @@ const demoted = computed(() => ({
   copyLink: phone.value,
   library: phone.value,
   home: phone.value,
+  download: !desktop.value,
   reader: phone.value,
 }))
 
@@ -143,6 +145,7 @@ function onLibraryClick(e: MouseEvent) {
       @click="actions.handleShare()"
     >{{ sharing ? 'Sharing…' : 'Share' }}</button>
     <CopyLinkButton v-if="!phone" :icon-only="!desktop" />
+    <DownloadMenu v-if="onScreen && desktop" />
     <ThemeSwitcher />
     <ReaderSettings v-if="onScreen" :sheet="phone" :html="contentType === 'html'" />
     <HeaderOverflowMenu :demoted="demoted" :sheet="phone" @edit-reviewer="editingNameFromMenu = true" />
@@ -185,6 +188,13 @@ function onLibraryClick(e: MouseEvent) {
 .header[data-breakpoint='phone'] :deep(input) {
   min-width: 40px;
   min-height: 40px;
+}
+
+/* …but a sheet menu's items keep their 44px touch rows (#5 rule 7, #19 AC-19.14); tablets
+   (often touch) get the same rows in the overflow menu. */
+.header[data-breakpoint='phone'] :deep(.app-menu-sheet .app-menu-item),
+.header[data-breakpoint='tablet'] :deep([data-testid='header-overflow-menu'] .app-menu-item) {
+  min-height: 44px;
 }
 
 /* Let an open header menu (overflow, Style) or the reading-settings panel escape the header box. */
